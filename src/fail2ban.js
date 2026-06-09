@@ -16,7 +16,7 @@ function banKey(ip) {
  * Returns { banned: true, remainingSeconds: number } or { banned: false }
  */
 export async function checkBan(env, ip) {
-  const raw = await env.AI_API_CONFIG.get(banKey(ip), "json");
+  const raw = await env.VEGA_API_CONFIG.get(banKey(ip), "json");
   if (!raw) return { banned: false };
 
   const now = Math.floor(Date.now() / 1000);
@@ -34,14 +34,14 @@ export async function checkBan(env, ip) {
   if (raw.attempts_window) {
     const recentAttempts = raw.attempts_window.filter((t) => now - t < WINDOW_SECONDS);
     if (recentAttempts.length === 0) {
-      await env.AI_API_CONFIG.delete(banKey(ip));
+      await env.VEGA_API_CONFIG.delete(banKey(ip));
       return { banned: false };
     }
     // Update with cleaned window
     raw.attempts_window = recentAttempts;
     raw.attempts = recentAttempts.length;
     raw.banned_until = 0;
-    await env.AI_API_CONFIG.put(banKey(ip), JSON.stringify(raw), { expirationTtl: WINDOW_SECONDS });
+    await env.VEGA_API_CONFIG.put(banKey(ip), JSON.stringify(raw), { expirationTtl: WINDOW_SECONDS });
   }
 
   return { banned: false };
@@ -53,7 +53,7 @@ export async function checkBan(env, ip) {
  */
 export async function recordFailure(env, ip) {
   const now = Math.floor(Date.now() / 1000);
-  const raw = (await env.AI_API_CONFIG.get(banKey(ip), "json")) || {
+  const raw = (await env.VEGA_API_CONFIG.get(banKey(ip), "json")) || {
     attempts: 0,
     attempts_window: [],
     banned_until: 0,
@@ -71,7 +71,7 @@ export async function recordFailure(env, ip) {
   // Check if should ban
   if (raw.attempts >= MAX_ATTEMPTS) {
     raw.banned_until = now + BAN_DURATION_SECONDS;
-    await env.AI_API_CONFIG.put(banKey(ip), JSON.stringify(raw), {
+    await env.VEGA_API_CONFIG.put(banKey(ip), JSON.stringify(raw), {
       expirationTtl: BAN_DURATION_SECONDS + 60,
     });
     return {
@@ -82,7 +82,7 @@ export async function recordFailure(env, ip) {
   }
 
   // Update record
-  await env.AI_API_CONFIG.put(banKey(ip), JSON.stringify(raw), {
+  await env.VEGA_API_CONFIG.put(banKey(ip), JSON.stringify(raw), {
     expirationTtl: WINDOW_SECONDS + 60,
   });
 
@@ -97,7 +97,7 @@ export async function recordFailure(env, ip) {
  * Reset fail2ban for an IP (called on successful login).
  */
 export async function resetBan(env, ip) {
-  await env.AI_API_CONFIG.delete(banKey(ip));
+  await env.VEGA_API_CONFIG.delete(banKey(ip));
 }
 
 /**

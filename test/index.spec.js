@@ -7,7 +7,7 @@ import {
 import { describe, it, expect, beforeAll } from "vitest";
 import worker from "../src";
 
-describe("AI API Multi-Provider Proxy", () => {
+describe("Vega API", () => {
   // ---- Root / Health ----
   it("serves admin UI at /", async () => {
     const request = new Request("http://example.com/");
@@ -17,7 +17,7 @@ describe("AI API Multi-Provider Proxy", () => {
     expect(response.status).toBe(200);
     const text = await response.text();
     expect(text).toContain("<!DOCTYPE html>");
-    expect(text).toContain("AI API 统一代理");
+    expect(text).toContain("Vega API");
     expect(text).toContain("</html>");
   });
 

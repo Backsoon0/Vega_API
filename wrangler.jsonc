@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "ai_api",
+	"name": "vega-api",
 	"main": "src/index.js",
 	"compatibility_date": "2026-06-05",
 	"observability": {
@@ -32,19 +32,15 @@
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 */
 	// "vars": {  "MY_VARIABLE": "production_value" }
-	"vars": {
-		"GOOGLE_PROJECT_ID": "tavern-498204",
-		"GOOGLE_LOCATION": "global"
-	},
 	/**
 	 * KV Namespaces
 	 * https://developers.cloudflare.com/kv/
 	 */
 	"kv_namespaces": [
 		{
-			"binding": "AI_API_CONFIG",
-			"id": "cb50d643a6ad4dd6a9be3bafcd65cede",
-			"preview_id": "cb50d643a6ad4dd6a9be3bafcd65cede"
+			"binding": "VEGA_API_CONFIG",
+			"id": "93953d44776e45f791366ed3d1a83cad",
+			"preview_id": "93953d44776e45f791366ed3d1a83cad"
 		}
 	],
 	/**

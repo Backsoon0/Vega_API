@@ -12,13 +12,13 @@ const KEY_DEFAULT_PROVIDER = `${KV_PREFIX}default_provider`;
 const KEY_CONFIG_VERSION = `${KV_PREFIX}version`;
 
 export async function getConfigVersion(env) {
-  const raw = await env.AI_API_CONFIG.get(KEY_CONFIG_VERSION);
+  const raw = await env.VEGA_API_CONFIG.get(KEY_CONFIG_VERSION);
   return raw ? parseInt(raw, 10) : 0;
 }
 
 async function bumpConfigVersion(env) {
   const current = await getConfigVersion(env);
-  await env.AI_API_CONFIG.put(KEY_CONFIG_VERSION, String(current + 1));
+  await env.VEGA_API_CONFIG.put(KEY_CONFIG_VERSION, String(current + 1));
 }
 
 function providerKey(id) {
@@ -29,7 +29,7 @@ function providerKey(id) {
  * Get the list of all provider IDs.
  */
 async function getProviderIds(env) {
-  const raw = await env.AI_API_CONFIG.get(KEY_PROVIDERS);
+  const raw = await env.VEGA_API_CONFIG.get(KEY_PROVIDERS);
   if (!raw) return [];
   try {
     return JSON.parse(raw);
@@ -42,7 +42,7 @@ async function getProviderIds(env) {
  * Save the list of provider IDs.
  */
 async function saveProviderIds(env, ids) {
-  await env.AI_API_CONFIG.put(KEY_PROVIDERS, JSON.stringify(ids));
+  await env.VEGA_API_CONFIG.put(KEY_PROVIDERS, JSON.stringify(ids));
 }
 
 /**
@@ -57,7 +57,7 @@ export async function listProviders(env) {
   const records = await Promise.all(
     ids.map(async (id) => {
       try {
-        const raw = await env.AI_API_CONFIG.get(providerKey(id), "json");
+        const raw = await env.VEGA_API_CONFIG.get(providerKey(id), "json");
         if (!raw) return null;
         return { id, raw };
       } catch {
@@ -100,7 +100,7 @@ export async function listProvidersMasked(env) {
   const records = await Promise.all(
     ids.map(async (id) => {
       try {
-        const raw = await env.AI_API_CONFIG.get(providerKey(id), "json");
+        const raw = await env.VEGA_API_CONFIG.get(providerKey(id), "json");
         if (!raw) return null;
         return { id, raw };
       } catch {
@@ -133,7 +133,7 @@ export async function listProvidersMasked(env) {
 export async function getProvider(env, id) {
   let raw;
   try {
-    raw = await env.AI_API_CONFIG.get(providerKey(id), "json");
+    raw = await env.VEGA_API_CONFIG.get(providerKey(id), "json");
   } catch {
     // Corrupted data
     return null;
@@ -156,7 +156,7 @@ export async function getProvider(env, id) {
  */
 async function getProviderRaw(env, id) {
   try {
-    return await env.AI_API_CONFIG.get(providerKey(id), "json");
+    return await env.VEGA_API_CONFIG.get(providerKey(id), "json");
   } catch {
     return null;
   }
@@ -212,7 +212,7 @@ export async function saveProvider(env, provider) {
     weight: weight || 1,
   };
 
-  await env.AI_API_CONFIG.put(providerKey(id), JSON.stringify(record));
+  await env.VEGA_API_CONFIG.put(providerKey(id), JSON.stringify(record));
 
   // Update provider ID list if this is new
   const ids = await getProviderIds(env);
@@ -229,7 +229,7 @@ export async function saveProvider(env, provider) {
  * Delete a provider.
  */
 export async function deleteProvider(env, id) {
-  await env.AI_API_CONFIG.delete(providerKey(id));
+  await env.VEGA_API_CONFIG.delete(providerKey(id));
 
   const ids = await getProviderIds(env);
   const filtered = ids.filter((x) => x !== id);
@@ -241,28 +241,28 @@ export async function deleteProvider(env, id) {
  * Get the admin password hash.
  */
 export async function getAdminPasswordHash(env) {
-  return env.AI_API_CONFIG.get(KEY_ADMIN_PASSWORD);
+  return env.VEGA_API_CONFIG.get(KEY_ADMIN_PASSWORD);
 }
 
 /**
  * Set the admin password hash.
  */
 export async function setAdminPassword(env, hash) {
-  await env.AI_API_CONFIG.put(KEY_ADMIN_PASSWORD, hash);
+  await env.VEGA_API_CONFIG.put(KEY_ADMIN_PASSWORD, hash);
 }
 
 /**
  * Get the default provider ID.
  */
 export async function getDefaultProviderId(env) {
-  return env.AI_API_CONFIG.get(KEY_DEFAULT_PROVIDER);
+  return env.VEGA_API_CONFIG.get(KEY_DEFAULT_PROVIDER);
 }
 
 /**
  * Set the default provider ID.
  */
 export async function setDefaultProvider(env, id) {
-  await env.AI_API_CONFIG.put(KEY_DEFAULT_PROVIDER, id);
+  await env.VEGA_API_CONFIG.put(KEY_DEFAULT_PROVIDER, id);
 }
 
 // ---- Client API Key (for /v1/* access control) ----
@@ -274,7 +274,7 @@ const KEY_CLIENT_API_KEY = `${KV_PREFIX}client_api_key`;
  * This key is used to authenticate requests to /v1/* routes.
  */
 export async function getClientApiKey(env) {
-  const raw = await env.AI_API_CONFIG.get(KEY_CLIENT_API_KEY);
+  const raw = await env.VEGA_API_CONFIG.get(KEY_CLIENT_API_KEY);
   if (!raw) return null;
   return decrypt(env, raw);
 }
@@ -285,9 +285,9 @@ export async function getClientApiKey(env) {
  */
 export async function setClientApiKey(env, key) {
   if (!key) {
-    await env.AI_API_CONFIG.delete(KEY_CLIENT_API_KEY);
+    await env.VEGA_API_CONFIG.delete(KEY_CLIENT_API_KEY);
   } else {
     const encrypted = await encrypt(env, key);
-    await env.AI_API_CONFIG.put(KEY_CLIENT_API_KEY, encrypted);
+    await env.VEGA_API_CONFIG.put(KEY_CLIENT_API_KEY, encrypted);
   }
 }

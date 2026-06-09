@@ -1,6 +1,6 @@
-# AI API 统一代理
+# Vega API
 
-基于 Cloudflare Workers 的多后端 AI API 统一代理，将 Google Vertex AI、Google AI Studio 和 OpenAI 官方 API 聚合为单一 OpenAI 兼容接口。
+基于 Cloudflare Workers 的多后端 AI API 统一代理，将 Google Vertex AI、Google AI Studio 和 OpenAI 官方 API 聚合为单一 OpenAI 兼容接口。Vega API — 你的多后端 AI API 网关。
 
 ## ✨ 特性
 
@@ -69,7 +69,7 @@ npm install
 ### 2. 创建 KV 命名空间
 
 ```bash
-wrangler kv namespace create AI_API_CONFIG
+wrangler kv namespace create VEGA_API_CONFIG
 ```
 
 将输出的 `id` 填入 `wrangler.jsonc` 中的 `kv_namespaces`。
@@ -214,7 +214,7 @@ curl https://your-worker.workers.dev/v1/models \
 ## 🗂️ KV 数据结构
 
 ```
-AI_API_CONFIG (KV Namespace)
+VEGA_API_CONFIG (KV Namespace)
 ├── config:version           → 配置版本号（缓存失效用）
 ├── config:admin_password    → 管理密码 SHA-256 哈希
 ├── config:providers         → ["vertex-1", "openai-1", ...]
