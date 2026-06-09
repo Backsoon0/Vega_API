@@ -1,27 +1,36 @@
 # Vega API
 
-基于 Cloudflare Workers 的多后端 AI API 统一代理，将 Google Vertex AI、Google AI Studio 和 OpenAI 官方 API 聚合为单一 OpenAI 兼容接口。Vega API — 你的多后端 AI API 网关。
+基于 Cloudflare Workers 的多后端 AI API 统一代理，将 Google Vertex AI、Google AI Studio 和 OpenAI 官方 API 聚合为单一 OpenAI 兼容接口。前端管理面板使用 SvelteKit + Tailwind CSS 构建。
 
 ## ✨ 特性
 
 - 🔀 **多后端统一** — 一套接口聚合 Vertex AI、AI Studio、OpenAI，按模型名自动路由
 - 🔌 **OpenAI 兼容** — 标准 `/v1/chat/completions`、`/v1/models` 接口，无缝替换 OpenAI SDK base URL
-- 🎨 **可视化配置** — 内置 Web 管理面板，无需修改代码即可管理提供商和密钥
+- 🎨 **SvelteKit 管理面板** — 现代深色主题 UI，支持从 JSON 密钥文件一键导入 Vertex AI 配置
 - 🔐 **安全设计** — API Key AES-GCM 加密存储、fail2ban 防暴力破解、客户端访问密钥
 - 🤖 **模型自动发现** — 通过各提供商官方 API 自动获取可用模型列表
 - ⚡ **边缘计算** — 基于 Cloudflare Workers 全球边缘网络，低延迟高可用
-- 📦 **零依赖** — 仅使用 Web Crypto API 和 Workers 内置能力，无需第三方库
+
+## 🛠️ 技术栈
+
+| 层 | 技术 |
+|----|------|
+| 后端 | Cloudflare Workers + KV Storage |
+| 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons |
+| 加密 | Web Crypto API（AES-256-GCM、SHA-256） |
+| 测试 | Vitest + @cloudflare/vitest-pool-workers |
+| 部署 | Wrangler + Workers Static Assets |
 
 ## 🏗️ 架构
 
 ```
-客户端 (OpenAI SDK / curl / 任何 HTTP 客户端)
+客户端 (OpenAI SDK / curl / 浏览器)
       │
       ▼
 ┌─────────────────────────────────────────┐
 │         Cloudflare Worker               │
 │                                          │
-│  GET  /          → 🎨 配置管理面板       │
+│  SvelteKit SPA  → /                     │
 │  POST /v1/chat/completions  → 模型路由  │
 │  GET  /v1/models            → 模型聚合  │
 │  POST /admin/*              → 管理 API  │
@@ -45,11 +54,11 @@
 
 | 后端 | 认证方式 | 配置复杂度 |
 |------|---------|-----------|
-| **Google Vertex AI** | 服务账号 JWT (RS256) | 需要项目 ID、服务账号邮箱、PEM 私钥 |
+| **Google Vertex AI** | 服务账号 JWT (RS256) | 需项目 ID、服务账号邮箱、PEM 私钥（支持 JSON 密钥文件一键导入） |
 | **Google AI Studio** | API Key (Bearer) | 仅需 API Key |
 | **OpenAI 官方** | API Key (Bearer) | 仅需 API Key |
 
-每种后端支持配置多个实例（如多个 API Key 负载均衡）。
+每种后端支持配置多个实例。
 
 ## 🚀 快速部署
 
@@ -57,19 +66,18 @@
 
 - [Cloudflare 账号](https://dash.cloudflare.com/)
 - [Node.js](https://nodejs.org/) 18+
-- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) (`npm install -g wrangler`)
 
 ### 1. 克隆并安装
 
 ```bash
-git clone <repo-url> && cd ai_api
+git clone <repo-url> && cd vega-api
 npm install
 ```
 
 ### 2. 创建 KV 命名空间
 
 ```bash
-wrangler kv namespace create VEGA_API_CONFIG
+npx wrangler kv namespace create VEGA_API_CONFIG
 ```
 
 将输出的 `id` 填入 `wrangler.jsonc` 中的 `kv_namespaces`。
@@ -81,44 +89,28 @@ openssl rand -hex 32
 # 输出示例: 926090634389e3b4285e5774e59913aacca1acc1e19a41e01b8d4f30d3c5f5fe
 ```
 
-### 4. 设置加密密钥（用于加密存储 API Key）
+### 4. 设置加密密钥
 
 ```bash
-wrangler secret put ENCRYPTION_KEY
+npx wrangler secret put ENCRYPTION_KEY
 # 粘贴步骤 3 生成的密钥
 ```
 
-### 5. （可选）设置客户端访问密钥
+### 5. 构建前端并部署
 
 ```bash
-wrangler secret put OPENAI_API_KEY
-# 或部署后通过 Web 管理面板设置
+npm run build:ui    # 构建 SvelteKit 前端
+npm run deploy      # 部署 Worker + 静态资源
 ```
 
-### 6. 部署
-
-```bash
-wrangler deploy
-```
-
-### 7. 初始化配置
+### 6. 初始化配置
 
 浏览器访问 `https://your-worker.workers.dev/`：
 1. 首次访问输入管理密码（≥6 位）
-2. 点击「+ 添加提供商」
-3. 选择类型并填写配置
-4. 在「客户端 API Key」卡片中生成访问密钥
+2. 点击「+ 添加提供商」→ 选择类型 → 填写配置（Vertex AI 可 📂 一键导入 JSON 密钥文件）
+3. 在「客户端 API Key」卡片中生成访问密钥
 
 ## 📖 使用说明
-
-### Web 管理面板
-
-| 操作 | 说明 |
-|------|------|
-| 添加提供商 | 选择类型 → 填写认证信息 → 保存，模型自动从 API 获取 |
-| 启用/禁用 | 切换开关立即生效 |
-| 客户端密钥 | 🎲 随机生成 / ✏️ 自定义 / 👁️ 查看 / 📋 复制 / 🗑 删除 |
-| 修改密码 | 需验证当前密码 |
 
 ### 客户端调用
 
@@ -229,30 +221,52 @@ VEGA_API_CONFIG (KV Namespace)
 ## 🛠️ 开发
 
 ```bash
-npm run dev      # 本地开发 (wrangler dev)
-npm test         # 运行测试 (vitest)
-npm run deploy   # 部署到 Cloudflare
+npm install         # 安装所有依赖（npm workspaces）
+npm run dev         # Worker 开发服务器 (wrangler dev)
+npm run dev:ui      # 前端开发服务器 (SvelteKit Vite)
+npm test            # 运行测试 (vitest)
+npm run build:ui    # 构建前端
+npm run deploy      # 部署到 Cloudflare
 ```
 
 ### 项目结构
 
 ```
-src/
-├── index.js              # 主入口：路由分发 + 模型聚合 + 内联配置页面
-├── admin.js              # 管理 API (/admin/*)
-├── config.js             # KV 配置 CRUD
-├── crypto.js             # AES-GCM 加解密 + SHA-256
-├── fail2ban.js           # 登录限流
-├── admin-ui.html         # 配置页面源文件
-└── providers/
-    ├── vertex.js         # Google Vertex AI 代理
-    ├── ai-studio.js      # Google AI Studio 代理
-    └── openai.js         # OpenAI 官方代理
+├── package.json            # npm workspaces root
+├── wrangler.jsonc          # Workers 配置（KV + 静态资源绑定）
+├── vitest.config.js
+├── src/                    # Worker 源码
+│   ├── index.js            # 主入口：路由分发 + 模型聚合 + ASSETS fallback
+│   ├── admin.js            # 管理 API (/admin/*)
+│   ├── config.js           # KV 配置 CRUD
+│   ├── crypto.js           # AES-GCM 加解密 + SHA-256
+│   ├── fail2ban.js         # 登录限流
+│   └── providers/
+│       ├── vertex.js       # Google Vertex AI（JWT RS256）
+│       ├── ai-studio.js    # Google AI Studio（Bearer）
+│       └── openai.js       # OpenAI 官方（Bearer）
+├── test/
+│   └── index.spec.js       # 集成测试
+└── admin-ui/               # SvelteKit 管理面板（npm workspace）
+    ├── package.json
+    ├── svelte.config.js
+    ├── vite.config.ts
+    └── src/
+        ├── app.html
+        ├── app.css
+        ├── lib/
+        │   ├── api.ts                   # /admin/* API 客户端
+        │   ├── Modal.svelte
+        │   ├── ProviderCard.svelte
+        │   ├── ProviderForm.svelte      # 含 Vertex AI JSON 导入
+        │   ├── ClientKeySection.svelte
+        │   └── ChangePasswordModal.svelte
+        └── routes/
+            ├── +layout.svelte           # Auth guard
+            ├── +page.svelte             # 登录页
+            └── dashboard/
+                └── +page.svelte         # 主面板
 ```
-
-### 更新配置页面
-
-修改 `src/admin-ui.html` 后运行 `node rebuild.js` 重新内联到 `index.js`。
 
 ## 📄 许可
 

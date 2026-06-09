@@ -165,3 +165,10 @@ dist
 .env*
 !.env.example
 .wrangler/
+
+# SvelteKit build output
+admin-ui/build/
+admin-ui/.svelte-kit/
+
+# Dependencies
+admin-ui/node_modules/

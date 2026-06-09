@@ -8,17 +8,15 @@ import { describe, it, expect, beforeAll } from "vitest";
 import worker from "../src";
 
 describe("Vega API", () => {
-  // ---- Root / Health ----
-  it("serves admin UI at /", async () => {
+  // ---- Root (served by static assets via ASSETS binding) ----
+  it("serves SPA index.html at / via static assets", async () => {
     const request = new Request("http://example.com/");
     const ctx = createExecutionContext();
     const response = await worker.fetch(request, env, ctx);
     await waitOnExecutionContext(ctx);
     expect(response.status).toBe(200);
     const text = await response.text();
-    expect(text).toContain("<!DOCTYPE html>");
     expect(text).toContain("Vega API");
-    expect(text).toContain("</html>");
   });
 
   it("returns health check at /health", async () => {
@@ -82,8 +80,12 @@ describe("Vega API", () => {
   });
 
   // ---- 404 ----
-  it("returns 404 for unknown routes", async () => {
-    const request = new Request("http://example.com/unknown");
+  it("returns 404 for unknown POST routes", async () => {
+    const request = new Request("http://example.com/unknown", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ test: true }),
+    });
     const ctx = createExecutionContext();
     const response = await worker.fetch(request, env, ctx);
     await waitOnExecutionContext(ctx);

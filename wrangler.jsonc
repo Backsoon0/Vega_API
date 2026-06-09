@@ -44,13 +44,13 @@
 		}
 	],
 	/**
-	 * Static Assets
+	 * Static Assets — SvelteKit SPA frontend
 	 * https://developers.cloudflare.com/workers/static-assets/binding/
 	 */
-	// "assets": {  "directory": "./public/",  "binding": "ASSETS" }
-	/**
-	 * Service Bindings (communicate between multiple Workers)
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
-	 */
-	// "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
+	"assets": {
+		"directory": "./admin-ui/build/",
+		"not_found_handling": "single-page-application",
+		"binding": "ASSETS",
+		"run_worker_first": ["/admin/*", "/v1/*", "/health"]
+	}
 }
