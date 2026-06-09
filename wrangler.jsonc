@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "vertex",
+	"name": "ai_api",
 	"main": "src/index.js",
 	"compatibility_date": "2026-06-05",
 	"observability": {
@@ -32,8 +32,21 @@
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 */
 	// "vars": {  "MY_VARIABLE": "production_value" }
-	"vars": {  "GOOGLE_PROJECT_ID": "tavern-498204",
-				"GOOGLE_LOCATION" : "global" }
+	"vars": {
+		"GOOGLE_PROJECT_ID": "tavern-498204",
+		"GOOGLE_LOCATION": "global"
+	},
+	/**
+	 * KV Namespaces
+	 * https://developers.cloudflare.com/kv/
+	 */
+	"kv_namespaces": [
+		{
+			"binding": "AI_API_CONFIG",
+			"id": "cb50d643a6ad4dd6a9be3bafcd65cede",
+			"preview_id": "cb50d643a6ad4dd6a9be3bafcd65cede"
+		}
+	],
 	/**
 	 * Static Assets
 	 * https://developers.cloudflare.com/workers/static-assets/binding/
