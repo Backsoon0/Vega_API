@@ -226,12 +226,14 @@ function buildUpstreamBaseUrl(env) {
   const location = env.GOOGLE_LOCATION || "us-central1";
   if (!projectId) throw new Error("Missing GOOGLE_PROJECT_ID");
 
-  return `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/endpoints/openapi`;
+//   return `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/endpoints/openapi`;
+  return `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/endpoints/openapi`;
 }
 
 function buildPublisherModelsUrl(env, pageToken = "") {
   const location = env.GOOGLE_LOCATION || "us-central1";
-  const base = `https://${location}-aiplatform.googleapis.com/v1beta1/publishers/google/models`;
+//   const base = `https://${location}-aiplatform.googleapis.com/v1beta1/publishers/google/models`;
+  const base = `https://aiplatform.googleapis.com/v1beta1/publishers/google/models`;
   const url = new URL(base);
   url.searchParams.set("pageSize", "100");
   url.searchParams.set("listAllVersions", "false");
@@ -357,6 +359,8 @@ async function buildOpenAiCompatUpstreamRequest(request, env) {
     }
 
     body.model = normalizeModelId(body.model, env);
+
+	console.log("model =", body.model);
 
     const headers = new Headers(request.headers);
     headers.set("Authorization", `Bearer ${await getAccessToken(env)}`);

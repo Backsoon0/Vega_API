@@ -33,7 +33,7 @@
 	 */
 	// "vars": {  "MY_VARIABLE": "production_value" }
 	"vars": {  "GOOGLE_PROJECT_ID": "tavern-498204",
-				"GOOGLE_LOCATION" : "us-central1" }
+				"GOOGLE_LOCATION" : "global" }
 	/**
 	 * Static Assets
 	 * https://developers.cloudflare.com/workers/static-assets/binding/
