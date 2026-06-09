@@ -11,6 +11,8 @@ import {
   setAdminPassword,
   getDefaultProviderId,
   setDefaultProvider,
+  getClientApiKey,
+  setClientApiKey,
 } from "./config.js";
 import { sha256 } from "./crypto.js";
 import { checkBan, recordFailure, resetBan, getConfig } from "./fail2ban.js";
@@ -112,6 +114,20 @@ export async function handleAdminRoutes(request, env) {
   // Password change
   if (path === "/admin/change-password" && request.method === "POST") {
     return handleChangePassword(request, env);
+  }
+
+  // Client API key management
+  if (path === "/admin/client-key") {
+    if (request.method === "GET") {
+      return handleGetClientKey(request, env);
+    }
+    if (request.method === "POST") {
+      return handleSetClientKey(request, env);
+    }
+    if (request.method === "DELETE") {
+      await setClientApiKey(env, null);
+      return json({ ok: true, message: "Client API key removed. /v1/* routes are now public." });
+    }
   }
 
   // Check auth status
@@ -272,4 +288,70 @@ async function handleChangePassword(request, env) {
   const newHash = await sha256(newPassword);
   await setAdminPassword(env, newHash);
   return json({ ok: true, token: newHash, message: "Password changed successfully" });
+}
+
+// ---- Client API Key management ----
+
+/**
+ * Get the current client API key.
+ * Pass ?reveal=true to get the full key (otherwise masked).
+ */
+async function handleGetClientKey(request, env) {
+  const key = await getClientApiKey(env);
+  if (!key) {
+    return json({ configured: false, message: "No client API key set. /v1/* routes are public." });
+  }
+
+  const url = new URL(request.url);
+  const reveal = url.searchParams.get("reveal") === "true";
+
+  const masked = key.length > 8
+    ? "*".repeat(key.length - 4) + key.slice(-4)
+    : "****";
+
+  const result = {
+    configured: true,
+    masked,
+    length: key.length,
+    prefix: key.substring(0, 4),
+  };
+
+  if (reveal) {
+    result.fullKey = key;
+  }
+
+  return json(result);
+}
+
+/**
+ * Set or generate a client API key.
+ * Body: { key?: "custom-key", generate?: true }
+ */
+async function handleSetClientKey(request, env) {
+  const body = await request.json().catch(() => ({}));
+  let { key, generate } = body;
+
+  if (generate || !key) {
+    // Generate a cryptographically random API key
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    key = "sk-" + Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  if (key.length < 8) {
+    return json({ error: "API key must be at least 8 characters" }, 400);
+  }
+
+  await setClientApiKey(env, key);
+
+  const masked = key.length > 8
+    ? "*".repeat(key.length - 4) + key.slice(-4)
+    : "****";
+
+  return json({
+    ok: true,
+    message: "Client API key set successfully",
+    masked,
+    fullKey: key,  // Return full key so admin can copy it
+    configured: true,
+  });
 }

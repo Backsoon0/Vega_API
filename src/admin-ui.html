@@ -184,6 +184,38 @@
       </div>
     </div>
 
+    <!-- Client API Key Card -->
+    <div class="card" style="margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <strong style="font-size:15px;">🔑 客户端 API Key</strong>
+          <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">用于调用 /v1/* 接口</span>
+        </div>
+        <div style="display:flex;gap:8px;" id="apikey-actions">
+          <button class="btn btn-sm" onclick="generateApiKey()" id="btn-generate-key">🎲 随机生成</button>
+          <button class="btn btn-sm" onclick="showSetApiKey()">✏️ 自行设置</button>
+        </div>
+      </div>
+      <div id="apikey-display" style="margin-top:10px;font-size:13px;color:var(--text-muted);">
+        加载中...
+      </div>
+      <div id="apikey-input-row" style="display:none;margin-top:10px;gap:8px;align-items:center;">
+        <input type="text" id="apikey-input" placeholder="输入 API Key（至少8位）" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);font-size:13px;">
+        <button class="btn btn-primary btn-sm" onclick="saveApiKey()">💾 保存</button>
+        <button class="btn btn-sm" onclick="cancelSetApiKey()">取消</button>
+      </div>
+      <div id="apikey-full-display" style="display:none;margin-top:10px;padding:10px;background:var(--bg-input);border-radius:6px;font-family:monospace;font-size:13px;word-break:break-all;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span id="apikey-full-text" style="color:var(--success);"></span>
+          <button class="btn btn-sm" onclick="copyApiKey()">📋 复制</button>
+        </div>
+        <span style="font-size:11px;color:var(--warning);">⚠️ 此密钥仅显示一次，请立即复制保存</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;" id="apikey-secondary-actions">
+        <button class="btn btn-sm" style="color:var(--danger);font-size:11px;" onclick="deleteApiKey()" id="btn-delete-key" style="display:none;">🗑 删除密钥（公开访问）</button>
+      </div>
+    </div>
+
     <div id="provider-list" class="provider-list">
       <div class="card" style="text-align:center;color:var(--text-muted);">加载中...</div>
     </div>
@@ -253,9 +285,8 @@
       </div>
 
       <!-- Common fields -->
-      <div class="form-group">
-        <label>模型列表（每行一个）</label>
-        <textarea id="prov-models" placeholder="google/gemini-2.5-flash&#10;google/gemini-2.5-pro"></textarea>
+      <div class="form-group" style="font-size:12px;color:var(--text-muted);padding:8px 0;">
+        💡 模型列表将自动从提供商 API 获取，无需手动配置。
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -339,6 +370,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
       document.getElementById("login-screen").style.display = "none";
       document.getElementById("main-screen").style.display = "block";
       loadProviders();
+      loadApiKey();
       if (data.message) showToast(data.message, "success");
     } else {
       errEl.textContent = data.error || "登录失败";
@@ -364,6 +396,7 @@ async function checkAuthAndLoad() {
       document.getElementById("login-screen").style.display = "none";
       document.getElementById("main-screen").style.display = "block";
       loadProviders();
+      loadApiKey();
     } else {
       localStorage.removeItem("admin_token");
       authToken = "";
@@ -417,7 +450,7 @@ function renderProviderList() {
     const statusBadge = p.enabled
       ? `<span style="color:var(--success);font-size:12px;">● 启用</span>`
       : `<span style="color:var(--text-muted);font-size:12px;">○ 禁用</span>`;
-    const modelsPreview = (p.models || []).join(", ") || "（无模型）";
+    const modelsPreview = "自动从 API 获取";
 
     return `<div class="provider-card ${disabledClass}">
       <span class="provider-type ${typeClass}">${typeLabel}</span>
@@ -472,24 +505,26 @@ function editProvider(id) {
   document.getElementById("prov-type").value = p.type;
   document.getElementById("prov-type").disabled = true;
   document.getElementById("prov-name").value = p.name;
-  document.getElementById("prov-models").value = (p.models || []).join("\\n");
   document.getElementById("prov-weight").value = p.weight || 1;
   document.getElementById("prov-enabled").checked = p.enabled;
 
   hideAllTypeFields();
   onTypeChange();
 
-  // Fill type-specific fields
+  // Fill type-specific fields (leave sensitive fields empty - user re-enters if changing)
   const cfg = p.config || {};
   if (p.type === "vertex_ai") {
     document.getElementById("v-project-id").value = cfg.projectId || "";
     document.getElementById("v-location").value = cfg.location || "us-central1";
     document.getElementById("v-sa-email").value = cfg.serviceAccountEmail || "";
-    document.getElementById("v-private-key").value = cfg.privateKey || "";
+    document.getElementById("v-private-key").value = "";  // Never show - user re-enters to change
+    document.getElementById("v-private-key").placeholder = "（已设置，留空则不修改）";
   } else if (p.type === "google_ai_studio") {
-    document.getElementById("f-api-key").value = cfg.apiKey || "";
+    document.getElementById("f-api-key").value = "";  // Never show
+    document.getElementById("f-api-key").placeholder = "（已设置，留空则不修改）";
   } else if (p.type === "openai") {
-    document.getElementById("f-api-key").value = cfg.apiKey || "";
+    document.getElementById("f-api-key").value = "";  // Never show
+    document.getElementById("f-api-key").placeholder = "（已设置，留空则不修改）";
     document.getElementById("o-base-url").value = cfg.baseUrl || "";
   }
 
@@ -552,9 +587,6 @@ document.getElementById("provider-form").addEventListener("submit", async (e) =>
     config.baseUrl = document.getElementById("o-base-url").value.trim() || "";
   }
 
-  const models = document.getElementById("prov-models").value
-    .split(/[\\n,]+/).map(s => s.trim()).filter(Boolean);
-
   const body = {
     id,
     type,
@@ -562,7 +594,7 @@ document.getElementById("provider-form").addEventListener("submit", async (e) =>
     enabled: document.getElementById("prov-enabled").checked,
     weight: parseInt(document.getElementById("prov-weight").value) || 1,
     config,
-    models,
+    models: [],  // Models are auto-fetched from provider API
   };
 
   try {
@@ -674,6 +706,138 @@ function showToast(msg, type) {
   toast.className = "toast toast-" + type + " show";
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.classList.remove("show"); }, 3000);
+}
+
+// ==================== Client API Key ====================
+async function loadApiKey() {
+  try {
+    const resp = await fetch("/admin/client-key", {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    const data = await resp.json();
+    const display = document.getElementById("apikey-display");
+    const deleteBtn = document.getElementById("btn-delete-key");
+    if (data.configured) {
+      display.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span>当前密钥：</span>
+          <code style="color:var(--accent);">${esc(data.masked)}</code>
+          <span style="color:var(--text-muted);">(${data.length} 字符)</span>
+          <button class="btn btn-sm" onclick="revealApiKey()" style="font-size:11px;">👁️ 查看</button>
+        </div>`;
+      deleteBtn.style.display = "";
+    } else {
+      display.innerHTML = '<span style="color:var(--warning);">⚠️ 未设置密钥 — /v1/* 接口可公开访问</span>';
+      deleteBtn.style.display = "none";
+    }
+    document.getElementById("apikey-full-display").style.display = "none";
+  } catch (err) {
+    console.error("Failed to load API key:", err);
+  }
+}
+
+async function revealApiKey() {
+  try {
+    const resp = await fetch("/admin/client-key?reveal=true", {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    const data = await resp.json();
+    if (resp.ok && data.fullKey) {
+      document.getElementById("apikey-full-text").textContent = data.fullKey;
+      document.getElementById("apikey-full-display").style.display = "";
+      showToast("密钥已显示", "success");
+    }
+  } catch (err) {
+    showToast("获取失败: " + err.message, "error");
+  }
+}
+
+async function generateApiKey() {
+  try {
+    const resp = await fetch("/admin/client-key", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ generate: true }),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.fullKey) {
+      document.getElementById("apikey-full-text").textContent = data.fullKey;
+      document.getElementById("apikey-full-display").style.display = "";
+      loadApiKey();
+      showToast("密钥已生成", "success");
+    } else {
+      showToast(data.error || "操作失败", "error");
+    }
+  } catch (err) {
+    showToast("操作失败: " + err.message, "error");
+  }
+}
+
+function showSetApiKey() {
+  document.getElementById("apikey-input-row").style.display = "flex";
+  document.getElementById("apikey-input").value = "";
+  document.getElementById("apikey-input").focus();
+}
+
+function cancelSetApiKey() {
+  document.getElementById("apikey-input-row").style.display = "none";
+  document.getElementById("apikey-input").value = "";
+}
+
+async function saveApiKey() {
+  const key = document.getElementById("apikey-input").value.trim();
+  if (!key || key.length < 8) {
+    showToast("API Key 至少需要 8 个字符", "error");
+    return;
+  }
+  try {
+    const resp = await fetch("/admin/client-key", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ key }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      cancelSetApiKey();
+      loadApiKey();
+      showToast("密钥已设置", "success");
+    } else {
+      showToast(data.error || "操作失败", "error");
+    }
+  } catch (err) {
+    showToast("操作失败: " + err.message, "error");
+  }
+}
+
+async function deleteApiKey() {
+  if (!confirm("确定要删除客户端 API Key 吗？\n删除后 /v1/* 接口将无需认证即可访问。")) return;
+  try {
+    const resp = await fetch("/admin/client-key", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (resp.ok) {
+      loadApiKey();
+      showToast("密钥已删除，接口可公开访问", "success");
+    }
+  } catch (err) {
+    showToast("操作失败: " + err.message, "error");
+  }
+}
+
+function copyApiKey() {
+  const text = document.getElementById("apikey-full-text").textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    showToast("已复制到剪贴板", "success");
+  }).catch(() => {
+    showToast("复制失败，请手动选择复制", "error");
+  });
 }
 
 // ==================== Modal click-outside ====================

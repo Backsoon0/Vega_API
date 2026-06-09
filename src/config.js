@@ -3,15 +3,23 @@
 
 import { encrypt, decrypt } from "./crypto.js";
 
-// Cache version counter: incremented on every save/delete so index.js can detect stale cache
-let configVersion = 0;
-export function getConfigVersion() { return configVersion; }
-function bumpConfigVersion() { configVersion++; }
-
+// Cache version counter stored in KV (cross-isolate safe).
+// Incremented on every save/delete so index.js can detect stale cache.
 const KV_PREFIX = "config:";
 const KEY_PROVIDERS = `${KV_PREFIX}providers`;
 const KEY_ADMIN_PASSWORD = `${KV_PREFIX}admin_password`;
 const KEY_DEFAULT_PROVIDER = `${KV_PREFIX}default_provider`;
+const KEY_CONFIG_VERSION = `${KV_PREFIX}version`;
+
+export async function getConfigVersion(env) {
+  const raw = await env.AI_API_CONFIG.get(KEY_CONFIG_VERSION);
+  return raw ? parseInt(raw, 10) : 0;
+}
+
+async function bumpConfigVersion(env) {
+  const current = await getConfigVersion(env);
+  await env.AI_API_CONFIG.put(KEY_CONFIG_VERSION, String(current + 1));
+}
 
 function providerKey(id) {
   return `${KV_PREFIX}provider:${id}`;
@@ -144,7 +152,19 @@ export async function getProvider(env, id) {
 }
 
 /**
+ * Get a provider without decrypting (for internal use: merging during save).
+ */
+async function getProviderRaw(env, id) {
+  try {
+    return await env.AI_API_CONFIG.get(providerKey(id), "json");
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Create or update a provider. Encrypts sensitive fields automatically.
+ * Preserves existing encrypted values when the new value is empty or masked.
  */
 export async function saveProvider(env, provider) {
   const { id, type, name, enabled, config, models, weight } = provider;
@@ -161,10 +181,25 @@ export async function saveProvider(env, provider) {
   // Encrypt sensitive config fields (apiKey, privateKey, etc.)
   const encryptedConfig = { ...config };
   const sensitiveKeys = ["apiKey", "privateKey"];
+
+  // Merge with existing record: keep old encrypted values for empty/masked fields
+  const existing = await getProviderRaw(env, id);
+  const oldConfig = existing ? (existing.config || {}) : {};
+
   for (const key of sensitiveKeys) {
-    if (encryptedConfig[key] && !encryptedConfig[key].startsWith("enc:")) {
-      encryptedConfig[key] = await encrypt(env, encryptedConfig[key]);
+    const newVal = encryptedConfig[key];
+    if (!newVal || newVal === "***encrypted***" || newVal.trim() === "") {
+      // Keep existing encrypted value (user didn't change this field)
+      if (oldConfig[key]) {
+        encryptedConfig[key] = oldConfig[key];
+      } else {
+        delete encryptedConfig[key];
+      }
+    } else if (!newVal.startsWith("enc:")) {
+      // New plaintext value → encrypt it
+      encryptedConfig[key] = await encrypt(env, newVal);
     }
+    // If it already starts with "enc:", keep as-is
   }
 
   const record = {
@@ -186,7 +221,7 @@ export async function saveProvider(env, provider) {
     await saveProviderIds(env, ids);
   }
 
-  bumpConfigVersion();
+  bumpConfigVersion(env);
   return record;
 }
 
@@ -228,4 +263,31 @@ export async function getDefaultProviderId(env) {
  */
 export async function setDefaultProvider(env, id) {
   await env.AI_API_CONFIG.put(KEY_DEFAULT_PROVIDER, id);
+}
+
+// ---- Client API Key (for /v1/* access control) ----
+
+const KEY_CLIENT_API_KEY = `${KV_PREFIX}client_api_key`;
+
+/**
+ * Get the client API key (decrypted). Returns null if not set.
+ * This key is used to authenticate requests to /v1/* routes.
+ */
+export async function getClientApiKey(env) {
+  const raw = await env.AI_API_CONFIG.get(KEY_CLIENT_API_KEY);
+  if (!raw) return null;
+  return decrypt(env, raw);
+}
+
+/**
+ * Set the client API key (encrypted storage).
+ * Pass null to remove the key (disable auth).
+ */
+export async function setClientApiKey(env, key) {
+  if (!key) {
+    await env.AI_API_CONFIG.delete(KEY_CLIENT_API_KEY);
+  } else {
+    const encrypted = await encrypt(env, key);
+    await env.AI_API_CONFIG.put(KEY_CLIENT_API_KEY, encrypted);
+  }
 }

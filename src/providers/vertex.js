@@ -18,10 +18,16 @@ function normalizePem(pem) {
 }
 
 function pemToArrayBuffer(pem) {
-  const clean = normalizePem(pem)
+  let clean = normalizePem(pem)
     .replace("-----BEGIN PRIVATE KEY-----", "")
     .replace("-----END PRIVATE KEY-----", "")
     .replace(/\s+/g, "");
+  // Remove any non-base64 characters that might have slipped in
+  clean = clean.replace(/[^A-Za-z0-9+/=]/g, "");
+
+  if (!clean) {
+    throw new Error("Vertex AI: Invalid private key — PEM is empty after cleaning");
+  }
 
   const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);

@@ -24,7 +24,9 @@ function bytesToBase64(bytes) {
 }
 
 function base64ToBytes(base64) {
-  const binary = atob(base64);
+  // Sanitize: trim whitespace and remove non-base64 chars
+  const clean = String(base64).trim().replace(/[^A-Za-z0-9+/=]/g, "");
+  const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
