@@ -166,6 +166,13 @@ dist
 !.env.example
 .wrangler/
 
+# IDE & editor settings
+.vscode/
+
+# Claude Code local config
+.mcp.json
+.claude/
+
 # SvelteKit build output
 admin-ui/build/
 admin-ui/.svelte-kit/
