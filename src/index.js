@@ -258,23 +258,60 @@ async function handleChatCompletions(request, env, ctx) {
     const upstreamResp = await handler.proxyRequest(newRequest, env, provider, suffix);
 
     // Record usage: read body once, extract token counts, return reconstructed response
-    if (upstreamResp.ok && upstreamResp.body) {
-      const bodyText = await upstreamResp.text();
-      try {
-        const data = JSON.parse(bodyText);
-        if (data?.usage) {
-          const u = { prompt: data.usage.prompt_tokens || 0, completion: data.usage.completion_tokens || 0 };
-          if (ctx) ctx.waitUntil(recordUsage(env, provider.id, u));
+    if (!upstreamResp.ok || !upstreamResp.body) return upstreamResp;
+
+    const isStream = !!body.stream;
+
+    if (isStream) {
+      // Streaming: pipe through TransformStream, capture usage from last SSE chunk
+      let lastData = "";
+      const ts = new TransformStream({
+        transform(chunk, ctrl) {
+          ctrl.enqueue(chunk);
+          const text = new TextDecoder().decode(chunk);
+          const lines = text.split("\n");
+          for (const line of lines) {
+            const t = line.trim();
+            if (t.startsWith("data: ") && t !== "data: [DONE]") {
+              lastData = t.slice(6).trim();
+            }
+          }
+        },
+        flush() {
+          if (lastData && ctx) {
+            try {
+              const d = JSON.parse(lastData);
+              if (d?.usage) {
+                ctx.waitUntil(recordUsage(env, provider.id, {
+                  prompt: d.usage.prompt_tokens || 0,
+                  completion: d.usage.completion_tokens || 0,
+                }));
+              }
+            } catch { /* ignore */ }
+          }
         }
-      } catch { /* ignore parse errors */ }
-      return new Response(bodyText, {
+      });
+      return new Response(upstreamResp.body.pipeThrough(ts), {
         status: upstreamResp.status,
         statusText: upstreamResp.statusText,
         headers: upstreamResp.headers,
       });
     }
 
-    return upstreamResp;
+    // Non-streaming: read body once, extract usage, reconstruct response
+    const bodyText = await upstreamResp.text();
+    try {
+      const data = JSON.parse(bodyText);
+      if (data?.usage) {
+        const u = { prompt: data.usage.prompt_tokens || 0, completion: data.usage.completion_tokens || 0 };
+        if (ctx) ctx.waitUntil(recordUsage(env, provider.id, u));
+      }
+    } catch { /* ignore parse errors */ }
+    return new Response(bodyText, {
+      status: upstreamResp.status,
+      statusText: upstreamResp.statusText,
+      headers: upstreamResp.headers,
+    });
   } catch (err) {
     console.error(`Provider ${provider.id} error:`, err.message);
     return json(
