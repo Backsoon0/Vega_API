@@ -1,1 +1,167 @@
+/* ── Google Fonts: IBM Plex Sans (body) + JetBrains Mono (code/headings) ── */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
 @import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Code Dark — Design Tokens (Tailwind CSS v4 @theme)
+   ═══════════════════════════════════════════════════════════════════════════ */
+@theme {
+  /* ── Typography ── */
+  --font-family-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+
+  /* ── Surface Colors ── */
+  --color-background: #0F172A;
+  --color-surface: #1B2336;
+  --color-surface-elevated: #1E293B;
+  --color-surface-hover: #243044;
+  --color-input: rgba(15, 23, 42, 0.8);
+
+  /* ── Text Hierarchy ── */
+  --color-primary: #F8FAFC;
+  --color-secondary: #CBD5E1;
+  --color-muted: #64748B;
+  --color-placeholder: #475569;
+
+  /* ── Accent (Green — status, success, "Run") ── */
+  --color-accent: #22C55E;
+  --color-accent-hover: #16A34A;
+  --color-accent-subtle: rgba(34, 197, 94, 0.10);
+
+  /* ── CTA (Blue — buttons, links, focus) ── */
+  --color-cta: #3B82F6;
+  --color-cta-hover: #2563EB;
+  --color-cta-subtle: rgba(59, 130, 246, 0.10);
+
+  /* ── Semantic Actions ── */
+  --color-danger: #EF4444;
+  --color-danger-hover: #DC2626;
+  --color-danger-subtle: rgba(239, 68, 68, 0.10);
+  --color-warning: #F59E0B;
+  --color-warning-subtle: rgba(245, 158, 11, 0.10);
+  --color-success: #22C55E;
+  --color-success-subtle: rgba(34, 197, 94, 0.10);
+
+  /* ── Provider Type Badges ── */
+  --color-vertex: #818CF8;
+  --color-vertex-subtle: rgba(129, 140, 248, 0.12);
+  --color-studio: #34D399;
+  --color-studio-subtle: rgba(52, 211, 153, 0.12);
+  --color-openai: #FBBF24;
+  --color-openai-subtle: rgba(251, 191, 36, 0.12);
+
+  /* ── Radii ── */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+
+  /* ── Shadows ── */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-modal: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+  --shadow-glow-cta: 0 0 20px rgba(59, 130, 246, 0.25), 0 0 40px rgba(59, 130, 246, 0.10);
+  --shadow-glow-accent: 0 0 20px rgba(34, 197, 94, 0.25), 0 0 40px rgba(34, 197, 94, 0.10);
+
+  /* ── Animation Tokens ── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+
+  /* ── Keyframe Animations (registered utilities) ── */
+  --animate-toast-in: slideIn 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-toast-out: slideOut 200ms cubic-bezier(0.4, 0, 1, 1) both;
+  --animate-fade-in: fadeIn 200ms ease-out both;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Base Styles
+   ═══════════════════════════════════════════════════════════════════════════ */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-primary);
+  font-family: var(--font-family-sans);
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* ── Focus ring (visible, elegant) ── */
+*:focus-visible {
+  outline: 2px solid var(--color-cta);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Custom scrollbar (WebKit) ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.20);
+}
+
+/* ── Selection ── */
+::selection {
+  background: rgba(59, 130, 246, 0.30);
+  color: #F8FAFC;
+}
+
+/* ── Keyframe Animations ── */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes slideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

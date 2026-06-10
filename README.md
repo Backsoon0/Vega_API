@@ -6,7 +6,7 @@
 
 - 🔀 **多后端统一** — 一套接口聚合 Vertex AI、AI Studio、OpenAI，按模型名自动路由
 - 🔌 **OpenAI 兼容** — 标准 `/v1/chat/completions`、`/v1/models` 接口，无缝替换 OpenAI SDK base URL
-- 🎨 **SvelteKit 管理面板** — 现代深色主题 UI，支持从 JSON 密钥文件一键导入 Vertex AI 配置
+- 🎨 **SvelteKit 管理面板** — Code Dark 深色主题，JetBrains Mono + IBM Plex Sans 字体，响应式设计支持桌面/移动端
 - 🔐 **安全设计** — API Key AES-GCM 加密存储、fail2ban 防暴力破解、客户端访问密钥
 - 🤖 **模型自动发现** — 通过各提供商官方 API 自动获取可用模型列表
 - ⚡ **边缘计算** — 基于 Cloudflare Workers 全球边缘网络，低延迟高可用
@@ -16,7 +16,7 @@
 | 层 | 技术 |
 |----|------|
 | 后端 | Cloudflare Workers + KV Storage |
-| 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons |
+| 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons（Code Dark 主题） |
 | 加密 | Web Crypto API（AES-256-GCM、SHA-256） |
 | 测试 | Vitest + @cloudflare/vitest-pool-workers |
 | 部署 | Wrangler + Workers Static Assets |
@@ -106,7 +106,7 @@ npm run deploy      # 部署 Worker + 静态资源
 ### 6. 初始化配置
 
 浏览器访问 `https://your-worker.workers.dev/`：
-1. 首次访问输入管理密码（≥6 位）
+1. 首次访问输入管理密码（≥6 位，首次输入的密码将会成为你的管理密码）
 2. 点击「+ 添加提供商」→ 选择类型 → 填写配置（Vertex AI 可 📂 一键导入 JSON 密钥文件）
 3. 在「客户端 API Key」卡片中生成访问密钥
 
@@ -267,6 +267,28 @@ npm run deploy      # 部署到 Cloudflare
             └── dashboard/
                 └── +page.svelte         # 主面板
 ```
+
+## 🎨 设计系统 — Code Dark
+
+管理面板使用 **Code Dark** 主题（OLED 暗色 + Minimalism），设计 Token 集中在 `app.css`：
+
+| 层级 | 值 | 用途 |
+|------|-----|------|
+| 背景 | `#0F172A` | 页面底色 |
+| 表面 | `#1B2336` / `#1E293B` | 卡片、输入框背景 |
+| 主文字 | `#F8FAFC` | 标题、正文 |
+| 次要文字 | `#CBD5E1` / `#64748B` | 描述、提示 |
+| Accent 绿 | `#22C55E` | 状态指示、成功、启用 |
+| CTA 蓝 | `#3B82F6` | 按钮、链接、聚焦环 |
+| 危险红 | `#EF4444` | 删除、错误 |
+| 警告黄 | `#F59E0B` | 密钥提示、禁用警告 |
+
+| 字体 | 用途 |
+|------|------|
+| **JetBrains Mono** | 标题、代码、Provider ID |
+| **IBM Plex Sans** | 正文、标签、UI 控件 |
+
+完整 Token 定义及动画关键帧见 [admin-ui/src/app.css](admin-ui/src/app.css)。
 
 ## 📄 许可
 

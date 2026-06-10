@@ -44,15 +44,22 @@ Request flow:
 | [src/providers/openai.js](src/providers/openai.js) | OpenAI: Bearer token, configurable base URL |
 | [test/index.spec.js](test/index.spec.js) | Integration tests (`cloudflare:test` Vitest pool) |
 
-**Admin frontend (SvelteKit SPA):**
+**Admin frontend (SvelteKit SPA) — Code Dark theme:**
 
 | File | Role |
 |------|------|
+| [admin-ui/src/app.css](admin-ui/src/app.css) | Design tokens (`@theme`), Google Fonts, keyframe animations, base styles |
+| [admin-ui/src/app.html](admin-ui/src/app.html) | HTML shell: SVG favicon, font preconnect, `theme-color` meta |
 | [admin-ui/src/lib/api.ts](admin-ui/src/lib/api.ts) | API client for `/admin/*` endpoints |
-| [admin-ui/src/routes/+page.svelte](admin-ui/src/routes/+page.svelte) | Login page |
-| [admin-ui/src/routes/dashboard/+page.svelte](admin-ui/src/routes/dashboard/+page.svelte) | Main dashboard (providers + client key) |
-| [admin-ui/src/lib/ProviderForm.svelte](admin-ui/src/lib/ProviderForm.svelte) | Add/edit provider form (with Vertex AI JSON import) |
-| [admin-ui/src/lib/ClientKeySection.svelte](admin-ui/src/lib/ClientKeySection.svelte) | Client API key management card |
+| [admin-ui/src/routes/+layout.svelte](admin-ui/src/routes/+layout.svelte) | Auth guard + loading skeleton |
+| [admin-ui/src/routes/+page.svelte](admin-ui/src/routes/+page.svelte) | Login page (password show/hide toggle) |
+| [admin-ui/src/routes/dashboard/+page.svelte](admin-ui/src/routes/dashboard/+page.svelte) | Main dashboard (skeleton loading, empty state, responsive) |
+| [admin-ui/src/lib/Modal.svelte](admin-ui/src/lib/Modal.svelte) | Generic modal with Svelte transition animations (fly + fade) |
+| [admin-ui/src/lib/Toast.svelte](admin-ui/src/lib/Toast.svelte) | Toast notifications (event-driven + direct `trigger()` export) |
+| [admin-ui/src/lib/ProviderCard.svelte](admin-ui/src/lib/ProviderCard.svelte) | Provider card: always-visible actions on mobile, hover-reveal on desktop |
+| [admin-ui/src/lib/ProviderForm.svelte](admin-ui/src/lib/ProviderForm.svelte) | Add/edit provider form. Type selector locked with lock icon when editing, JSON key file import |
+| [admin-ui/src/lib/ClientKeySection.svelte](admin-ui/src/lib/ClientKeySection.svelte) | Client API key management (generate, custom, reveal with close button, copy, delete) |
+| [admin-ui/src/lib/ChangePasswordModal.svelte](admin-ui/src/lib/ChangePasswordModal.svelte) | Change admin password modal with show/hide toggles |
 
 ## Provider Interface Contract
 
@@ -101,3 +108,47 @@ Sensitive fields (`apiKey`, `privateKey`) stored `enc:` prefixed. Edit without c
 - Admin auth: SHA-256 password hash → Bearer token = hash itself
 - fail2ban: 5 failures per 5-min window → 15-min IP ban
 - Sensitive fields never echoed in edit forms
+
+## Design System — Code Dark
+
+Admin UI uses a dark OLED theme with semantic color tokens defined via Tailwind CSS v4 `@theme` directive in [admin-ui/src/app.css](admin-ui/src/app.css).
+
+**Color tokens (use as Tailwind utilities):**
+
+| Token | Hex | Utility |
+|-------|-----|---------|
+| `background` | `#0F172A` | `bg-background` |
+| `surface` | `#1B2336` | `bg-surface` |
+| `surface-elevated` | `#1E293B` | `bg-surface-elevated` |
+| `surface-hover` | `#243044` | `bg-surface-hover` |
+| `input` | `rgba(15,23,42,0.8)` | `bg-input` |
+| `primary` (text) | `#F8FAFC` | `text-primary` |
+| `secondary` | `#CBD5E1` | `text-secondary` |
+| `muted` | `#64748B` | `text-muted` |
+| `placeholder` | `#475569` | `text-placeholder` |
+| `accent` (green) | `#22C55E` | `text-accent`, `bg-accent` |
+| `accent-subtle` | `rgba(34,197,94,0.10)` | `bg-accent-subtle` |
+| `cta` (blue) | `#3B82F6` | `text-cta`, `bg-cta` |
+| `cta-subtle` | `rgba(59,130,246,0.10)` | `bg-cta-subtle` |
+| `danger` | `#EF4444` | `text-danger`, `bg-danger` |
+| `danger-subtle` | `rgba(239,68,68,0.10)` | `bg-danger-subtle` |
+| `warning` | `#F59E0B` | `text-warning` |
+| `warning-subtle` | `rgba(245,158,11,0.10)` | `bg-warning-subtle` |
+| `success` | `#22C55E` | `text-success`, `bg-success` |
+| `success-subtle` | `rgba(34,197,94,0.10)` | `bg-success-subtle` |
+
+**Provider badge tokens:** `vertex` / `vertex-subtle` (indigo), `studio` / `studio-subtle` (teal), `openai` / `openai-subtle` (amber).
+
+**Fonts:** JetBrains Mono (`font-mono`) for headings/code/IDs; IBM Plex Sans (`font-sans`) for body/labels.
+
+**Shadows:** `shadow-card`, `shadow-card-hover`, `shadow-modal`, `shadow-glow-cta`, `shadow-glow-accent`.
+
+**Animations:** `animate-toast-in`, `animate-toast-out`, `animate-fade-in` (registered in `@theme`).
+
+**Borders:** Use Tailwind opacity modifiers: `border-white/[0.06]`, `border-white/[0.08]`, `border-white/[0.10]`, `border-white/[0.14]`.
+
+**Focus ring:** Global `*:focus-visible` style with `outline: 2px solid var(--color-cta)`.
+
+**Responsive breakpoints:** `sm:640px` (tablet), `lg:1024px` (desktop). Mobile-first: stacks vertically, full-width cards, always-visible action buttons. Desktop: `max-w-4xl` centered, hover-reveal actions.
+
+**Reduced motion:** `prefers-reduced-motion: reduce` disables all animations/transitions globally.

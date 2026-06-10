@@ -15,9 +15,8 @@
     });
   });
 
-  // Re-check on navigation
   $effect(() => {
-    $page.url.pathname; // trigger on navigation
+    $page.url.pathname;
     if (!checking && authed !== isAuthenticated()) {
       authed = isAuthenticated();
     }
@@ -25,13 +24,23 @@
 </script>
 
 {#if checking}
-  <div class="min-h-screen flex items-center justify-center bg-zinc-950">
-    <div class="flex items-center gap-3 text-zinc-400">
-      <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+  <div class="min-h-dvh flex items-center justify-center bg-background">
+    <div class="flex flex-col items-center gap-4">
+      <!-- Spinner -->
+      <svg
+        class="animate-spin h-6 w-6 text-cta"
+        viewBox="0 0 24 24"
+        fill="none"
+        aria-label="加载中"
+      >
+        <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" />
+        <path
+          class="opacity-80"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+        />
       </svg>
-      <span class="text-sm">加载中...</span>
+      <span class="text-sm text-muted font-mono">验证身份...</span>
     </div>
   </div>
 {:else}
