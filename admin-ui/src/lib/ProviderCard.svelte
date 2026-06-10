@@ -91,7 +91,6 @@
              inline-flex items-center justify-center"
       class:text-warning={provider.enabled}
       class:text-accent={!provider.enabled}
-      class:text-muted={true}
       onclick={() => ontoggle(provider.id)}
       title={provider.enabled ? "禁用提供商" : "启用提供商"}
       aria-label={provider.enabled ? `禁用 ${provider.name}` : `启用 ${provider.name}`}

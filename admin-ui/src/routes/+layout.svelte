@@ -1,6 +1,7 @@
 <script lang="ts">
   import { isAuthenticated, checkAuth } from "$lib/api";
   import { page } from "$app/stores";
+  import Toast from "$lib/Toast.svelte";
   import "../app.css";
 
   let { children } = $props();
@@ -45,4 +46,5 @@
   </div>
 {:else}
   {@render children()}
+  <Toast />
 {/if}

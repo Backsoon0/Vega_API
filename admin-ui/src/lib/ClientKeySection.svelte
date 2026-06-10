@@ -1,6 +1,6 @@
 <script lang="ts">
   import {
-    Key, Eye, EyeOff, Copy, Trash2, RefreshCw, Edit3,
+    Eye, Copy, Trash2, RefreshCw, Edit3,
     Shield, ShieldOff, Check, X, AlertTriangle
   } from "lucide-svelte";
   import { getClientKey, setClientKey, deleteClientKey, revealClientKey } from "$lib/api";

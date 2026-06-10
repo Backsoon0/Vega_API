@@ -9,6 +9,8 @@
   import ClientKeySection from "$lib/ClientKeySection.svelte";
   import ChangePasswordModal from "$lib/ChangePasswordModal.svelte";
 
+  const CURRENT_YEAR = new Date().getFullYear();
+
   let providers = $state<Provider[]>([]);
   let loading = $state(true);
   let modalOpen = $state(false);
@@ -17,17 +19,10 @@
   let modalTitle = $state("添加提供商");
 
   // Toast
-  let toastMessage = $state("");
-  let toastType = $state<"success" | "error">("success");
-  let toastVisible = $state(false);
-  let toastTimer: ReturnType<typeof setTimeout>;
-
   function showToast(msg: string, type: "success" | "error" = "success") {
-    clearTimeout(toastTimer);
-    toastMessage = msg;
-    toastType = type;
-    toastVisible = true;
-    toastTimer = setTimeout(() => (toastVisible = false), 3500);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("toast", { detail: { message: msg, type } }));
+    }
   }
 
   // Auth guard
@@ -98,10 +93,11 @@
   }
 
   function handleSaved() {
+    const wasEdit = !!editingProvider;
     modalOpen = false;
     editingProvider = null;
     loadProviders();
-    showToast(editingProvider ? "提供商已更新" : "提供商已添加");
+    showToast(wasEdit ? "提供商已更新" : "提供商已添加");
   }
 
   function handleLogout() {
@@ -116,29 +112,6 @@
 
 <div class="min-h-dvh bg-background">
   <div class="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-    <!-- ═══════════ Toast ═══════════ -->
-    {#if toastVisible}
-      <div
-        class="fixed top-4 right-4 z-[200] px-5 py-3 rounded-xl text-sm font-medium
-               shadow-2xl backdrop-blur-md
-               animate-toast-in
-               {toastType === 'success'
-                 ? 'bg-success/90 text-white shadow-glow-accent'
-                 : 'bg-danger/90 text-white'}"
-        role="status"
-        aria-live="polite"
-      >
-        <span class="flex items-center gap-2">
-          {#if toastType === "success"}
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          {:else}
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-          {/if}
-          {toastMessage}
-        </span>
-      </div>
-    {/if}
-
     <!-- ═══════════ Header ═══════════ -->
     <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8 pb-6 border-b border-white/[0.06]">
       <div class="flex items-center gap-3">
@@ -276,7 +249,7 @@
     <!-- ═══════════ Footer ═══════════ -->
     <footer class="mt-12 pt-6 border-t border-white/[0.06] text-center">
       <p class="text-xs text-muted font-mono">
-        Vega API &copy; {new Date().getFullYear()} &mdash;
+        Vega API &copy; {CURRENT_YEAR} &mdash;
         <span class="inline-flex items-center gap-1">
           <Shield class="w-3 h-3" /> 连接即安全
         </span>

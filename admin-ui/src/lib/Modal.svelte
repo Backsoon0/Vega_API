@@ -35,7 +35,6 @@
            bg-black/60 backdrop-blur-sm
            px-4 py-6 sm:p-6"
     onclick={onBackdropClick}
-    onkeydown={(e) => e.key === "Escape" && close()}
     role="dialog"
     aria-modal="true"
     aria-label={title}
@@ -51,7 +50,6 @@
              w-full max-w-lg max-h-[85dvh] overflow-y-auto
              mx-auto"
       onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
       role="document"
       transition:fly={{ y: 24, duration: 250, easing: (t: number) => 1 - Math.pow(1 - t, 3) }}
     >
