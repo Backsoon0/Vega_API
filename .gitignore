@@ -179,3 +179,8 @@ admin-ui/.svelte-kit/
 
 # Dependencies
 admin-ui/node_modules/
+
+# Planning files (session-specific)
+task_plan.md
+findings.md
+progress.md

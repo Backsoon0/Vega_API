@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createProvider, updateProvider } from "$lib/api";
   import type { Provider } from "$lib/api";
-  import { Upload, Database, Globe, Key, AlertCircle, Lock } from "lucide-svelte";
+  import { Upload, Database, Globe, Key, AlertCircle, Lock, ShieldCheck, KeyRound } from "lucide-svelte";
 
   interface Props {
     editing?: Provider | null;
@@ -20,12 +20,14 @@
   let error = $state("");
 
   // Vertex AI fields
+  let vAuthMode = $state("service_account"); // "service_account" | "api_key"
   let vProjectId = $state("");
   let vLocation = $state("us-central1");
   let vSaEmail = $state("");
   let vPrivateKey = $state("");
+  let vApiKey = $state("");
 
-  // API Key fields
+  // API Key fields (AI Studio / OpenAI)
   let fApiKey = $state("");
   let oBaseUrl = $state("");
 
@@ -37,6 +39,11 @@
     { value: "vertex_ai", label: "Google Vertex AI", icon: Database },
     { value: "google_ai_studio", label: "Google AI Studio", icon: Globe },
     { value: "openai", label: "OpenAI 官方", icon: Key },
+  ];
+
+  const vertexAuthOptions = [
+    { value: "service_account", label: "服务账号", icon: ShieldCheck, desc: "JSON 密钥文件或手动输入 PEM" },
+    { value: "api_key", label: "API 密钥", icon: KeyRound, desc: "使用 Vertex AI API 密钥" },
   ];
 
   $effect(() => {
@@ -52,6 +59,13 @@
         vLocation = cfg.location || "us-central1";
         vSaEmail = cfg.serviceAccountEmail || "";
         vPrivateKey = "";
+        vApiKey = "";
+        // Detect auth mode from existing config
+        if (cfg.apiKey) {
+          vAuthMode = "api_key";
+        } else {
+          vAuthMode = "service_account";
+        }
       } else if (editing.type === "google_ai_studio" || editing.type === "openai") {
         fApiKey = "";
         if (editing.type === "openai") oBaseUrl = cfg.baseUrl || "";
@@ -67,10 +81,12 @@
     provId = "";
     enabled = true;
     weight = 1;
+    vAuthMode = "service_account";
     vProjectId = "";
     vLocation = "us-central1";
     vSaEmail = "";
     vPrivateKey = "";
+    vApiKey = "";
     fApiKey = "";
     oBaseUrl = "";
     error = "";
@@ -80,12 +96,17 @@
 
   function getConfig(): Record<string, string> {
     if (type === "vertex_ai") {
-      return {
+      const cfg: Record<string, string> = {
         projectId: vProjectId.trim(),
         location: vLocation.trim() || "us-central1",
-        serviceAccountEmail: vSaEmail.trim(),
-        privateKey: vPrivateKey.trim(),
       };
+      if (vAuthMode === "api_key") {
+        cfg.apiKey = vApiKey.trim();
+      } else {
+        cfg.serviceAccountEmail = vSaEmail.trim();
+        cfg.privateKey = vPrivateKey.trim();
+      }
+      return cfg;
     } else if (type === "google_ai_studio") {
       return { apiKey: fApiKey.trim() };
     } else {
@@ -256,34 +277,41 @@
   <!-- ═══════════ Vertex AI Fields ═══════════ -->
   {#if type === "vertex_ai"}
     <div class="space-y-4 p-4 sm:p-5 rounded-xl bg-input border border-white/[0.06]">
-      <div class="flex items-center justify-between gap-3 flex-wrap">
-        <span class="text-xs font-semibold text-secondary uppercase tracking-wider">Vertex AI 配置</span>
-        <button
-          type="button"
-          class="px-3 py-1.5 text-xs font-medium rounded-lg
-                 bg-surface-elevated hover:bg-surface-hover text-secondary hover:text-primary
-                 border border-white/[0.08]
-                 transition-all duration-200
-                 inline-flex items-center gap-1.5"
-          onclick={importFromJson}
-        >
-          <Upload class="w-3 h-3" />
-          从 JSON 密钥文件导入
-        </button>
-      </div>
+      <span class="text-xs font-semibold text-secondary uppercase tracking-wider">Vertex AI 配置</span>
 
-      {#if importStatus}
-        <div
-          class="text-xs px-3 py-2 rounded-lg flex items-start gap-2
-                 {importOk
-                   ? 'bg-success-subtle text-accent border border-accent/20'
-                   : 'bg-danger-subtle text-danger border border-danger/20'}"
-        >
-          <AlertCircle class="w-3.5 h-3.5 shrink-0 mt-px" />
-          {importStatus}
+      <!-- Auth Mode Toggle -->
+      <fieldset>
+        <legend class="block text-xs font-semibold text-secondary uppercase tracking-wider mb-2.5">
+          认证方式 <span class="text-danger">*</span>
+        </legend>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {#each vertexAuthOptions as opt}
+            {@const isSelected = vAuthMode === opt.value}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <label
+              class="relative flex items-center gap-2.5 px-4 py-3 rounded-xl
+                     border transition-all duration-200 select-none
+                     {isSelected
+                       ? 'bg-cta-subtle border-cta/40 text-primary ring-1 ring-cta/20 cursor-pointer'
+                       : 'bg-surface border-white/[0.08] text-muted hover:border-white/[0.14] hover:text-secondary cursor-pointer'}"
+            >
+              <input
+                type="radio"
+                bind:group={vAuthMode}
+                value={opt.value}
+                class="sr-only"
+              />
+              <opt.icon class="w-4 h-4 shrink-0" />
+              <div class="flex flex-col gap-0.5">
+                <span class="text-xs font-medium">{opt.label}</span>
+                <span class="text-[10px] text-muted leading-tight">{opt.desc}</span>
+              </div>
+            </label>
+          {/each}
         </div>
-      {/if}
+      </fieldset>
 
+      <!-- Project ID + Location (both modes) -->
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="space-y-1.5">
           <label for="pf-proj" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
@@ -302,25 +330,75 @@
                    transition-all duration-200" />
         </div>
       </div>
-      <div class="space-y-1.5">
-        <label for="pf-email" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-          服务账号邮箱 <span class="text-danger">*</span>
-        </label>
-        <input id="pf-email" type="text" bind:value={vSaEmail} placeholder="xxx@yyy.iam.gserviceaccount.com" required
-          class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
-                 placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-                 transition-all duration-200" />
-      </div>
-      <div class="space-y-1.5">
-        <label for="pf-key" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-          私钥 (PEM)
-          {#if editing}<span class="text-muted font-normal normal-case tracking-normal"> — 留空则不修改</span>{/if}
-        </label>
-        <textarea id="pf-key" bind:value={vPrivateKey} placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" rows={5}
-          class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
-                 placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-                 transition-all duration-200 resize-y"></textarea>
-      </div>
+
+      <!-- ═══ Service Account Mode ═══ -->
+      {#if vAuthMode === "service_account"}
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <span class="text-[11px] text-muted font-medium">服务账号凭据</span>
+          <button
+            type="button"
+            class="px-3 py-1.5 text-xs font-medium rounded-lg
+                   bg-surface-elevated hover:bg-surface-hover text-secondary hover:text-primary
+                   border border-white/[0.08]
+                   transition-all duration-200
+                   inline-flex items-center gap-1.5"
+            onclick={importFromJson}
+          >
+            <Upload class="w-3 h-3" />
+            从 JSON 密钥文件导入
+          </button>
+        </div>
+
+        {#if importStatus}
+          <div
+            class="text-xs px-3 py-2 rounded-lg flex items-start gap-2
+                   {importOk
+                     ? 'bg-success-subtle text-accent border border-accent/20'
+                     : 'bg-danger-subtle text-danger border border-danger/20'}"
+          >
+            <AlertCircle class="w-3.5 h-3.5 shrink-0 mt-px" />
+            {importStatus}
+          </div>
+        {/if}
+
+        <div class="space-y-1.5">
+          <label for="pf-email" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
+            服务账号邮箱 <span class="text-danger">*</span>
+          </label>
+          <input id="pf-email" type="text" bind:value={vSaEmail} placeholder="xxx@yyy.iam.gserviceaccount.com" required
+            class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
+                   placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
+                   transition-all duration-200" />
+        </div>
+        <div class="space-y-1.5">
+          <label for="pf-key" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
+            私钥 (PEM)
+            {#if editing}<span class="text-muted font-normal normal-case tracking-normal"> — 留空则不修改</span>{/if}
+          </label>
+          <textarea id="pf-key" bind:value={vPrivateKey} placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" rows={5}
+            class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
+                   placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
+                   transition-all duration-200 resize-y"></textarea>
+        </div>
+      {/if}
+
+      <!-- ═══ API Key Mode ═══ -->
+      {#if vAuthMode === "api_key"}
+        <div class="space-y-1.5">
+          <label for="pf-vapikey" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
+            Vertex AI API Key <span class="text-danger">*</span>
+            {#if editing}<span class="text-muted font-normal normal-case tracking-normal"> — 留空则不修改</span>{/if}
+          </label>
+          <input id="pf-vapikey" type="password" bind:value={vApiKey} placeholder="输入 Vertex AI API Key"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
+                   placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
+                   transition-all duration-200" />
+          <p class="text-[11px] text-muted flex items-center gap-1 mt-1">
+            <AlertCircle class="w-3 h-3 shrink-0" />
+            使用 Vertex AI API 密钥进行认证，无需服务账号 JSON 文件
+          </p>
+        </div>
+      {/if}
     </div>
   {/if}
 

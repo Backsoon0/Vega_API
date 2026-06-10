@@ -18,14 +18,17 @@ This project uses **npm workspaces**. The root `package.json` manages the Worker
 
 Vega API is a Cloudflare Worker that aggregates Google Vertex AI, Google AI Studio, and OpenAI into a single OpenAI-compatible API. Model routing is automatic: `google/*`/`gemini/*` → Vertex/AI Studio, `gpt-*`/`o1-*`/`o3-*` → OpenAI.
 
+All providers use OpenAI-compatible endpoints — the Worker is a pass-through proxy with auth header management. No format conversion is needed.
+
 ```
 Request flow:
-  Browser → Worker (vega-api)
-    ├── /admin/* → Admin API (admin.js + config.js → KV)
-    ├── /v1/*    → AI proxy (providers/*.js → upstream)
-    ├── /health  → Health check
-    └── /*       → Static assets (admin-ui/build/ SvelteKit SPA)
-                    └── SPA fallback (index.html)
+  Client → Worker (vega-api) at /v1/chat/completions (OpenAI format)
+    ├── AI Studio → generativelanguage.googleapis.com/v1beta/openai (pass-through)
+    ├── Vertex AI → aiplatform.googleapis.com/v1/.../endpoints/openapi (pass-through)
+    └── OpenAI    → api.openai.com/v1 (pass-through)
+
+  Non-chat routes (/v1/models, /v1/embeddings, etc.):
+    └── Provider-specific proxy (pass-through)
 ```
 
 **Entry point:** [src/index.js](src/index.js) — `export default { async fetch(request, env) {} }`. Not an agents-sdk Agent.
@@ -39,9 +42,9 @@ Request flow:
 | [src/config.js](src/config.js) | KV-backed config CRUD with AES-GCM encrypted sensitive fields |
 | [src/crypto.js](src/crypto.js) | AES-256-GCM + SHA-256 (Web Crypto API, zero deps) |
 | [src/fail2ban.js](src/fail2ban.js) | Login rate limiting (5 failures → 15 min ban, 5-min sliding window) |
-| [src/providers/vertex.js](src/providers/vertex.js) | Vertex AI: JWT RS256 auth, token cache per service account |
-| [src/providers/ai-studio.js](src/providers/ai-studio.js) | AI Studio: Bearer token at `generativelanguage.googleapis.com` |
-| [src/providers/openai.js](src/providers/openai.js) | OpenAI: Bearer token, configurable base URL |
+| [src/providers/vertex.js](src/providers/vertex.js) | Vertex AI: JWT RS256 (service account) + API Key auth modes, OpenAI-compatible pass-through |
+| [src/providers/ai-studio.js](src/providers/ai-studio.js) | AI Studio: API Key auth via Bearer token, OpenAI-compatible pass-through |
+| [src/providers/openai.js](src/providers/openai.js) | OpenAI: Bearer token, configurable base URL, pass-through proxy |
 | [test/index.spec.js](test/index.spec.js) | Integration tests (`cloudflare:test` Vitest pool) |
 
 **Admin frontend (SvelteKit SPA) — Code Dark theme:**
@@ -57,7 +60,7 @@ Request flow:
 | [admin-ui/src/lib/Modal.svelte](admin-ui/src/lib/Modal.svelte) | Generic modal with Svelte transition animations (fly + fade) |
 | [admin-ui/src/lib/Toast.svelte](admin-ui/src/lib/Toast.svelte) | Toast notifications (event-driven + direct `trigger()` export) |
 | [admin-ui/src/lib/ProviderCard.svelte](admin-ui/src/lib/ProviderCard.svelte) | Provider card: always-visible actions on mobile, hover-reveal on desktop |
-| [admin-ui/src/lib/ProviderForm.svelte](admin-ui/src/lib/ProviderForm.svelte) | Add/edit provider form. Type selector locked with lock icon when editing, JSON key file import |
+| [admin-ui/src/lib/ProviderForm.svelte](admin-ui/src/lib/ProviderForm.svelte) | Add/edit provider form. Type selector locked when editing. Vertex AI: auth mode toggle (service account + JSON import / API key). AI Studio/OpenAI: API key input |
 | [admin-ui/src/lib/ClientKeySection.svelte](admin-ui/src/lib/ClientKeySection.svelte) | Client API key management (generate, custom, reveal with close button, copy, delete) |
 | [admin-ui/src/lib/ChangePasswordModal.svelte](admin-ui/src/lib/ChangePasswordModal.svelte) | Change admin password modal with show/hide toggles |
 
@@ -85,6 +88,17 @@ config:fail2ban:{ip}        → { attempts_window, banned_until } (auto-expires)
 ```
 
 Sensitive fields (`apiKey`, `privateKey`) stored `enc:` prefixed. Edit without changing preserves existing encrypted value.
+
+**Provider config shapes (config field inside provider record):**
+
+| Type | Config fields |
+|------|--------------|
+| `vertex_ai` (JWT) | `projectId`, `location`, `serviceAccountEmail`, `privateKey` |
+| `vertex_ai` (API Key) | `projectId`, `location`, `apiKey` |
+| `google_ai_studio` | `apiKey` |
+| `openai` | `apiKey`, `baseUrl` (optional) |
+
+Vertex AI auto-detects auth mode: if `config.apiKey` is present → API Key mode; if `config.serviceAccountEmail` + `config.privateKey` → JWT mode.
 
 ## Deployment Config
 

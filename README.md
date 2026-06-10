@@ -41,7 +41,7 @@
 │                                          │
 │  ┌─────────┐ ┌──────────┐ ┌───────────┐ │
 │  │ Vertex  │ │AI Studio │ │  OpenAI   │ │
-│  │  (JWT)  │ │(API Key) │ │ (API Key) │ │
+│  │(JWT/Key)│ │(API Key) │ │ (API Key) │ │
 │  └────┬────┘ └────┬─────┘ └─────┬─────┘ │
 │       │           │             │        │
 └───────┼───────────┼─────────────┼────────┘
@@ -50,11 +50,13 @@
    Vertex AI     AI Studio
 ```
 
+所有 provider 均使用 OpenAI 兼容端点透传，无需格式转换。
+
 ## 📦 支持的后端
 
 | 后端 | 认证方式 | 配置复杂度 |
 |------|---------|-----------|
-| **Google Vertex AI** | 服务账号 JWT (RS256) | 需项目 ID、服务账号邮箱、PEM 私钥（支持 JSON 密钥文件一键导入） |
+| **Google Vertex AI** | 服务账号 JWT (RS256) 或 API Key | 支持 JSON 密钥文件一键导入或直接输入 API Key |
 | **Google AI Studio** | API Key (Bearer) | 仅需 API Key |
 | **OpenAI 官方** | API Key (Bearer) | 仅需 API Key |
 
@@ -242,7 +244,7 @@ npm run deploy      # 部署到 Cloudflare
 │   ├── crypto.js           # AES-GCM 加解密 + SHA-256
 │   ├── fail2ban.js         # 登录限流
 │   └── providers/
-│       ├── vertex.js       # Google Vertex AI（JWT RS256）
+│       ├── vertex.js       # Google Vertex AI（JWT + API Key）
 │       ├── ai-studio.js    # Google AI Studio（Bearer）
 │       └── openai.js       # OpenAI 官方（Bearer）
 ├── test/
