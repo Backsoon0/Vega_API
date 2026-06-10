@@ -12,6 +12,7 @@
 
 import { handleAdminRoutes } from "./admin.js";
 import { listProviders, getConfigVersion, getClientApiKey } from "./config.js";
+import { recordUsage } from "./usage.js";
 import * as VertexProvider from "./providers/vertex.js";
 import * as AiStudioProvider from "./providers/ai-studio.js";
 import * as OpenAIProvider from "./providers/openai.js";
@@ -207,9 +208,29 @@ function mapTypeToOwner(type) {
   return map[type] || type;
 }
 
+// ---- Usage recording helper ----
+
+/**
+ * Extract usage data from an upstream response and record it.
+ * Reads the cloned response body to get token counts, then records via usage.js.
+ */
+async function recordRequestUsage(response, env, providerId) {
+	try {
+		if (!response.body) return;
+		const data = await response.json().catch(() => null);
+		if (!data || !data.usage) return;
+		await recordUsage(env, providerId, {
+			prompt: data.usage.prompt_tokens || 0,
+			completion: data.usage.completion_tokens || 0,
+		});
+	} catch (err) {
+		console.error("Usage tracking error:", err?.message || err);
+	}
+}
+
 // ---- Chat completions proxy ----
 
-async function handleChatCompletions(request, env) {
+async function handleChatCompletions(request, env, ctx) {
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object") {
     return json({ error: { message: "Invalid JSON body" } }, 400);
@@ -256,6 +277,15 @@ async function handleChatCompletions(request, env) {
   try {
     const suffix = "/chat/completions";
     const upstreamResp = await handler.proxyRequest(newRequest, env, provider, suffix);
+
+    // Record usage (non-blocking via waitUntil)
+    if (upstreamResp.ok) {
+      const cloned = upstreamResp.clone();
+      if (ctx) {
+        ctx.waitUntil(recordRequestUsage(cloned, env, provider.id));
+      }
+    }
+
     return upstreamResp;
   } catch (err) {
     console.error(`Provider ${provider.id} error:`, err.message);
@@ -354,7 +384,7 @@ async function checkClientAuth(request, env) {
 // ---- Main fetch handler ----
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -444,7 +474,7 @@ export default {
     // ---- /v1/chat/completions ----
     if (path === "/v1/chat/completions" && request.method === "POST") {
       try {
-        const resp = await handleChatCompletions(request, env);
+        const resp = await handleChatCompletions(request, env, ctx);
         return withCors(resp, request);
       } catch (err) {
         console.error("Chat completions error:", err.message);

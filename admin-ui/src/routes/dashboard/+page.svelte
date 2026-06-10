@@ -8,6 +8,7 @@
   import ProviderForm from "$lib/ProviderForm.svelte";
   import ClientKeySection from "$lib/ClientKeySection.svelte";
   import ChangePasswordModal from "$lib/ChangePasswordModal.svelte";
+  import UsageSection from "$lib/UsageSection.svelte";
 
   const CURRENT_YEAR = new Date().getFullYear();
 
@@ -191,6 +192,11 @@
     <!-- ═══════════ Client Key Section ═══════════ -->
     <div class="mb-8">
       <ClientKeySection onsuccess={(m) => showToast(m)} onerror={(m) => showToast(m, "error")} />
+    </div>
+
+    <!-- ═══════════ Usage Section ═══════════ -->
+    <div class="mb-8">
+      <UsageSection />
     </div>
 
     <!-- ═══════════ Provider List ═══════════ -->

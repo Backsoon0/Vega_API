@@ -152,6 +152,23 @@ export async function getFail2banConfig() {
   return data;
 }
 
+// Usage statistics
+export async function getUsage(from?: string, to?: string) {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const qs = params.toString();
+  const { data } = await request("GET", `/usage${qs ? `?${qs}` : ""}`);
+  return data as UsageData;
+}
+
+export interface UsageData {
+  totals?: Record<string, { calls: number; promptTokens: number; completionTokens: number }>;
+  total?: { calls: number; promptTokens: number; completionTokens: number };
+  byProvider?: Record<string, { calls: number; promptTokens: number; completionTokens: number }>;
+  daily?: Record<string, { calls: number; promptTokens: number; completionTokens: number }>;
+}
+
 // Types
 export interface Provider {
   id: string;

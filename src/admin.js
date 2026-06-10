@@ -16,6 +16,7 @@ import {
 } from "./config.js";
 import { sha256 } from "./crypto.js";
 import { checkBan, recordFailure, resetBan, getConfig } from "./fail2ban.js";
+import { getUsage, getUsageTotals } from "./usage.js";
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -128,6 +129,11 @@ export async function handleAdminRoutes(request, env) {
       await setClientApiKey(env, null);
       return json({ ok: true, message: "Client API key removed. /v1/* routes are now public." });
     }
+  }
+
+  // Usage statistics
+  if (path === "/admin/usage" && request.method === "GET") {
+    return handleGetUsage(request, env);
   }
 
   // Check auth status
@@ -354,4 +360,26 @@ async function handleSetClientKey(request, env) {
     fullKey: key,  // Return full key so admin can copy it
     configured: true,
   });
+}
+
+// ---- Usage statistics ----
+
+/**
+ * Get usage statistics.
+ * Query: ?from=YYYY-MM-DD&to=YYYY-MM-DD (optional date range)
+ * Returns: { total, byProvider, daily }
+ */
+async function handleGetUsage(request, env) {
+  const url = new URL(request.url);
+  const from = url.searchParams.get("from") || "";
+  const to = url.searchParams.get("to") || "";
+
+  // If no date range specified, return quick totals
+  if (!from && !to) {
+    const totals = await getUsageTotals(env);
+    return json({ totals });
+  }
+
+  const data = await getUsage(env, from, to, null);
+  return json(data);
 }
