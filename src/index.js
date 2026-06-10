@@ -208,26 +208,6 @@ function mapTypeToOwner(type) {
   return map[type] || type;
 }
 
-// ---- Usage recording helper ----
-
-/**
- * Extract usage data from an upstream response and record it.
- * Reads the cloned response body to get token counts, then records via usage.js.
- */
-async function recordRequestUsage(response, env, providerId) {
-	try {
-		if (!response.body) return;
-		const data = await response.json().catch(() => null);
-		if (!data || !data.usage) return;
-		await recordUsage(env, providerId, {
-			prompt: data.usage.prompt_tokens || 0,
-			completion: data.usage.completion_tokens || 0,
-		});
-	} catch (err) {
-		console.error("Usage tracking error:", err?.message || err);
-	}
-}
-
 // ---- Chat completions proxy ----
 
 async function handleChatCompletions(request, env, ctx) {
@@ -273,17 +253,25 @@ async function handleChatCompletions(request, env, ctx) {
     headers: newHeaders,
     body: JSON.stringify(body),
   });
-
   try {
     const suffix = "/chat/completions";
     const upstreamResp = await handler.proxyRequest(newRequest, env, provider, suffix);
 
-    // Record usage (non-blocking via waitUntil)
-    if (upstreamResp.ok) {
-      const cloned = upstreamResp.clone();
-      if (ctx) {
-        ctx.waitUntil(recordRequestUsage(cloned, env, provider.id));
-      }
+    // Record usage: read body once, extract token counts, return reconstructed response
+    if (upstreamResp.ok && upstreamResp.body) {
+      const bodyText = await upstreamResp.text();
+      try {
+        const data = JSON.parse(bodyText);
+        if (data?.usage) {
+          const u = { prompt: data.usage.prompt_tokens || 0, completion: data.usage.completion_tokens || 0 };
+          if (ctx) ctx.waitUntil(recordUsage(env, provider.id, u));
+        }
+      } catch { /* ignore parse errors */ }
+      return new Response(bodyText, {
+        status: upstreamResp.status,
+        statusText: upstreamResp.statusText,
+        headers: upstreamResp.headers,
+      });
     }
 
     return upstreamResp;
