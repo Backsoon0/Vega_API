@@ -1,19 +1,22 @@
 <script lang="ts">
   import CallLogTable from "$lib/CallLogTable.svelte";
   import { getLogs, mergeLogs, clearLogs as clearStoredLogs, type CallLogEntry } from "$lib/logStore";
-  import { authToken } from "$lib/api";
+  import { isAuthenticated, authToken } from "$lib/api";
+  import { page } from "$app/stores";
   import { ListTodo } from "lucide-svelte";
 
   let entries = $state<CallLogEntry[]>(getLogs());
-  let error = $state('');
 
-  // Poll for new logs every 5 seconds
+  // Poll for new logs every 5s — authToken check inside callback so it works after login
   $effect(() => {
-    if (!authToken) return;
+    // Track pathname to ensure effect runs after navigation
+    $page.url.pathname;
     const interval = setInterval(async () => {
+      const token = authToken; // re-read current value each tick
+      if (!token) return;
       try {
         const resp = await fetch('/admin/logs', {
-          headers: { Authorization: `Bearer ${authToken}` },
+          headers: { Authorization: `Bearer ${token}` },
         });
         if (!resp.ok) return;
         const data = await resp.json();
@@ -21,8 +24,8 @@
           mergeLogs(data.logs);
           entries = getLogs();
         }
-      } catch (err) {
-        error = '获取日志失败';
+      } catch {
+        // ignore network errors
       }
     }, 5000);
 

@@ -4,12 +4,16 @@
   import { goto } from "$app/navigation";
   import Sidebar from "$lib/Sidebar.svelte";
   import Toast from "$lib/Toast.svelte";
+  import { sidebarCollapsed, SIDEBAR_EXPANDED, SIDEBAR_COLLAPSED } from "$lib/sidebar-state";
   import "../app.css";
 
   let { children } = $props();
   let checking = $state(true);
   let authed = $state(false);
   let isDashboard = $state(false);
+
+  let collapsed = $derived($sidebarCollapsed);
+  let sidebarWidth = $derived(collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED);
 
   $effect(() => {
     checkAuth().then((ok) => {
@@ -19,7 +23,6 @@
   });
 
   $effect(() => {
-    // Track pathname changes and update auth + sidebar state
     const path = $page.url.pathname;
     isDashboard = path.startsWith('/dashboard');
 
@@ -27,7 +30,6 @@
       authed = isAuthenticated();
     }
 
-    // Redirect from / to /dashboard if already authenticated
     if (path === '/' && isAuthenticated()) {
       goto('/dashboard');
     }
@@ -52,7 +54,9 @@
 {:else if isDashboard && authed}
   <div class="min-h-dvh bg-background flex">
     <Sidebar />
-    <main class="flex-1 lg:ml-[240px] p-4 sm:p-6 lg:p-8 min-h-dvh">
+    <main
+      class="flex-1 p-3 sm:p-5 lg:p-6 min-h-dvh w-full transition-all duration-300 ease-in-out {collapsed ? 'lg:ml-[64px]' : 'lg:ml-[240px]'}"
+    >
       {@render children()}
     </main>
   </div>

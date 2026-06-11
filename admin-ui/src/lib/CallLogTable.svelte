@@ -28,7 +28,7 @@
 
 <div class="space-y-4">
   <!-- Search bar -->
-  <div class="flex flex-col sm:flex-row gap-3">
+  <div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
     <div class="flex-1 relative">
       <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-placeholder" stroke-width={1.5} />
       <input
@@ -38,34 +38,37 @@
         bind:value={searchQuery}
       />
     </div>
-    <select
-      class="px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary min-w-[140px]"
-      bind:value={providerFilter}
-    >
-      <option value="">全部提供商</option>
-      {#each uniqueProviders as p}
-        <option value={p}>{p}</option>
-      {/each}
-    </select>
-    {#if entries.length > 0}
-      <button
-        class="px-3 py-2.5 rounded-xl text-sm text-danger hover:bg-danger-subtle flex items-center gap-2 transition-all"
-        onclick={() => { clearStoredLogs(); onclear(); }}
+    <div class="flex gap-2">
+      <select
+        class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
+        bind:value={providerFilter}
       >
-        <Trash2 class="w-4 h-4" stroke-width={1.5} />
-        清空
-      </button>
-    {/if}
+        <option value="">全部提供商</option>
+        {#each uniqueProviders as p}
+          <option value={p}>{p}</option>
+        {/each}
+      </select>
+      {#if entries.length > 0}
+        <button
+          class="px-3 py-2.5 rounded-xl text-sm text-danger hover:bg-danger-subtle flex items-center gap-2 transition-all shrink-0"
+          onclick={() => { clearStoredLogs(); onclear(); }}
+        >
+          <Trash2 class="w-4 h-4" stroke-width={1.5} />
+          <span class="hidden sm:inline">清空</span>
+        </button>
+      {/if}
+    </div>
   </div>
 
-  <!-- Table -->
+  <!-- Content -->
   {#if entries.length === 0}
-    <div class="bg-surface border border-white/[0.06] border-dashed rounded-2xl p-12 text-center">
+    <div class="bg-surface border border-white/[0.06] border-dashed rounded-2xl p-10 sm:p-12 text-center">
       <p class="text-muted text-sm">暂无调用记录</p>
       <p class="text-placeholder text-xs mt-1">API 调用将实时显示在这里</p>
     </div>
   {:else}
-    <div class="bg-surface border border-white/[0.06] rounded-xl overflow-hidden overflow-x-auto">
+    <!-- Desktop table (hidden on mobile) -->
+    <div class="hidden sm:block bg-surface border border-white/[0.06] rounded-xl overflow-hidden overflow-x-auto">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b border-white/[0.06]">
@@ -73,8 +76,7 @@
             <th class="text-left px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">IP</th>
             <th class="text-left px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">提供商</th>
             <th class="text-left px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">模型</th>
-            <th class="text-right px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">Prompt</th>
-            <th class="text-right px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">Completion</th>
+            <th class="text-right px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">Tokens</th>
             <th class="text-center px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">状态</th>
           </tr>
         </thead>
@@ -84,9 +86,12 @@
               <td class="px-4 py-2.5 text-secondary font-mono text-xs whitespace-nowrap">{formatTime(entry.timestamp)}</td>
               <td class="px-4 py-2.5 text-muted font-mono text-xs">{entry.ip}</td>
               <td class="px-4 py-2.5 text-secondary text-xs">{entry.providerId}</td>
-              <td class="px-4 py-2.5 text-secondary font-mono text-xs max-w-[180px] truncate">{entry.model}</td>
-              <td class="px-4 py-2.5 text-muted font-mono text-xs text-right tabular-nums">{entry.promptTokens.toLocaleString()}</td>
-              <td class="px-4 py-2.5 text-muted font-mono text-xs text-right tabular-nums">{entry.completionTokens.toLocaleString()}</td>
+              <td class="px-4 py-2.5 text-secondary font-mono text-xs max-w-[160px] truncate">{entry.model}</td>
+              <td class="px-4 py-2.5 text-muted font-mono text-xs text-right tabular-nums">
+                <span class="text-accent">{entry.promptTokens.toLocaleString()}</span>
+                <span class="text-muted"> / </span>
+                <span class="text-cta">{entry.completionTokens.toLocaleString()}</span>
+              </td>
               <td class="px-4 py-2.5 text-center">
                 <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold {entry.success ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'}">
                   {entry.success ? '成功' : '失败'}
@@ -97,6 +102,39 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Mobile cards (hidden on desktop) -->
+    <div class="sm:hidden space-y-3">
+      {#each filtered as entry (entry.timestamp + entry.ip + entry.model)}
+        <div class="bg-surface border border-white/[0.06] rounded-xl p-4 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <span class="font-mono text-xs text-secondary">{formatTime(entry.timestamp)}</span>
+            <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold {entry.success ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'}">
+              {entry.success ? '成功' : '失败'}
+            </span>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <span class="text-muted">IP: </span>
+              <span class="text-secondary font-mono">{entry.ip}</span>
+            </div>
+            <div>
+              <span class="text-muted">提供商: </span>
+              <span class="text-secondary">{entry.providerId}</span>
+            </div>
+            <div class="col-span-2">
+              <span class="text-muted">模型: </span>
+              <span class="text-secondary font-mono break-all">{entry.model}</span>
+            </div>
+            <div class="col-span-2 flex gap-3">
+              <span class="text-muted">Prompt: <span class="text-accent font-mono tabular-nums">{entry.promptTokens.toLocaleString()}</span></span>
+              <span class="text-muted">Completion: <span class="text-cta font-mono tabular-nums">{entry.completionTokens.toLocaleString()}</span></span>
+            </div>
+          </div>
+        </div>
+      {/each}
+    </div>
+
     <div class="text-xs text-muted text-right">
       显示 {filtered.length} / {entries.length} 条记录
     </div>
