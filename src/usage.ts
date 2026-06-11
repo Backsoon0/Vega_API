@@ -1,9 +1,10 @@
 // src/usage.ts
 // D1-based usage tracking with model-level granularity
-// Also records to in-memory log buffer
+// Call logs persisted in D1 with retention limit (10000 rows)
 
 import type { Env, UsageRecord } from './types';
-import { pushLog } from './log-buffer';
+
+const MAX_LOG_ROWS = 10000;
 
 function isoDate(): string {
   return new Date().toISOString().slice(0, 10);
@@ -11,6 +12,8 @@ function isoDate(): string {
 
 /**
  * Record usage after each API call. Fire-and-forget.
+ * Inserts into usage_daily (aggregated) and call_logs (detail).
+ * Cleans up old log rows when exceeding MAX_LOG_ROWS.
  */
 export async function recordUsage(
   env: Env,
@@ -22,6 +25,7 @@ export async function recordUsage(
 ): Promise<void> {
   try {
     const today = isoDate();
+    const now = new Date().toISOString();
 
     // Upsert daily aggregate
     await env.DB
@@ -36,18 +40,104 @@ export async function recordUsage(
       .bind(today, providerId, model, usage.prompt, usage.completion, usage.prompt, usage.completion)
       .run();
 
-    // Push to in-memory log buffer
-    pushLog({
-      timestamp: new Date().toISOString(),
-      ip,
-      providerId,
-      model,
-      promptTokens: usage.prompt || 0,
-      completionTokens: usage.completion || 0,
-      success,
-    });
+    // Insert into call_logs
+    await env.DB
+      .prepare(
+        `INSERT INTO call_logs (timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, success)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(now, ip, providerId, model, usage.prompt || 0, usage.completion || 0, success ? 1 : 0)
+      .run();
+
+    // Cleanup: keep only the latest MAX_LOG_ROWS
+    await env.DB
+      .prepare(
+        `DELETE FROM call_logs WHERE id NOT IN (SELECT id FROM call_logs ORDER BY timestamp DESC LIMIT ?)`
+      )
+      .bind(MAX_LOG_ROWS)
+      .run();
   } catch (err) {
     console.error('Usage tracking error:', (err as Error).message);
+  }
+}
+
+/**
+ * Query call logs from D1. Supports optional search/filter.
+ */
+export async function getCallLogs(
+  env: Env,
+  opts: {
+    search?: string;
+    providerId?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<{ logs: Array<{
+    timestamp: string;
+    ip: string;
+    providerId: string;
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    success: boolean;
+  }>; total: number }> {
+  const limit = opts.limit || 200;
+  const offset = opts.offset || 0;
+
+  try {
+    let whereClauses = 'WHERE 1=1';
+    const params: (string | number)[] = [];
+
+    if (opts.search) {
+      whereClauses += ' AND (ip LIKE ? OR provider_id LIKE ? OR model LIKE ?)';
+      const s = `%${opts.search}%`;
+      params.push(s, s, s);
+    }
+    if (opts.providerId) {
+      whereClauses += ' AND provider_id = ?';
+      params.push(opts.providerId);
+    }
+
+    // Count total
+    const countRow = await env.DB
+      .prepare(`SELECT COUNT(*) as cnt FROM call_logs ${whereClauses}`)
+      .bind(...params)
+      .first<{ cnt: number }>();
+    const total = countRow?.cnt || 0;
+
+    // Fetch rows
+    const rows = await env.DB
+      .prepare(
+        `SELECT timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, success
+         FROM call_logs ${whereClauses}
+         ORDER BY timestamp DESC
+         LIMIT ? OFFSET ?`
+      )
+      .bind(...params, limit, offset)
+      .all<{
+        timestamp: string;
+        ip: string;
+        provider_id: string;
+        model: string;
+        prompt_tokens: number;
+        completion_tokens: number;
+        success: number;
+      }>();
+
+    const logs = (rows.results || []).map(r => ({
+      timestamp: r.timestamp,
+      ip: r.ip,
+      providerId: r.provider_id,
+      model: r.model,
+      promptTokens: r.prompt_tokens,
+      completionTokens: r.completion_tokens,
+      success: r.success === 1,
+    }));
+
+    return { logs, total };
+  } catch (err) {
+    console.error('Call logs query error:', (err as Error).message);
+    return { logs: [], total: 0 };
   }
 }
 

@@ -14,8 +14,7 @@ import {
 } from './config';
 import { sha256 } from './crypto';
 import { rateLimitLogin, recordLoginFailure, resetLoginRate, getRateLimitConfig } from './rate-limit';
-import { recordUsage, getUsage, getUsageTotals } from './usage';
-import { getLogs, clearLogs } from './log-buffer';
+import { recordUsage, getUsage, getUsageTotals, getCallLogs } from './usage';
 import * as VertexProvider from './providers/vertex';
 import * as AiStudioProvider from './providers/ai-studio';
 import * as OpenAIProvider from './providers/openai';
@@ -359,16 +358,14 @@ app.get('/admin/usage', async (c) => {
   return c.json(data);
 });
 
-// ---- Admin: Real-time logs ----
+// ---- Admin: Call logs from D1 ----
 app.get('/admin/logs', async (c) => {
-  const since = c.req.query('since') || '';
-  const logs = getLogs(since);
-  return c.json({ logs, count: logs.length });
-});
-
-app.delete('/admin/logs', async (c) => {
-  clearLogs();
-  return c.json({ ok: true });
+  const search = c.req.query('search') || '';
+  const providerId = c.req.query('providerId') || '';
+  const limit = parseInt(c.req.query('limit') || '200');
+  const offset = parseInt(c.req.query('offset') || '0');
+  const data = await getCallLogs(c.env, { search, providerId, limit, offset });
+  return c.json(data);
 });
 
 // ═══════════════ /v1/* CLIENT API ROUTES ═══════════════

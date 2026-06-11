@@ -1,23 +1,38 @@
 <script lang="ts">
-  import type { CallLogEntry } from "$lib/logStore";
-  import { searchLogs, clearLogs as clearStoredLogs } from "$lib/logStore";
   import { Search, Trash2 } from "lucide-svelte";
 
-  let { entries = [] as CallLogEntry[], onclear = () => {} } = $props();
+  interface LogEntry {
+    timestamp: string;
+    ip: string;
+    providerId: string;
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    success: boolean;
+  }
+
+  let { entries = [] as LogEntry[], loading = false, onclear = () => {} } = $props();
 
   let searchQuery = $state('');
   let providerFilter = $state('');
 
-  const filtered = $derived(
-    searchLogs(
-      entries.filter(e => {
-        if (providerFilter && !e.providerId.includes(providerFilter)) return false;
-        return true;
-      }),
-      searchQuery
-    )
-  );
+  function filterLogs(list: LogEntry[]): LogEntry[] {
+    let result = list;
+    if (providerFilter) {
+      result = result.filter(e => e.providerId === providerFilter);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(e =>
+        e.ip.toLowerCase().includes(q) ||
+        e.providerId.toLowerCase().includes(q) ||
+        e.model.toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }
 
+  const filtered = $derived(filterLogs(entries));
   const uniqueProviders = $derived([...new Set(entries.map(e => e.providerId))].sort());
 
   function formatTime(ts: string): string {
@@ -48,26 +63,23 @@
           <option value={p}>{p}</option>
         {/each}
       </select>
-      {#if entries.length > 0}
-        <button
-          class="px-3 py-2.5 rounded-xl text-sm text-danger hover:bg-danger-subtle flex items-center gap-2 transition-all shrink-0"
-          onclick={() => { clearStoredLogs(); onclear(); }}
-        >
-          <Trash2 class="w-4 h-4" stroke-width={1.5} />
-          <span class="hidden sm:inline">清空</span>
-        </button>
-      {/if}
     </div>
   </div>
 
   <!-- Content -->
-  {#if entries.length === 0}
+  {#if loading && entries.length === 0}
+    <div class="space-y-3">
+      {#each Array(5) as _}
+        <div class="bg-surface border border-white/[0.06] rounded-xl p-4 animate-pulse h-[52px]"></div>
+      {/each}
+    </div>
+  {:else if entries.length === 0}
     <div class="bg-surface border border-white/[0.06] border-dashed rounded-2xl p-10 sm:p-12 text-center">
       <p class="text-muted text-sm">暂无调用记录</p>
-      <p class="text-placeholder text-xs mt-1">API 调用将实时显示在这里</p>
+      <p class="text-placeholder text-xs mt-1">发送 API 请求后，调用记录将显示在这里</p>
     </div>
   {:else}
-    <!-- Desktop table (hidden on mobile) -->
+    <!-- Desktop table -->
     <div class="hidden sm:block bg-surface border border-white/[0.06] rounded-xl overflow-hidden overflow-x-auto">
       <table class="w-full text-sm">
         <thead>
@@ -103,7 +115,7 @@
       </table>
     </div>
 
-    <!-- Mobile cards (hidden on desktop) -->
+    <!-- Mobile cards -->
     <div class="sm:hidden space-y-3">
       {#each filtered as entry (entry.timestamp + entry.ip + entry.model)}
         <div class="bg-surface border border-white/[0.06] rounded-xl p-4 space-y-2.5">
@@ -114,18 +126,9 @@
             </span>
           </div>
           <div class="grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <span class="text-muted">IP: </span>
-              <span class="text-secondary font-mono">{entry.ip}</span>
-            </div>
-            <div>
-              <span class="text-muted">提供商: </span>
-              <span class="text-secondary">{entry.providerId}</span>
-            </div>
-            <div class="col-span-2">
-              <span class="text-muted">模型: </span>
-              <span class="text-secondary font-mono break-all">{entry.model}</span>
-            </div>
+            <div><span class="text-muted">IP: </span><span class="text-secondary font-mono">{entry.ip}</span></div>
+            <div><span class="text-muted">提供商: </span><span class="text-secondary">{entry.providerId}</span></div>
+            <div class="col-span-2"><span class="text-muted">模型: </span><span class="text-secondary font-mono break-all">{entry.model}</span></div>
             <div class="col-span-2 flex gap-3">
               <span class="text-muted">Prompt: <span class="text-accent font-mono tabular-nums">{entry.promptTokens.toLocaleString()}</span></span>
               <span class="text-muted">Completion: <span class="text-cta font-mono tabular-nums">{entry.completionTokens.toLocaleString()}</span></span>
