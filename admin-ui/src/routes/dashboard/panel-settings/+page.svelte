@@ -59,9 +59,10 @@
 
       <form onsubmit={handleChangePassword} class="space-y-4">
         <div>
-          <label class="block text-xs text-secondary mb-1.5">当前密码</label>
+          <label for="current-password" class="block text-xs text-secondary mb-1.5">当前密码</label>
           <div class="relative">
             <input
+              id="current-password"
               type={showCurrent ? 'text' : 'password'}
               class="w-full px-3 py-2.5 bg-input border border-white/[0.08] rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/50"
               bind:value={currentPassword}
@@ -78,9 +79,10 @@
         </div>
 
         <div>
-          <label class="block text-xs text-secondary mb-1.5">新密码</label>
+          <label for="new-password" class="block text-xs text-secondary mb-1.5">新密码</label>
           <div class="relative">
             <input
+              id="new-password"
               type={showNew ? 'text' : 'password'}
               class="w-full px-3 py-2.5 bg-input border border-white/[0.08] rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/50"
               bind:value={newPassword}
@@ -97,9 +99,10 @@
         </div>
 
         <div>
-          <label class="block text-xs text-secondary mb-1.5">确认新密码</label>
+          <label for="confirm-password" class="block text-xs text-secondary mb-1.5">确认新密码</label>
           <div class="relative">
             <input
+              id="confirm-password"
               type={showConfirm ? 'text' : 'password'}
               class="w-full px-3 py-2.5 bg-input border border-white/[0.08] rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/50"
               bind:value={confirmPassword}

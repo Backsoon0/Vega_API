@@ -32,9 +32,13 @@
 
 <!-- Mobile overlay -->
 {#if mobileOpen}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
     onclick={() => (mobileOpen = false)}
+    onkeydown={(e) => { if (e.key === 'Escape') mobileOpen = false; }}
+    role="button"
+    tabindex="-1"
   ></div>
 {/if}
 
