@@ -8,8 +8,9 @@
   let loading = $state(false);
   let showPassword = $state(false);
 
+  // Redirect if already authenticated — but only on client side
   $effect(() => {
-    if (isAuthenticated()) {
+    if (typeof window !== 'undefined' && isAuthenticated()) {
       goto("/dashboard");
     }
   });

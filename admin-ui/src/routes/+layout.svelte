@@ -9,6 +9,7 @@
   let { children } = $props();
   let checking = $state(true);
   let authed = $state(false);
+  let isDashboard = $state(false);
 
   $effect(() => {
     checkAuth().then((ok) => {
@@ -18,20 +19,19 @@
   });
 
   $effect(() => {
-    $page.url.pathname;
+    // Track pathname changes and update auth + sidebar state
+    const path = $page.url.pathname;
+    isDashboard = path.startsWith('/dashboard');
+
     if (!checking && authed !== isAuthenticated()) {
       authed = isAuthenticated();
     }
-  });
 
-  // Redirect from / to /dashboard if already authenticated
-  $effect(() => {
-    if ($page.url.pathname === '/' && isAuthenticated()) {
+    // Redirect from / to /dashboard if already authenticated
+    if (path === '/' && isAuthenticated()) {
       goto('/dashboard');
     }
   });
-
-  let isDashboard = $derived($page.url.pathname.startsWith('/dashboard'));
 </script>
 
 {#if checking}
