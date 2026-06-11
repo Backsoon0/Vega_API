@@ -1,277 +1,126 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
-  import { isAuthenticated, clearToken, getProviders, updateProvider, deleteProvider } from "$lib/api";
-  import type { Provider } from "$lib/api";
-  import { Plus, LogOut, Lock, Key, Server, Shield } from "lucide-svelte";
-  import Modal from "$lib/Modal.svelte";
-  import ProviderCard from "$lib/ProviderCard.svelte";
-  import ProviderForm from "$lib/ProviderForm.svelte";
-  import ClientKeySection from "$lib/ClientKeySection.svelte";
-  import ChangePasswordModal from "$lib/ChangePasswordModal.svelte";
-  import UsageSection from "$lib/UsageSection.svelte";
-
-  const CURRENT_YEAR = new Date().getFullYear();
+  import { getProviders, getUsage, type Provider, type UsageData } from "$lib/api";
+  import { LayoutDashboard, Server, TrendingUp, Zap, Activity } from "lucide-svelte";
 
   let providers = $state<Provider[]>([]);
+  let usage = $state<UsageData | null>(null);
   let loading = $state(true);
-  let modalOpen = $state(false);
-  let passwordModalOpen = $state(false);
-  let editingProvider = $state<Provider | null>(null);
-  let modalTitle = $state("添加提供商");
-
-  // Toast
-  function showToast(msg: string, type: "success" | "error" = "success") {
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("toast", { detail: { message: msg, type } }));
-    }
-  }
-
-  // Auth guard
-  $effect(() => {
-    if (!isAuthenticated()) goto("/");
-  });
 
   $effect(() => {
-    loadProviders();
-  });
-
-  async function loadProviders() {
-    try {
-      providers = await getProviders();
-    } catch (err: any) {
-      showToast(err.message, "error");
-    } finally {
+    Promise.all([
+      getProviders().catch(() => [] as Provider[]),
+      getUsage().catch(() => null as UsageData | null),
+    ]).then(([p, u]) => {
+      providers = p;
+      usage = u;
       loading = false;
-    }
+    });
+  });
+
+  const totalCalls = $derived(
+    usage?.totals
+      ? Object.values(usage.totals).reduce((s, v) => s + (v.calls || 0), 0)
+      : 0
+  );
+  const totalTokens = $derived(
+    usage?.totals
+      ? Object.values(usage.totals).reduce(
+          (s, v) => s + (v.promptTokens || 0) + (v.completionTokens || 0), 0)
+      : 0
+  );
+  const enabledCount = $derived(providers.filter(p => p.enabled).length);
+
+  function formatTokens(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+    return String(n);
   }
 
-  function handleAdd() {
-    editingProvider = null;
-    modalTitle = "添加 AI 提供商";
-    modalOpen = true;
-  }
-
-  function handleEdit(id: string) {
-    const p = providers.find((x) => x.id === id);
-    if (p) {
-      editingProvider = p;
-      modalTitle = `编辑: ${p.name}`;
-      modalOpen = true;
-    }
-  }
-
-  async function handleToggle(id: string) {
-    const p = providers.find((x) => x.id === id);
-    if (!p) return;
-    try {
-      await updateProvider(id, {
-        id: p.id,
-        type: p.type,
-        name: p.name,
-        enabled: !p.enabled,
-        config: p.config,
-        models: p.models,
-        weight: p.weight,
-      });
-      await loadProviders();
-      showToast(p.enabled ? "已禁用" : "已启用");
-    } catch (err: any) {
-      showToast(err.message, "error");
-    }
-  }
-
-  async function handleDelete(id: string) {
-    const p = providers.find((x) => x.id === id);
-    if (!p) return;
-    if (!confirm(`确定要删除提供商 "${p.name}" 吗？\n此操作不可撤销。`)) return;
-    try {
-      await deleteProvider(id);
-      await loadProviders();
-      showToast("已删除");
-    } catch (err: any) {
-      showToast(err.message, "error");
-    }
-  }
-
-  function handleSaved() {
-    const wasEdit = !!editingProvider;
-    modalOpen = false;
-    editingProvider = null;
-    loadProviders();
-    showToast(wasEdit ? "提供商已更新" : "提供商已添加");
-  }
-
-  function handleLogout() {
-    clearToken();
-    goto("/");
+  function formatNumber(n: number): string {
+    return n.toLocaleString();
   }
 </script>
 
-<svelte:head>
-  <title>控制台 — Vega API</title>
-</svelte:head>
+<svelte:head><title>概览 — Vega API</title></svelte:head>
 
-<div class="min-h-dvh bg-background">
-  <div class="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-    <!-- ═══════════ Header ═══════════ -->
-    <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8 pb-6 border-b border-white/[0.06]">
-      <div class="flex items-center gap-3">
-        <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-cta-subtle ring-1 ring-white/[0.06]">
-          <Key class="w-5 h-5 text-cta" stroke-width={1.75} />
-        </div>
-        <div>
-          <h1 class="text-lg font-bold text-primary font-mono tracking-tight">
-            Vega<span class="text-cta font-sans font-semibold"> API</span>
-          </h1>
-          <p class="text-xs text-muted">配置管理控制台</p>
-        </div>
-      </div>
-
-      <!-- Desktop actions -->
-      <div class="hidden sm:flex items-center gap-2">
-        <button
-          class="p-2 rounded-xl hover:bg-surface-elevated text-muted hover:text-secondary transition-all duration-200"
-          onclick={() => (passwordModalOpen = true)}
-          title="修改管理密码"
-          aria-label="修改管理密码"
-        >
-          <Lock class="w-4 h-4" />
-        </button>
-        <button
-          class="p-2 rounded-xl hover:bg-danger-subtle text-muted hover:text-danger transition-all duration-200"
-          onclick={handleLogout}
-          title="退出登录"
-          aria-label="退出登录"
-        >
-          <LogOut class="w-4 h-4" />
-        </button>
-      </div>
-    </header>
-
-    <!-- ═══════════ Toolbar ═══════════ -->
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-      <div class="flex items-center gap-2.5">
-        <Server class="w-4 h-4 text-cta" />
-        <h2 class="text-sm font-semibold text-primary uppercase tracking-wider">AI 提供商</h2>
-        {#if !loading}
-          <span class="text-xs text-muted font-mono tabular-nums">({providers.length})</span>
-        {/if}
-      </div>
-
-      <div class="flex items-center gap-2">
-        <!-- Mobile actions (visible only on small screens) -->
-        <button
-          class="sm:hidden p-2 rounded-xl hover:bg-surface-elevated text-muted hover:text-secondary transition-all duration-200"
-          onclick={() => (passwordModalOpen = true)}
-          aria-label="修改管理密码"
-        >
-          <Lock class="w-4 h-4" />
-        </button>
-        <button
-          class="sm:hidden p-2 rounded-xl hover:bg-danger-subtle text-muted hover:text-danger transition-all duration-200"
-          onclick={handleLogout}
-          aria-label="退出登录"
-        >
-          <LogOut class="w-4 h-4" />
-        </button>
-
-        <button
-          class="flex-1 sm:flex-none px-4 py-2.5 text-sm font-semibold rounded-xl
-                 bg-cta hover:bg-cta-hover text-white
-                 transition-all duration-200 shadow-glow-cta
-                 active:scale-[0.97]
-                 inline-flex items-center justify-center gap-2"
-          onclick={handleAdd}
-        >
-          <Plus class="w-4 h-4" stroke-width={2.5} />
-          添加提供商
-        </button>
-      </div>
+{#if loading}
+  <div class="space-y-6 animate-pulse">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {#each Array(4) as _}
+        <div class="bg-surface rounded-xl p-5 h-24"></div>
+      {/each}
     </div>
-
-    <!-- ═══════════ Client Key Section ═══════════ -->
+  </div>
+{:else}
+  <div class="max-w-6xl mx-auto">
     <div class="mb-8">
-      <ClientKeySection onsuccess={(m) => showToast(m)} onerror={(m) => showToast(m, "error")} />
+      <h1 class="text-lg font-bold text-primary font-mono flex items-center gap-2">
+        <LayoutDashboard class="w-5 h-5" stroke-width={1.5} />
+        概览
+      </h1>
+      <p class="text-xs text-muted mt-1">Vega API 运行状态一览</p>
     </div>
 
-    <!-- ═══════════ Usage Section ═══════════ -->
-    <div class="mb-8">
-      <UsageSection />
+    <!-- Stat Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div class="bg-surface border border-white/[0.06] rounded-xl p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <Activity class="w-4 h-4 text-cta" stroke-width={1.5} />
+          <span class="text-xs text-muted uppercase tracking-wider">总调用次数</span>
+        </div>
+        <div class="text-2xl font-bold text-primary font-mono tabular-nums">{formatNumber(totalCalls)}</div>
+      </div>
+
+      <div class="bg-surface border border-white/[0.06] rounded-xl p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <Zap class="w-4 h-4 text-accent" stroke-width={1.5} />
+          <span class="text-xs text-muted uppercase tracking-wider">活跃提供商</span>
+        </div>
+        <div class="text-2xl font-bold text-accent font-mono tabular-nums">{enabledCount}</div>
+      </div>
+
+      <div class="bg-surface border border-white/[0.06] rounded-xl p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <TrendingUp class="w-4 h-4 text-warning" stroke-width={1.5} />
+          <span class="text-xs text-muted uppercase tracking-wider">总 Token 数</span>
+        </div>
+        <div class="text-2xl font-bold text-primary font-mono tabular-nums">{formatTokens(totalTokens)}</div>
+      </div>
+
+      <div class="bg-surface border border-white/[0.06] rounded-xl p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <Server class="w-4 h-4 text-cta" stroke-width={1.5} />
+          <span class="text-xs text-muted uppercase tracking-wider">提供商总数</span>
+        </div>
+        <div class="text-2xl font-bold text-primary font-mono tabular-nums">{providers.length}</div>
+      </div>
     </div>
 
-    <!-- ═══════════ Provider List ═══════════ -->
-    {#if loading}
-      <div class="space-y-3">
-        {#each Array(3) as _}
-          <div class="bg-surface border border-white/[0.06] rounded-xl p-5 animate-pulse">
-            <div class="flex items-center gap-4">
-              <div class="h-6 w-20 rounded-lg bg-white/[0.04]"></div>
-              <div class="flex-1 space-y-2">
-                <div class="h-4 w-40 rounded bg-white/[0.04]"></div>
-                <div class="h-3 w-24 rounded bg-white/[0.03]"></div>
-              </div>
-              <div class="flex gap-1">
-                <div class="h-8 w-8 rounded-lg bg-white/[0.04]"></div>
-                <div class="h-8 w-8 rounded-lg bg-white/[0.04]"></div>
-                <div class="h-8 w-8 rounded-lg bg-white/[0.04]"></div>
-              </div>
+    <!-- Provider Status -->
+    <div class="bg-surface border border-white/[0.06] rounded-xl p-6">
+      <h2 class="text-sm font-semibold text-primary mb-4 flex items-center gap-2">
+        <Server class="w-4 h-4 text-cta" stroke-width={1.5} />
+        提供商状态
+      </h2>
+      <div class="space-y-2">
+        {#each providers as p (p.id)}
+          <div class="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-surface-hover transition-colors">
+            <div class="flex items-center gap-3">
+              <div class="w-2 h-2 rounded-full {p.enabled ? 'bg-accent' : 'bg-muted'}"></div>
+              <span class="text-sm text-secondary">{p.name}</span>
+              <span class="text-[10px] text-muted font-mono uppercase px-1.5 py-0.5 rounded bg-white/[0.04]">
+                {p.type === 'vertex_ai' ? 'Vertex' : p.type === 'google_ai_studio' ? 'Studio' : 'OpenAI'}
+              </span>
             </div>
+            <span class="text-xs {p.enabled ? 'text-accent' : 'text-muted'}">
+              {p.enabled ? '运行中' : '已禁用'}
+            </span>
           </div>
         {/each}
+        {#if providers.length === 0}
+          <p class="text-sm text-muted text-center py-6">暂无提供商，请到 API 设置页面添加</p>
+        {/if}
       </div>
-    {:else if providers.length === 0}
-      <div
-        class="bg-surface border border-white/[0.06] border-dashed rounded-2xl p-10 sm:p-14 text-center"
-      >
-        <div
-          class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-cta-subtle ring-1 ring-white/[0.06] mb-5"
-        >
-          <Server class="w-6 h-6 text-cta" stroke-width={1.5} />
-        </div>
-        <h3 class="text-base font-semibold text-primary mb-1.5">暂无 AI 提供商</h3>
-        <p class="text-sm text-muted mb-6 max-w-xs mx-auto">
-          点击上方「添加提供商」按钮开始配置您的第一个 AI 服务。
-        </p>
-        <button
-          class="px-5 py-2.5 text-sm font-semibold rounded-xl
-                 bg-cta hover:bg-cta-hover text-white
-                 transition-all duration-200 shadow-glow-cta
-                 active:scale-[0.97]
-                 inline-flex items-center gap-2"
-          onclick={handleAdd}
-        >
-          <Plus class="w-4 h-4" stroke-width={2.5} />
-          添加第一个提供商
-        </button>
-      </div>
-    {:else}
-      <div class="space-y-3">
-        {#each providers as p (p.id)}
-          <ProviderCard provider={p} onedit={handleEdit} ontoggle={handleToggle} ondelete={handleDelete} />
-        {/each}
-      </div>
-    {/if}
-
-    <!-- ═══════════ Footer ═══════════ -->
-    <footer class="mt-12 pt-6 border-t border-white/[0.06] text-center">
-      <p class="text-xs text-muted font-mono">
-        Vega API &copy; {CURRENT_YEAR} &mdash;
-        <span class="inline-flex items-center gap-1">
-          <Shield class="w-3 h-3" /> 连接即安全
-        </span>
-      </p>
-    </footer>
+    </div>
   </div>
-</div>
-
-<!-- Provider Modal -->
-<Modal bind:open={modalOpen} title={modalTitle} onclose={() => (editingProvider = null)}>
-  <ProviderForm editing={editingProvider} onsave={handleSaved} onerror={(m) => showToast(m, "error")} />
-</Modal>
-
-<!-- Change Password Modal -->
-<ChangePasswordModal
-  bind:open={passwordModalOpen}
-  onsuccess={(m) => showToast(m)}
-  onerror={(m) => showToast(m, "error")}
-/>
+{/if}
