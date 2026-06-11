@@ -1,39 +1,41 @@
 # Vega API
 
-基于 Cloudflare Workers 的多后端 AI API 统一代理，将 Google Vertex AI、Google AI Studio 和 OpenAI 官方 API 聚合为单一 OpenAI 兼容接口。前端管理面板使用 SvelteKit + Tailwind CSS 构建。
+基于 Cloudflare Workers (Hono + TypeScript) 的多后端 AI API 统一代理，将 Google Vertex AI、Google AI Studio 和 OpenAI 聚合为单一 OpenAI 兼容接口。管理面板使用 SvelteKit + Tailwind CSS 构建，侧边栏导航 + D1 数据库。
 
-## ✨ 特性
+## 特性
 
-- 🔀 **多后端统一** — 一套接口聚合 Vertex AI、AI Studio、OpenAI，按模型名自动路由
-- 🔌 **OpenAI 兼容** — 标准 `/v1/chat/completions`、`/v1/models` 接口，无缝替换 OpenAI SDK base URL
-- 🎨 **SvelteKit 管理面板** — Code Dark 深色主题，JetBrains Mono + IBM Plex Sans 字体，响应式设计支持桌面/移动端
-- 🔐 **安全设计** — API Key AES-GCM 加密存储、fail2ban 防暴力破解、客户端访问密钥
-- 🤖 **模型自动发现** — 通过各提供商官方 API 自动获取可用模型列表
-- ⚡ **边缘计算** — 基于 Cloudflare Workers 全球边缘网络，低延迟高可用
+- **多后端统一** — 一套接口聚合 Vertex AI、AI Studio、OpenAI，按模型名自动路由
+- **OpenAI 兼容** — 标准 `/v1/chat/completions`、`/v1/models` 接口，无缝替换 OpenAI SDK base URL
+- **SvelteKit 管理面板** — 侧边栏 4 页面（概览 / 调用记录 / API 设置 / 面板设置），Code Dark 深色主题，可折叠侧边栏，响应式设计
+- **调用记录** — D1 持久化存储，最多 10000 条自动轮替，支持搜索和提供商筛选
+- **安全设计** — API Key AES-GCM 加密存储、登录限流（5 次失败 → 15 分钟封禁）、客户端访问密钥
+- **模型自动发现** — 通过各提供商官方 API 自动获取可用模型列表
+- **边缘计算** — Cloudflare Workers 全球边缘网络，低延迟高可用
 
-## 🛠️ 技术栈
+## 技术栈
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Cloudflare Workers + KV Storage |
-| 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons（Code Dark 主题） |
-| 加密 | Web Crypto API（AES-256-GCM、SHA-256） |
+| 框架 | Hono (TypeScript) |
+| 数据库 | Cloudflare D1 |
+| 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons (Code Dark 主题) |
+| 加密 | Web Crypto API (AES-256-GCM、SHA-256) |
 | 测试 | Vitest + @cloudflare/vitest-pool-workers |
 | 部署 | Wrangler + Workers Static Assets |
 
-## 🏗️ 架构
+## 架构
 
 ```
 客户端 (OpenAI SDK / curl / 浏览器)
       │
       ▼
 ┌─────────────────────────────────────────┐
-│         Cloudflare Worker               │
+│         Cloudflare Worker (Hono)         │
 │                                          │
 │  SvelteKit SPA  → /                     │
-│  POST /v1/chat/completions  → 模型路由  │
-│  GET  /v1/models            → 模型聚合  │
-│  POST /admin/*              → 管理 API  │
+│  POST /v1/chat/completions  → 模型路由   │
+│  GET  /v1/models            → 模型聚合   │
+│  POST /admin/*              → 管理 API   │
 │                                          │
 │  路由引擎（按模型名自动分发）:            │
 │    google/* → Vertex AI / AI Studio      │
@@ -52,17 +54,26 @@
 
 所有 provider 均使用 OpenAI 兼容端点透传，无需格式转换。
 
-## 📦 支持的后端
+## 支持的后端
 
 | 后端 | 认证方式 | 配置复杂度 |
 |------|---------|-----------|
 | **Google Vertex AI** | 服务账号 JWT (RS256) 或 API Key | 支持 JSON 密钥文件一键导入或直接输入 API Key |
 | **Google AI Studio** | API Key (Bearer) | 仅需 API Key |
-| **OpenAI 官方** | API Key (Bearer) | 仅需 API Key |
+| **OpenAI 官方** | API Key (Bearer) | 仅需 API Key，支持自定义 base URL |
 
 每种后端支持配置多个实例。
 
-## 🚀 快速部署
+## 管理面板页面
+
+| 页面 | 路由 | 功能 |
+|------|------|------|
+| **概览** | `/dashboard` | 统计卡片（总调用、Token、活跃提供商）+ 提供商状态列表 |
+| **调用记录** | `/dashboard/logs` | 每次 API 调用的时间、IP、提供商、模型、Token，支持搜索和筛选 |
+| **API 设置** | `/dashboard/api-settings` | 提供商 CRUD（添加/编辑/删除/启用禁用）+ 客户端 API Key 管理 |
+| **面板设置** | `/dashboard/panel-settings` | 修改管理密码 |
+
+## 快速部署
 
 ### 前提条件
 
@@ -76,43 +87,49 @@ git clone <repo-url> && cd vega-api
 npm install
 ```
 
-### 2. 创建 KV 命名空间
+### 2. 创建 D1 数据库
 
 ```bash
-npx wrangler kv namespace create VEGA_API_CONFIG
+npx wrangler d1 create vega-api-db
 ```
 
-将输出的 `id` 填入 `wrangler.jsonc` 中的 `kv_namespaces`。
+将输出的 `database_id` 填入 `wrangler.jsonc` 中的 `d1_databases.database_id`。
 
-### 3. 生成加密密钥
+### 3. 运行数据库迁移
+
+```bash
+npm run db:migrate:local   # 本地开发
+npm run db:migrate         # 生产环境
+```
+
+### 4. 生成加密密钥
 
 ```bash
 openssl rand -hex 32
 # 输出示例: 926090634389e3b4285e5774e59913aacca1acc1e19a41e01b8d4f30d3c5f5fe
 ```
 
-### 4. 设置加密密钥
+### 5. 设置加密密钥
 
 ```bash
 npx wrangler secret put ENCRYPTION_KEY
-# 粘贴步骤 3 生成的密钥
+# 粘贴步骤 4 生成的密钥
 ```
 
-### 5. 构建前端并部署
+### 6. 构建前端并部署
 
 ```bash
-npm run build:ui    # 构建 SvelteKit 前端
-npm run deploy      # 部署 Worker + 静态资源
+npm run deploy      # 构建前端 + 部署 Worker + 静态资源
 ```
 
-### 6. 初始化配置
+### 7. 初始化配置
 
 浏览器访问 `https://your-worker.workers.dev/`：
-1. 首次访问输入管理密码（≥6 位，首次输入的密码将会成为你的管理密码）
-2. 点击「+ 添加提供商」→ 选择类型 → 填写配置（Vertex AI 可 📂 一键导入 JSON 密钥文件）
+1. 首次访问输入管理密码（≥6 位）
+2. API 设置页 → 添加提供商（Vertex AI 可一键导入 JSON 密钥文件）
 3. 在「客户端 API Key」卡片中生成访问密钥
 
-## 📖 使用说明
+## 使用说明
 
 ### 客户端调用
 
@@ -129,7 +146,6 @@ response = client.chat.completions.create(
     model="google/gemini-2.5-flash",
     messages=[{"role": "user", "content": "Hello!"}],
 )
-print(response.choices[0].message.content)
 ```
 
 **OpenAI SDK (JavaScript)**
@@ -163,14 +179,7 @@ curl https://your-worker.workers.dev/v1/chat/completions \
 | `gpt-*`, `o1-*`, `o3-*` | OpenAI 官方 |
 | 其他 | 尝试所有已启用提供商 |
 
-### 列出可用模型
-
-```bash
-curl https://your-worker.workers.dev/v1/models \
-  -H "Authorization: Bearer sk-your-client-api-key"
-```
-
-## 🔌 API 参考
+## API 参考
 
 ### OpenAI 兼容接口
 
@@ -179,119 +188,124 @@ curl https://your-worker.workers.dev/v1/models \
 | `/v1/chat/completions` | POST | 对话补全（自动路由） |
 | `/v1/models` | GET | 聚合模型列表 |
 | `/v1/models/{id}` | GET | 单个模型信息 |
-| `/v1/*` | ANY | 通用代理 |
 
 ### 管理 API
 
 | 路由 | 方法 | 认证 | 说明 |
 |------|------|------|------|
-| `/admin/auth` | POST | 无 | 登录获取 token |
+| `/admin/auth` | POST | 限流 | 登录获取 token |
 | `/admin/setup` | POST | 无 | 首次设置密码 |
 | `/admin/check` | GET | Bearer | 验证 token |
 | `/admin/providers` | GET/POST | Bearer | 列出/添加提供商 |
 | `/admin/providers/{id}` | GET/PUT/DELETE | Bearer | 单个提供商操作 |
 | `/admin/client-key` | GET/POST/DELETE | Bearer | 客户端密钥管理 |
 | `/admin/change-password` | POST | Bearer | 修改管理密码 |
-| `/admin/default-provider` | GET/PUT | Bearer | 默认提供商 |
+| `/admin/usage` | GET | Bearer | 用量统计 |
+| `/admin/logs` | GET | Bearer | 调用记录（支持 search/providerId/limit/offset） |
 
-## 🔒 安全设计
+## 安全设计
 
 | 特性 | 实现 |
 |------|------|
 | **API Key 存储** | AES-256-GCM 加密，密钥存储于 Worker Secret |
-| **管理面板认证** | SHA-256 密码哈希 |
-| **暴力破解防护** | fail2ban：5 次失败 → 15 分钟封禁 |
+| **管理面板认证** | SHA-256 密码哈希 → Bearer token |
+| **暴力破解防护** | D1 内置限流：5 次失败 → 15 分钟封禁（5 分钟滑动窗口） |
 | **客户端访问控制** | 可选的 Bearer Token，通过管理面板管理 |
-| **密钥保护** | 编辑时不回填敏感字段，防止脱敏值覆盖真实密钥 |
-| **传输安全** | Cloudflare 自动 TLS，CORS 头可配置 |
+| **密钥保护** | 编辑时不回填敏感字段 |
+| **传输安全** | Cloudflare 自动 TLS，CORS 可配置 |
 
-## 🗂️ KV 数据结构
+## D1 数据结构
 
 ```
-VEGA_API_CONFIG (KV Namespace)
-├── config:version           → 配置版本号（缓存失效用）
-├── config:admin_password    → 管理密码 SHA-256 哈希
-├── config:providers         → ["vertex-1", "openai-1", ...]
-├── config:default_provider  → 默认提供商 ID
-├── config:client_api_key    → 客户端访问密钥（AES-GCM 加密）
-├── config:provider:vertex-1 → {type, name, enabled, config, models}
-├── config:provider:openai-1 → {type, name, enabled, config, models}
-├── config:fail2ban:{ip}     → {attempts, banned_until} (自动过期)
-└── ...
+vega-api-db
+├── config            — key-value 配置（密码、密钥、版本号、限流数据）
+├── providers         — AI 提供商配置（敏感字段 AES-GCM 加密）
+├── usage_daily       — 每日聚合用量（date, provider_id, model 三维度）
+└── call_logs         — 详细调用记录（最多 10000 条，自动清理旧记录）
 ```
 
-## 🛠️ 开发
+## 开发
 
 ```bash
-npm install         # 安装所有依赖（npm workspaces）
-npm run dev         # Worker 开发服务器 (wrangler dev)
-npm run dev:ui      # 前端开发服务器 (SvelteKit Vite)
-npm test            # 运行测试 (vitest)
-npm run build:ui    # 构建前端
-npm run deploy      # 部署到 Cloudflare
+npm install              # 安装所有依赖（npm workspaces）
+npm run dev              # Worker 开发服务器
+npm run dev:ui           # 前端开发服务器
+npm test                 # 运行测试
+npm run build:ui         # 构建前端
+npm run db:migrate:local # 本地数据库迁移
+npm run deploy           # 部署到 Cloudflare
 ```
 
 ### 项目结构
 
 ```
-├── package.json            # npm workspaces root
-├── wrangler.jsonc          # Workers 配置（KV + 静态资源绑定）
+├── package.json              # npm workspaces root
+├── wrangler.jsonc            # Workers 配置（D1 + 静态资源绑定）
+├── tsconfig.json
 ├── vitest.config.js
-├── src/                    # Worker 源码
-│   ├── index.js            # 主入口：路由分发 + 模型聚合 + ASSETS fallback
-│   ├── admin.js            # 管理 API (/admin/*)
-│   ├── config.js           # KV 配置 CRUD
-│   ├── crypto.js           # AES-GCM 加解密 + SHA-256
-│   ├── fail2ban.js         # 登录限流
+├── migrations/               # D1 数据库迁移
+│   ├── 0001_init.sql
+│   └── 0002_call_logs.sql
+├── src/                      # Worker 源码 (TypeScript)
+│   ├── index.ts              # Hono 主入口：路由 + 模型聚合 + ASSETS fallback
+│   ├── types.ts              # 共享类型定义
+│   ├── db.ts                 # D1 schema 初始化
+│   ├── config.ts             # D1 配置 CRUD
+│   ├── crypto.ts             # AES-GCM 加解密 + SHA-256
+│   ├── rate-limit.ts         # 登录限流
+│   ├── usage.ts              # 用量追踪 + 调用记录
 │   └── providers/
-│       ├── vertex.js       # Google Vertex AI（JWT + API Key）
-│       ├── ai-studio.js    # Google AI Studio（Bearer）
-│       └── openai.js       # OpenAI 官方（Bearer）
+│       ├── vertex.ts         # Google Vertex AI（JWT + API Key）
+│       ├── ai-studio.ts      # Google AI Studio（Bearer）
+│       └── openai.ts         # OpenAI 官方（Bearer）
 ├── test/
-│   └── index.spec.js       # 集成测试
-└── admin-ui/               # SvelteKit 管理面板（npm workspace）
+│   └── index.spec.js         # 集成测试
+└── admin-ui/                 # SvelteKit 管理面板（npm workspace）
     ├── package.json
     ├── svelte.config.js
-    ├── vite.config.ts
     └── src/
         ├── app.html
         ├── app.css
         ├── lib/
-        │   ├── api.ts                   # /admin/* API 客户端
+        │   ├── api.ts                     # /admin/* API 客户端
+        │   ├── sidebar-state.ts           # 侧边栏折叠状态 store
+        │   ├── Sidebar.svelte             # 可折叠侧边栏导航
+        │   ├── CallLogTable.svelte        # 调用记录表格（桌面表 + 移动卡片）
         │   ├── Modal.svelte
         │   ├── ProviderCard.svelte
-        │   ├── ProviderForm.svelte      # 含 Vertex AI JSON 导入
+        │   ├── ProviderForm.svelte
         │   ├── ClientKeySection.svelte
-        │   └── ChangePasswordModal.svelte
+        │   └── Toast.svelte
         └── routes/
-            ├── +layout.svelte           # Auth guard
-            ├── +page.svelte             # 登录页
+            ├── +layout.svelte             # Auth guard + 侧边栏外壳
+            ├── +page.svelte               # 登录页
             └── dashboard/
-                └── +page.svelte         # 主面板
+                ├── +page.svelte           # 概览
+                ├── logs/+page.svelte      # 调用记录
+                ├── api-settings/+page.svelte  # API 设置
+                └── panel-settings/+page.svelte # 面板设置
 ```
 
-## 🎨 设计系统 — Code Dark
+## 设计系统 — Code Dark
 
-管理面板使用 **Code Dark** 主题（OLED 暗色 + Minimalism），设计 Token 集中在 `app.css`：
+管理面板使用 Code Dark 主题（OLED 暗色），设计 Token 集中在 `app.css`：
 
 | 层级 | 值 | 用途 |
 |------|-----|------|
 | 背景 | `#0F172A` | 页面底色 |
-| 表面 | `#1B2336` / `#1E293B` | 卡片、输入框背景 |
+| 表面 | `#1B2336` / `#1E293B` | 卡片、输入框 |
 | 主文字 | `#F8FAFC` | 标题、正文 |
 | 次要文字 | `#CBD5E1` / `#64748B` | 描述、提示 |
 | Accent 绿 | `#22C55E` | 状态指示、成功、启用 |
 | CTA 蓝 | `#3B82F6` | 按钮、链接、聚焦环 |
 | 危险红 | `#EF4444` | 删除、错误 |
-| 警告黄 | `#F59E0B` | 密钥提示、禁用警告 |
+| 警告黄 | `#F59E0B` | 禁用警告 |
 
 | 字体 | 用途 |
 |------|------|
-| **JetBrains Mono** | 标题、代码、Provider ID |
+| **JetBrains Mono** | 标题、代码、ID |
 | **IBM Plex Sans** | 正文、标签、UI 控件 |
 
-完整 Token 定义及动画关键帧见 [admin-ui/src/app.css](admin-ui/src/app.css)。
-
-## 📄 许可
+## 许可
 
 MIT License
