@@ -247,13 +247,25 @@ npm run deploy           # 部署到 Cloudflare
 │   ├── 0001_init.sql
 │   └── 0002_call_logs.sql
 ├── src/                      # Worker 源码 (TypeScript)
-│   ├── index.ts              # Hono 主入口：路由 + 模型聚合 + ASSETS fallback
+│   ├── index.ts              # Hono 入口：CORS、路由挂载、健康检查、ASSETS fallback
+│   ├── router.ts             # 模型路由引擎：缓存管理、Provider 查找、模型聚合
 │   ├── types.ts              # 共享类型定义
 │   ├── db.ts                 # D1 schema 初始化
 │   ├── config.ts             # D1 配置 CRUD
 │   ├── crypto.ts             # AES-GCM 加解密 + SHA-256
 │   ├── rate-limit.ts         # 登录限流
 │   ├── usage.ts              # 用量追踪 + 调用记录
+│   ├── middleware/
+│   │   └── auth.ts           # 认证中间件（客户端 + 管理员）
+│   ├── routes/
+│   │   ├── admin/
+│   │   │   ├── auth.ts       # /admin/auth、/admin/setup、/admin/check、/admin/change-password
+│   │   │   ├── providers.ts  # /admin/providers CRUD
+│   │   │   ├── client-key.ts # /admin/client-key 管理
+│   │   │   └── usage.ts      # /admin/usage、/admin/logs
+│   │   └── v1/
+│   │       ├── models.ts     # /v1/models、/v1/models/:modelId
+│   │       └── chat.ts       # /v1/chat/completions（流式/非流式代理）
 │   └── providers/
 │       ├── vertex.ts         # Google Vertex AI（JWT + API Key）
 │       ├── ai-studio.ts      # Google AI Studio（Bearer）

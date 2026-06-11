@@ -59,6 +59,14 @@ async function getAccessToken(env: Env, config: Record<string, string>): Promise
   if (!privateKey) throw new Error('Vertex AI: Missing privateKey');
 
   const cacheKey = serviceAccountEmail;
+
+  // Periodic eviction of expired entries (prevents unbounded Map growth)
+  if (Math.random() < 0.05) {
+    for (const [key, entry] of tokenCache) {
+      if (now >= entry.exp) tokenCache.delete(key);
+    }
+  }
+
   const cached = tokenCache.get(cacheKey);
   if (cached && now < cached.exp - TOKEN_CACHE_SKEW_SECONDS) return cached.token;
 

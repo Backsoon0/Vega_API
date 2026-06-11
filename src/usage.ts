@@ -13,7 +13,7 @@ function isoDate(): string {
 /**
  * Record usage after each API call. Fire-and-forget.
  * Inserts into usage_daily (aggregated) and call_logs (detail).
- * Cleans up old log rows when exceeding MAX_LOG_ROWS.
+ * Probabilistic cleanup (~1% of calls) prunes old log rows when exceeding MAX_LOG_ROWS.
  */
 export async function recordUsage(
   env: Env,
@@ -49,13 +49,16 @@ export async function recordUsage(
       .bind(now, ip, providerId, model, usage.prompt || 0, usage.completion || 0, success ? 1 : 0)
       .run();
 
-    // Cleanup: keep only the latest MAX_LOG_ROWS
-    await env.DB
-      .prepare(
-        `DELETE FROM call_logs WHERE id NOT IN (SELECT id FROM call_logs ORDER BY timestamp DESC LIMIT ?)`
-      )
-      .bind(MAX_LOG_ROWS)
-      .run();
+    // Probabilistic cleanup: ~1% of calls (roughly every 100 requests)
+    // Avoids full table scan on every single API call
+    if (Math.random() < 0.01) {
+      await env.DB
+        .prepare(
+          `DELETE FROM call_logs WHERE id NOT IN (SELECT id FROM call_logs ORDER BY timestamp DESC LIMIT ?)`
+        )
+        .bind(MAX_LOG_ROWS)
+        .run();
+    }
   } catch (err) {
     console.error('Usage tracking error:', (err as Error).message);
   }

@@ -173,6 +173,9 @@ dist
 .mcp.json
 .claude/
 
+# Serena project memories (session-specific)
+.serena/
+
 # SvelteKit build output
 admin-ui/build/
 admin-ui/.svelte-kit/
