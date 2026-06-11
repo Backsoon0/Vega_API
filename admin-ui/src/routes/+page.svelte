@@ -8,12 +8,7 @@
   let loading = $state(false);
   let showPassword = $state(false);
 
-  // Redirect if already authenticated — but only on client side
-  $effect(() => {
-    if (typeof window !== 'undefined' && isAuthenticated()) {
-      goto("/dashboard");
-    }
-  });
+  // Redirect handled by parent layout — no need for duplicate here
 
   async function handleSubmit(e: Event) {
     e.preventDefault();

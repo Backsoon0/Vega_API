@@ -544,9 +544,29 @@ app.get('/*', async (c) => {
 });
 
 // ---- Export ----
+let schemaInitialized = false;
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    await initSchema(env);
-    return app.fetch(request, env, ctx);
+    // Only init schema once per isolate (not every request)
+    if (!schemaInitialized) {
+      try {
+        await initSchema(env);
+        schemaInitialized = true;
+      } catch (err) {
+        console.error('Schema init error:', (err as Error).message);
+      }
+    }
+    try {
+      return await app.fetch(request, env, ctx);
+    } catch (err) {
+      console.error('Worker error:', (err as Error).message, (err as Error).stack);
+      return new Response(JSON.stringify({
+        error: { message: 'Internal server error: ' + (err as Error).message }
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
   },
 };
