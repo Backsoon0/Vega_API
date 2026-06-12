@@ -7,8 +7,8 @@ import type { Env } from '../../types';
 import { findProviderForModel, PROVIDER_HANDLERS } from '../../router';
 import { recordUsage } from '../../usage';
 
-/** Maximum request body size: 1 MB */
-const MAX_BODY_SIZE = 1_048_576;
+/** Maximum request body size: 5 MB (balances image support vs Worker memory) */
+const MAX_BODY_SIZE = 5_242_880;
 
 export const v1ChatRoutes = new Hono<{ Bindings: Env }>();
 
