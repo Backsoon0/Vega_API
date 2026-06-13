@@ -4,7 +4,7 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env, Provider } from '../../types';
+import type { Env } from '../../types';
 import type { ProviderMatch } from '../../router';
 import { findProviderForModel, PROVIDER_HANDLERS } from '../../router';
 import { recordUsage } from '../../usage';
@@ -126,7 +126,6 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 
 /** Extract a balanced JSON object at key, handling nested braces (e.g. prompt_tokens_details). */
 function extractUsageJson(text: string): { prompt_tokens?: number; completion_tokens?: number } | null {
-	// Try "usage" first (OpenAI format), then "usageMetadata" (Google Gemini format)
 	for (const key of ['"usage"', '"usageMetadata"']) {
 		const start = text.indexOf(key);
 		if (start === -1) continue;
@@ -140,7 +139,6 @@ function extractUsageJson(text: string): { prompt_tokens?: number; completion_to
 			const ch = text[j];
 			if (ch === '{') depth++;
 			else if (ch === '}') depth--;
-			// Skip escaped characters inside strings
 			else if (ch === '"') {
 				j++;
 				while (j < text.length) {
@@ -157,7 +155,7 @@ function extractUsageJson(text: string): { prompt_tokens?: number; completion_to
 				const obj = JSON.parse(text.substring(i, j));
 				return obj;
 			} catch {
-				continue; // try next key
+				continue;
 			}
 		}
 	}
@@ -179,16 +177,14 @@ async function handleNonStreamResponse(
 		const data = JSON.parse(bodyText);
 		// OpenAI returns `usage`, Google returns `usageMetadata` in OpenAI-compatible mode
 		const usage = data?.usage || data?.usageMetadata;
-		if (usage) {
+		if (usage && execCtx) {
 			const durationMs = Date.now() - startMs;
-			if (execCtx) {
-				execCtx.waitUntil(
-					recordUsage(env, providerId, modelId, ip, {
-						prompt: usage.prompt_tokens || 0,
-						completion: usage.completion_tokens || 0,
-					}, true, durationMs),
-				);
-			}
+			execCtx.waitUntil(
+				recordUsage(env, providerId, modelId, ip, {
+					prompt: usage.prompt_tokens || 0,
+					completion: usage.completion_tokens || 0,
+				}, true, durationMs),
+			);
 		}
 	} catch {
 		/* ignore parse errors */
@@ -200,7 +196,9 @@ async function handleNonStreamResponse(
 	});
 }
 
-// ---- Streaming response handler with balanced-brace usage extraction ----
+// ---- Streaming response handler ----
+// Uses body.tee() so execCtx.waitUntil() is called BEFORE the handler returns.
+// (waitUntil inside TransformStream.flush() runs too late — fetch handler already returned.)
 function handleStreamResponse(
 	upstreamResp: Response,
 	env: Env,
@@ -210,29 +208,36 @@ function handleStreamResponse(
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
 ): Response {
-	let rawBuffer = '';
+	const [clientStream, observerStream] = upstreamResp.body!.tee();
 
-	const ts = new TransformStream({
-		transform(chunk, ctrl) {
-			ctrl.enqueue(chunk);
-			rawBuffer += new TextDecoder().decode(chunk);
-		},
-		flush() {
-			const usage = extractUsageJson(rawBuffer);
-			if (usage && execCtx) {
-				const durationMs = Date.now() - startMs;
-				execCtx.waitUntil(
-					recordUsage(env, providerId, modelId, ip, {
-						prompt: usage.prompt_tokens || 0,
-						completion: usage.completion_tokens || 0,
-					}, true, durationMs),
-				);
-			}
-		},
-	});
+	// Read observer stream to extract usage, then record via waitUntil (called now, not in flush)
+	if (execCtx) {
+		execCtx.waitUntil(
+			(async () => {
+				const reader = observerStream.getReader();
+				let rawBuffer = '';
+				try {
+					while (true) {
+						const { done, value } = await reader.read();
+						if (value) rawBuffer += new TextDecoder().decode(value);
+						if (done) break;
+					}
+					const usage = extractUsageJson(rawBuffer);
+					if (usage) {
+						const durationMs = Date.now() - startMs;
+						await recordUsage(env, providerId, modelId, ip, {
+							prompt: usage.prompt_tokens || 0,
+							completion: usage.completion_tokens || 0,
+						}, true, durationMs);
+					}
+				} catch {
+					/* ignore read errors */
+				}
+			})(),
+		);
+	}
 
-	// body is non-null — checked before calling handleStreamResponse
-	return new Response(upstreamResp.body!.pipeThrough(ts), {
+	return new Response(clientStream, {
 		status: upstreamResp.status,
 		statusText: upstreamResp.statusText,
 		headers: upstreamResp.headers,
