@@ -1,6 +1,7 @@
 <script lang="ts">
   import { isAuthenticated, checkAuth } from "$lib/api";
   import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
   import Sidebar from "$lib/Sidebar.svelte";
   import Toast from "$lib/Toast.svelte";
   import { sidebarCollapsed, SIDEBAR_EXPANDED, SIDEBAR_COLLAPSED } from "$lib/sidebar-state";
@@ -20,7 +21,7 @@
     isDashboard = path.startsWith('/dashboard');
 
     if (path === '/' && isAuthenticated()) {
-      window.location.href = '/dashboard';
+      goto('/dashboard');
       return;
     }
 

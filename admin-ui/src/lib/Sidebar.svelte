@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
   import { LayoutDashboard, ListTodo, Settings, Wrench, LogOut, Key, ChevronLeft, ChevronRight, Menu } from "lucide-svelte";
   import { clearToken, isAuthenticated } from "$lib/api";
   import { sidebarCollapsed } from "$lib/sidebar-state";
@@ -95,7 +96,7 @@
                {collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'}"
         onclick={() => {
           closeMobile();
-          window.location.href = item.href;
+          goto(item.href);
         }}
         title={collapsed ? item.label : ''}
       >
