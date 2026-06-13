@@ -10,36 +10,30 @@
   let { children } = $props();
   let checking = $state(true);
   let authed = $state(false);
-  // Init from URL on first render to avoid flash of content without sidebar
-  let isDashboard = $state(typeof window !== 'undefined' ? window.location.pathname.startsWith('/dashboard') : false);
 
   let collapsed = $derived($sidebarCollapsed);
   let sidebarWidth = $derived(collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED);
 
-  $effect(() => {
-    const path = $page.url.pathname;
-    isDashboard = path.startsWith('/dashboard');
+  // Init from $page directly (Svelte auto-subscribes) — no flash on first render
+  let isDashboard = $state($page.url.pathname.startsWith('/dashboard'));
 
-    if (path === '/' && isAuthenticated()) {
+  $effect(() => {
+    isDashboard = $page.url.pathname.startsWith('/dashboard');
+
+    if ($page.url.pathname === '/' && isAuthenticated()) {
       goto('/dashboard');
       return;
     }
 
     if (isDashboard) {
-      // Only check auth if we don't already know we're authenticated
-      if (!authed) {
-        checkAuth().then((ok) => {
-          authed = ok;
-          checking = false;
-          if (!ok) {
-            window.location.href = '/';
-          }
-        });
-      } else {
+      checkAuth().then((ok) => {
+        authed = ok;
         checking = false;
-      }
+        if (!ok) {
+          window.location.href = '/';
+        }
+      });
     } else {
-      authed = false;
       checking = false;
     }
   });
