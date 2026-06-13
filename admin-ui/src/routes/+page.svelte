@@ -20,22 +20,30 @@
     }
 
     loading = true;
-    try {
-      const result = await login(password);
-      if (result.ok) {
-        await goto("/dashboard");
-      } else {
-        error = result.error || "登录失败";
-        if (result.banned) {
-          error += `（封禁剩余 ${Math.ceil(result.remainingSeconds / 60)} 分钟）`;
-        } else if (result.remaining !== undefined) {
-          error += `（剩余 ${result.remaining} 次尝试）`;
-        }
-      }
-    } catch (err: any) {
-      error = "网络错误: " + err.message;
-    } finally {
-      loading = false;
+	try {
+		const result = await login(password);
+		if (result.ok) {
+			try {
+				await goto("/dashboard");
+			} catch (navErr) {
+				error = "登录成功，跳转失败，正在重定向...";
+				setTimeout(() => { window.location.href = "/dashboard"; }, 500);
+			}
+		} else {
+			const errMsg = typeof result.error === 'string'
+				? result.error
+				: (result.error?.message || "登录失败");
+			error = errMsg;
+			if (result.banned) {
+				error += `（封禁剩余 ${Math.ceil(result.remainingSeconds / 60)} 分钟）`;
+			} else if (result.remaining !== undefined) {
+				error += `（剩余 ${result.remaining} 次尝试）`;
+			}
+		}
+	} catch (err) {
+		error = "网络错误: " + (err.message || String(err));
+	} finally {
+		loading = false;
     }
   }
 </script>
