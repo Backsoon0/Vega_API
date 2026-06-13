@@ -11,7 +11,9 @@ export const v1ModelRoutes = new Hono<{ Bindings: Env }>();
 // GET /v1/models — List all models across providers
 v1ModelRoutes.get('/models', async (c: Context<{ Bindings: Env }>) => {
 	const models = await getAggregatedModels(c.env);
-	return c.json({ object: 'list', data: models });
+	// Strip internal _providerId from response — Cherry Studio / clients may group by it
+	const cleanModels = models.map(({ _providerId, ...rest }) => rest);
+	return c.json({ object: 'list', data: cleanModels });
 });
 
 // GET /v1/models/:modelId — Get single model by ID

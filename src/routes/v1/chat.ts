@@ -1,9 +1,11 @@
 // src/routes/v1/chat.ts
 // OpenAI-compatible /v1/chat/completions — streaming + non-streaming proxy
+// Supports fallback: tries providers in weight order until one succeeds
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env } from '../../types';
+import type { Env, Provider } from '../../types';
+import type { ProviderMatch } from '../../router';
 import { findProviderForModel, PROVIDER_HANDLERS } from '../../router';
 import { recordUsage } from '../../usage';
 
@@ -37,34 +39,38 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	}
 
 	const modelId = String(body.model).trim();
-	const result = await findProviderForModel(c.env, modelId);
-	if (!result) {
+	const candidates: ProviderMatch[] = await findProviderForModel(c.env, modelId);
+	if (!candidates.length) {
 		return c.json(
 			{ error: { message: `No enabled provider for model: ${modelId}` } },
 			400,
 		);
 	}
 
-	const { provider } = result;
-	const handler = PROVIDER_HANDLERS[provider.type];
-	if (!handler) {
-		return c.json(
-			{ error: { message: `Unknown provider type: ${provider.type}` } },
-			500,
-		);
-	}
+	const ip = c.req.header('CF-Connecting-IP') || 'unknown';
+	const execCtx = (c as any).executionCtx;
 
-	body.model = result.matchedModel;
+	// Try each candidate in weight order; fall back on failure
+	let lastError: string = '';
+	for (let i = 0; i < candidates.length; i++) {
+		const { provider, matchedModel } = candidates[i];
+		const handler = PROVIDER_HANDLERS[provider.type];
+		if (!handler) {
+			lastError = `Unknown provider type: ${provider.type}`;
+			continue;
+		}
 
-	const newHeaders = new Headers(c.req.raw.headers);
-	newHeaders.delete('content-length');
-	const proxyReq = new Request(c.req.raw.url, {
-		method: 'POST',
-		headers: newHeaders,
-		body: JSON.stringify(body),
-	});
+		const routedBody = { ...body, model: matchedModel };
 
-	try {
+		const newHeaders = new Headers(c.req.raw.headers);
+		newHeaders.delete('content-length');
+		const proxyReq = new Request(c.req.raw.url, {
+			method: 'POST',
+			headers: newHeaders,
+			body: JSON.stringify(routedBody),
+		});
+
+		try {
 			const startMs = Date.now();
 			const upstreamResp = await handler.proxyRequest(
 				proxyReq,
@@ -72,37 +78,48 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 				provider,
 				'/chat/completions',
 			);
-		if (!upstreamResp.ok || !upstreamResp.body) return upstreamResp;
 
-			const ip = c.req.header('CF-Connecting-IP') || 'unknown';
-			const isStream = !!body.stream;
-			// Capture execCtx now — not available in TransformStream flush() after handler returns
-			const execCtx = (c as any).executionCtx;
-
-			if (isStream) {
-				return handleStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs);
+			if (upstreamResp.ok && upstreamResp.body) {
+				const isStream = !!body.stream;
+				if (isStream) {
+					return handleStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs);
+				}
+				return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs);
 			}
 
-			return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs);
+			// Non-ok response: try to read error, then fall through to next provider
+			const errText = await upstreamResp.text().catch(() => '');
+			lastError = `Provider ${provider.id} returned ${upstreamResp.status}: ${errText.slice(0, 200)}`;
+			console.error(lastError);
+			// Record failed attempt (fire-and-forget)
+			if (execCtx) {
+				execCtx.waitUntil(
+					recordUsage(c.env, provider.id, modelId, ip, { prompt: 0, completion: 0 }, false, 0),
+				);
+			}
+			// Continue to next candidate
 		} catch (err) {
-		console.error(`Provider ${provider.id} error:`, (err as Error).message);
-		const ip = c.req.header('CF-Connecting-IP') || 'unknown';
-		const execCtx = (c as any).executionCtx;
-		if (execCtx) {
-			execCtx.waitUntil(
-				recordUsage(c.env, provider.id, modelId, ip, { prompt: 0, completion: 0 }, false, 0),
-			);
+			lastError = `Provider ${provider.id} error: ${(err as Error).message}`;
+			console.error(lastError);
+			if (execCtx) {
+				execCtx.waitUntil(
+					recordUsage(c.env, provider.id, modelId, ip, { prompt: 0, completion: 0 }, false, 0),
+				);
+			}
+			// Continue to next candidate
 		}
-		return c.json(
-			{
-				error: {
-					message: `Upstream failed: ${(err as Error).message}`,
-					type: 'server_error',
-				},
-			},
-			502,
-		);
 	}
+
+	// All providers failed
+	return c.json(
+		{
+			error: {
+				message: `All providers failed for model '${modelId}'. Last error: ${lastError}`,
+				type: 'server_error',
+			},
+		},
+		502,
+	);
 });
 
 // ---- Non-streaming response handler ----

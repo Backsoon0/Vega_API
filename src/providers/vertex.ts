@@ -196,7 +196,7 @@ export async function fetchModelList(
         : [];
       for (const item of items) {
         const last = String(item.name || '').split('/').pop();
-        if (last) models.push({ id: `google/${last}`, object: 'model', created: 0, owned_by: 'google' });
+        if (last) models.push({ id: last, object: 'model', created: 0, owned_by: 'google' });
       }
       pageToken = String(data.nextPageToken || '');
       if (!pageToken) break;

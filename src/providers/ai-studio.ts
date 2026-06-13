@@ -77,7 +77,7 @@ export async function fetchModelList(
     return items.map((m) => {
       const bareId = String(m.id || '').replace(/^(google\/|models\/)+/, '');
       return {
-        id: `google/${bareId}`,
+        id: bareId,
         object: 'model' as const,
         created: m.created || 0,
         owned_by: m.owned_by || 'google',

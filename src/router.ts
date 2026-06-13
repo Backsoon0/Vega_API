@@ -141,29 +141,46 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 	return modelsPromise;
 }
 
-// ---- Model-to-provider routing ----
+// ---- Model-to-provider routing (returns ALL candidates sorted by weight desc) ----
+export interface ProviderMatch {
+	provider: Provider;
+	matchedModel: string;
+}
+
 export async function findProviderForModel(
 	env: Env,
 	modelId: string,
-): Promise<{ provider: Provider; matchedModel: string } | null> {
+): Promise<ProviderMatch[]> {
 	const providers = await loadProviders(env);
-		const enabled = providers
-			.filter((p) => p.enabled)
-			.sort((a, b) => (b.weight || 1) - (a.weight || 1));
-		if (!enabled.length) return null;
+	const enabled = providers
+		.filter((p) => p.enabled)
+		.sort((a, b) => (b.weight || 1) - (a.weight || 1));
+	if (!enabled.length) return [];
 
-	// 1. Look up from cached model list (includes live-fetched models)
+	const matches: ProviderMatch[] = [];
+	const seen = new Set<string>();
+
+	function addMatch(provider: Provider, model: string) {
+		if (!seen.has(provider.id)) {
+			seen.add(provider.id);
+			matches.push({ provider, matchedModel: model });
+		}
+	}
+
+	// 1. Look up from cached model list — collect ALL providers that have this model
 	const models = await getAggregatedModels(env);
-	const found = models.find((m) => m.id === modelId);
-	if (found?._providerId) {
-		const provider = enabled.find((p) => p.id === found._providerId);
-		if (provider) return { provider, matchedModel: modelId };
+	const foundModels = models.filter((m) => m.id === modelId);
+	for (const fm of foundModels) {
+		if (fm._providerId) {
+			const provider = enabled.find((p) => p.id === fm._providerId);
+			if (provider) addMatch(provider, modelId);
+		}
 	}
 
 	// 2. Configured model exact match
 	for (const p of enabled) {
 		if ((p.models || []).some((m) => m === modelId)) {
-			return { provider: p, matchedModel: modelId };
+			addMatch(p, modelId);
 		}
 	}
 
@@ -174,28 +191,37 @@ export async function findProviderForModel(
 				(m) => modelId.startsWith(m + '/') || modelId.startsWith(m),
 			)
 		) {
-			return { provider: p, matchedModel: modelId };
+			addMatch(p, modelId);
 		}
 	}
 
-	// 4. Heuristic by model name prefix
+	// 4. Heuristic by model name prefix — match ALL Google or OpenAI providers
 	const prefix = modelId.split('/')[0].toLowerCase();
 	if (['google', 'gemini', 'publishers'].includes(prefix)) {
-		const candidates = enabled.filter(
-			(p) => p.type === 'vertex_ai' || p.type === 'google_ai_studio',
-		);
-		if (candidates.length) return { provider: candidates[0], matchedModel: modelId };
+		for (const p of enabled) {
+			if (p.type === 'vertex_ai' || p.type === 'google_ai_studio') {
+				addMatch(p, modelId);
+			}
+		}
 	}
 	if (
 		['gpt', 'o1', 'o3', 'text-embedding', 'dall-e', 'tts', 'whisper'].some((p) =>
 			modelId.toLowerCase().startsWith(p),
 		)
 	) {
-		const candidates = enabled.filter((p) => p.type === 'openai');
-		if (candidates.length) return { provider: candidates[0], matchedModel: modelId };
+		for (const p of enabled) {
+			if (p.type === 'openai') {
+				addMatch(p, modelId);
+			}
+		}
 	}
 
-	return enabled.length ? { provider: enabled[0], matchedModel: modelId } : null;
+	// 5. Fallback: any remaining enabled providers, ordered by weight
+	for (const p of enabled) {
+		addMatch(p, modelId);
+	}
+
+	return matches;
 }
 
 // ---- Cache invalidation (for testing) ----
