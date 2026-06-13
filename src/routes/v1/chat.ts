@@ -91,19 +91,14 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 			const errText = await upstreamResp.text().catch(() => '');
 			lastError = `Provider ${provider.id} returned ${upstreamResp.status}: ${errText.slice(0, 200)}`;
 			console.error(lastError);
-			// Record failed attempt (fire-and-forget)
-			if (execCtx) {
-				execCtx.waitUntil(
-					recordUsage(c.env, provider.id, modelId, ip, { prompt: 0, completion: 0 }, false, 0),
-				);
-			}
+			// Failures logged to console.error above; not recorded as usage (0-token noise)
 			// Continue to next candidate
 		} catch (err) {
 			lastError = `Provider ${provider.id} error: ${(err as Error).message}`;
 			console.error(lastError);
 			if (execCtx) {
 				execCtx.waitUntil(
-					recordUsage(c.env, provider.id, modelId, ip, { prompt: 0, completion: 0 }, false, 0),
+					/* failure logged to console, not recorded as usage */ null as any,
 				);
 			}
 			// Continue to next candidate
@@ -124,39 +119,34 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 
 // ---- Usage extraction helpers ----
 
-/** Extract a balanced JSON object at key, handling nested braces (e.g. prompt_tokens_details). */
-function extractUsageJson(text: string): { prompt_tokens?: number; completion_tokens?: number } | null {
-	for (const key of ['"usage"', '"usageMetadata"']) {
-		const start = text.indexOf(key);
-		if (start === -1) continue;
-
-		let i = text.indexOf('{', start);
-		if (i === -1) continue;
-
-		let depth = 1;
-		let j = i + 1;
-		while (j < text.length && depth > 0) {
-			const ch = text[j];
-			if (ch === '{') depth++;
-			else if (ch === '}') depth--;
-			else if (ch === '"') {
-				j++;
-				while (j < text.length) {
-					if (text[j] === '\\') { j += 2; continue; }
-					if (text[j] === '"') break;
-					j++;
-				}
+/**
+ * Parse SSE stream buffer and extract usage from the final event(s).
+ * Each SSE event is a standalone JSON line prefixed with "data: ".
+ * Parsing individual events avoids false positives where "usage" appears
+ * inside model output content strings.
+ *
+ * Searches in reverse — usage/usageMetadata is always in the final chunk(s).
+ */
+function extractUsageFromSSE(rawBuffer: string): { prompt_tokens: number; completion_tokens: number } | null {
+	const events = rawBuffer.split('\n\n');
+	// Search in reverse: usage is always in the last event(s)
+	for (let idx = events.length - 1; idx >= 0; idx--) {
+		const event = events[idx];
+		if (!event.startsWith('data: ')) continue;
+		const jsonStr = event.slice(6); // strip "data: " prefix
+		if (jsonStr === '[DONE]') continue;
+		try {
+			const data = JSON.parse(jsonStr);
+			// OpenAI uses "usage", Google uses "usageMetadata" in OpenAI-compat mode
+			const usage = data?.usage || data?.usageMetadata;
+			if (usage && (usage.prompt_tokens !== undefined || usage.completion_tokens !== undefined)) {
+				return {
+					prompt_tokens: usage.prompt_tokens || 0,
+					completion_tokens: usage.completion_tokens || 0,
+				};
 			}
-			j++;
-		}
-
-		if (depth === 0) {
-			try {
-				const obj = JSON.parse(text.substring(i, j));
-				return obj;
-			} catch {
-				continue;
-			}
+		} catch {
+			// Skip malformed JSON — try earlier events
 		}
 	}
 	return null;
@@ -210,31 +200,34 @@ function handleStreamResponse(
 ): Response {
 	const [clientStream, observerStream] = upstreamResp.body!.tee();
 
-	// Read observer stream to extract usage, then record via waitUntil (called now, not in flush)
-	if (execCtx) {
-		execCtx.waitUntil(
-			(async () => {
-				const reader = observerStream.getReader();
-				let rawBuffer = '';
-				try {
-					while (true) {
-						const { done, value } = await reader.read();
-						if (value) rawBuffer += new TextDecoder().decode(value);
-						if (done) break;
-					}
-					const usage = extractUsageJson(rawBuffer);
-					if (usage) {
-						const durationMs = Date.now() - startMs;
-						await recordUsage(env, providerId, modelId, ip, {
-							prompt: usage.prompt_tokens || 0,
-							completion: usage.completion_tokens || 0,
-						}, true, durationMs);
-					}
-				} catch {
-					/* ignore read errors */
+	// Always drain the observer stream (prevents leaks), but only record usage if execCtx is available
+	const drainPromise = (async () => {
+		const reader = observerStream.getReader();
+		let rawBuffer = '';
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (value) rawBuffer += new TextDecoder().decode(value);
+				if (done) break;
+			}
+			if (execCtx) {
+				const usage = extractUsageFromSSE(rawBuffer);
+				if (usage) {
+					const durationMs = Date.now() - startMs;
+					await recordUsage(env, providerId, modelId, ip, {
+						prompt: usage.prompt_tokens,
+						completion: usage.completion_tokens,
+					}, true, durationMs);
 				}
-			})(),
-		);
+			}
+		} catch {
+			/* ignore read errors */
+		}
+	})();
+
+	// Register with waitUntil if available so the Worker stays alive until the observer completes
+	if (execCtx) {
+		execCtx.waitUntil(drainPromise);
 	}
 
 	return new Response(clientStream, {

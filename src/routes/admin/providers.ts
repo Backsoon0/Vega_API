@@ -6,7 +6,7 @@ import type { Context } from 'hono';
 import type { Env } from '../../types';
 import {
 	listProvidersMasked,
-	getProvider,
+	getProviderMasked,
 	saveProvider,
 	deleteProvider,
 } from '../../config';
@@ -35,7 +35,7 @@ adminProviderRoutes.post('/providers', async (c: Context<{ Bindings: Env }>) => 
 adminProviderRoutes.get('/providers/:id', async (c: Context<{ Bindings: Env }>) => {
 	const id = c.req.param('id');
 	if (!id) return c.json({ error: 'Provider ID required' }, 400);
-	const provider = await getProvider(c.env, id);
+	const provider = await getProviderMasked(c.env, id);
 	if (!provider) return c.json({ error: 'Not found' }, 404);
 	return c.json(provider);
 });

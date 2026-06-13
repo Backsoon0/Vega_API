@@ -28,7 +28,8 @@ export async function proxyRequest(
   upstreamUrl.search = reqUrl.search;
 
   const headers = new Headers(request.headers);
-  headers.set('Authorization', `Bearer ${apiKey}`);
+  headers.delete('Authorization');
+	headers.set('Authorization', `Bearer ${apiKey}`);
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }

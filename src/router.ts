@@ -216,11 +216,6 @@ export async function findProviderForModel(
 		}
 	}
 
-	// 5. Fallback: any remaining enabled providers, ordered by weight
-	for (const p of enabled) {
-		addMatch(p, modelId);
-	}
-
 	return matches;
 }
 

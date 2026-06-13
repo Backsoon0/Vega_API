@@ -54,6 +54,17 @@ function rowToProvider(row: ProviderRow, decryptedConfig: Record<string, string>
   };
 }
 
+/** Mask encrypted values in config object — replaces "enc:..." with "***encrypted***". */
+function maskSensitiveConfig(config: Record<string, string>): Record<string, string> {
+  const masked: Record<string, string> = { ...config };
+  for (const [key, val] of Object.entries(masked)) {
+    if (typeof val === 'string' && val.startsWith('enc:')) {
+      masked[key] = '***encrypted***';
+    }
+  }
+  return masked;
+}
+
 export async function listProviders(env: Env): Promise<Provider[]> {
   const rows = await env.DB
     .prepare('SELECT * FROM providers ORDER BY id')
@@ -81,13 +92,7 @@ export async function listProvidersMasked(env: Env): Promise<Provider[]> {
 
   return rows.results.map(row => {
     const config = JSON.parse(row.config || '{}');
-    const masked: Record<string, string> = { ...config };
-    for (const [key, val] of Object.entries(masked)) {
-      if (typeof val === 'string' && val.startsWith('enc:')) {
-        masked[key] = '***encrypted***';
-      }
-    }
-    return rowToProvider(row, masked);
+    return rowToProvider(row, maskSensitiveConfig(config));
   });
 }
 
@@ -105,6 +110,18 @@ export async function getProvider(env: Env, id: string): Promise<Provider | null
     }
   }
   return rowToProvider(row, config);
+}
+
+/** Get a single provider with sensitive fields masked (for admin API). */
+export async function getProviderMasked(env: Env, id: string): Promise<Provider | null> {
+  const row = await env.DB
+    .prepare('SELECT * FROM providers WHERE id = ?')
+    .bind(id)
+    .first<ProviderRow>();
+  if (!row) return null;
+
+  const config = JSON.parse(row.config || '{}');
+  return rowToProvider(row, maskSensitiveConfig(config));
 }
 
 async function getProviderRaw(env: Env, id: string): Promise<ProviderRow | null> {
@@ -163,7 +180,7 @@ export async function saveProvider(
   await bumpConfigVersion(env);
   return {
     id, type: type as Provider['type'], name,
-    enabled: enabledInt === 1, config: encryptedConfig, models, weight,
+    enabled: enabledInt === 1, config: maskSensitiveConfig(encryptedConfig), models, weight,
   };
 }
 

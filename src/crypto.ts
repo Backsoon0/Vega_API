@@ -67,7 +67,8 @@ export async function decrypt(env: Env, value: string): Promise<string> {
     );
     return new TextDecoder().decode(decrypted);
   } catch {
-    return value; // decryption failed, return as-is
+    console.warn('Decryption failed — ENCRYPTION_KEY may have been rotated. Returning raw value.');
+    return value;
   }
 }
 

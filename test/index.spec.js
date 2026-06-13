@@ -17,10 +17,10 @@ describe("Vega API", () => {
       "CREATE TABLE IF NOT EXISTS usage_daily (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(date, provider_id, model))",
       "CREATE INDEX IF NOT EXISTS idx_usage_date ON usage_daily(date)",
       "CREATE INDEX IF NOT EXISTS idx_usage_provider ON usage_daily(provider_id)",
-      "CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, reset_at INTEGER NOT NULL DEFAULT 0)",
+      "CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, reset_at INTEGER NOT NULL DEFAULT 0, banned_until INTEGER NOT NULL DEFAULT 0)",
       "CREATE TABLE IF NOT EXISTS call_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, ip TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 1)",
-      "CREATE INDEX IF NOT EXISTS idx_call_logs_ts ON call_logs(timestamp DESC)",
-      "CREATE INDEX IF NOT EXISTS idx_call_logs_provider ON call_logs(provider_id)",
+      "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON call_logs(timestamp)",
+      "CREATE INDEX IF NOT EXISTS idx_logs_provider ON call_logs(provider_id)",
     ];
     for (const stmt of migrations) {
       await env.DB.exec(stmt);
