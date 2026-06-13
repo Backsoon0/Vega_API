@@ -122,6 +122,48 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	);
 });
 
+// ---- Usage extraction helpers ----
+
+/** Extract a balanced JSON object at key, handling nested braces (e.g. prompt_tokens_details). */
+function extractUsageJson(text: string): { prompt_tokens?: number; completion_tokens?: number } | null {
+	// Try "usage" first (OpenAI format), then "usageMetadata" (Google Gemini format)
+	for (const key of ['"usage"', '"usageMetadata"']) {
+		const start = text.indexOf(key);
+		if (start === -1) continue;
+
+		let i = text.indexOf('{', start);
+		if (i === -1) continue;
+
+		let depth = 1;
+		let j = i + 1;
+		while (j < text.length && depth > 0) {
+			const ch = text[j];
+			if (ch === '{') depth++;
+			else if (ch === '}') depth--;
+			// Skip escaped characters inside strings
+			else if (ch === '"') {
+				j++;
+				while (j < text.length) {
+					if (text[j] === '\\') { j += 2; continue; }
+					if (text[j] === '"') break;
+					j++;
+				}
+			}
+			j++;
+		}
+
+		if (depth === 0) {
+			try {
+				const obj = JSON.parse(text.substring(i, j));
+				return obj;
+			} catch {
+				continue; // try next key
+			}
+		}
+	}
+	return null;
+}
+
 // ---- Non-streaming response handler ----
 async function handleNonStreamResponse(
 	upstreamResp: Response,
@@ -135,13 +177,15 @@ async function handleNonStreamResponse(
 	const bodyText = await upstreamResp.text();
 	try {
 		const data = JSON.parse(bodyText);
-		if (data?.usage) {
+		// OpenAI returns `usage`, Google returns `usageMetadata` in OpenAI-compatible mode
+		const usage = data?.usage || data?.usageMetadata;
+		if (usage) {
 			const durationMs = Date.now() - startMs;
 			if (execCtx) {
 				execCtx.waitUntil(
 					recordUsage(env, providerId, modelId, ip, {
-						prompt: data.usage.prompt_tokens || 0,
-						completion: data.usage.completion_tokens || 0,
+						prompt: usage.prompt_tokens || 0,
+						completion: usage.completion_tokens || 0,
 					}, true, durationMs),
 				);
 			}
@@ -156,7 +200,7 @@ async function handleNonStreamResponse(
 	});
 }
 
-// ---- Streaming response handler with improved token counting ----
+// ---- Streaming response handler with balanced-brace usage extraction ----
 function handleStreamResponse(
 	upstreamResp: Response,
 	env: Env,
@@ -166,8 +210,6 @@ function handleStreamResponse(
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
 ): Response {
-	// Buffer raw text across chunks — SSE data may contain embedded
-	// newlines in the JSON content, which breaks line-by-line parsing.
 	let rawBuffer = '';
 
 	const ts = new TransformStream({
@@ -176,24 +218,15 @@ function handleStreamResponse(
 			rawBuffer += new TextDecoder().decode(chunk);
 		},
 		flush() {
-			// Extract "usage":{...} from raw text via regex.
-			// Works even when JSON content contains literal newlines.
-			const usageMatch = rawBuffer.match(/"usage"\s*:\s*\{[^}]+\}/);
-			if (usageMatch) {
-				try {
-					const usageJson = JSON.parse('{' + usageMatch[0] + '}');
-					if (usageJson.usage && execCtx) {
-						const durationMs = Date.now() - startMs;
-						execCtx.waitUntil(
-							recordUsage(env, providerId, modelId, ip, {
-								prompt: usageJson.usage.prompt_tokens || 0,
-								completion: usageJson.usage.completion_tokens || 0,
-							}, true, durationMs),
-						);
-					}
-				} catch {
-					/* skip parse errors */
-				}
+			const usage = extractUsageJson(rawBuffer);
+			if (usage && execCtx) {
+				const durationMs = Date.now() - startMs;
+				execCtx.waitUntil(
+					recordUsage(env, providerId, modelId, ip, {
+						prompt: usage.prompt_tokens || 0,
+						completion: usage.completion_tokens || 0,
+					}, true, durationMs),
+				);
 			}
 		},
 	});
