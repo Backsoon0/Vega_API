@@ -86,8 +86,10 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 
 			// Collect configured models and build list of live-fetch promises
 			const livePromises: Promise<void>[] = [];
+			// Sort by weight desc — higher weight providers' models take priority
+			const sorted = [...providers].sort((a, b) => (b.weight || 1) - (a.weight || 1));
 
-			for (const p of providers) {
+			for (const p of sorted) {
 				if (!p.enabled) continue;
 
 				// Static configured models
@@ -145,8 +147,10 @@ export async function findProviderForModel(
 	modelId: string,
 ): Promise<{ provider: Provider; matchedModel: string } | null> {
 	const providers = await loadProviders(env);
-	const enabled = providers.filter((p) => p.enabled);
-	if (!enabled.length) return null;
+		const enabled = providers
+			.filter((p) => p.enabled)
+			.sort((a, b) => (b.weight || 1) - (a.weight || 1));
+		if (!enabled.length) return null;
 
 	// 1. Look up from cached model list (includes live-fetched models)
 	const models = await getAggregatedModels(env);
