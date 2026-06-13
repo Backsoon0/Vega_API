@@ -23,13 +23,9 @@
 	try {
 		const result = await login(password);
 		if (result.ok) {
-			try {
-				await goto("/dashboard");
-			} catch (navErr) {
-				error = "登录成功，跳转失败，正在重定向...";
-				setTimeout(() => { window.location.href = "/dashboard"; }, 500);
-			}
-		} else {
+				// Use hard redirect — more reliable than SvelteKit goto in SPA mode
+				window.location.href = "/dashboard";
+			} else {
 			const errMsg = typeof result.error === 'string'
 				? result.error
 				: (result.error?.message || "登录失败");
