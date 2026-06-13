@@ -7,9 +7,13 @@
 - **多后端统一** — 一套接口聚合 Vertex AI、AI Studio、OpenAI，按模型名自动路由
 - **OpenAI 兼容** — 标准 `/v1/chat/completions`、`/v1/models` 接口，无缝替换 OpenAI SDK base URL
 - **SvelteKit 管理面板** — 侧边栏 4 页面（概览 / 调用记录 / API 设置 / 面板设置），Code Dark 深色主题，可折叠侧边栏，响应式设计
-- **调用记录** — D1 持久化存储，最多 10000 条自动轮替，支持搜索和提供商筛选
+- **调用记录** — D1 持久化存储，记录模型、Token、耗时，支持搜索和提供商筛选
 - **安全设计** — API Key AES-GCM 加密存储、登录限流（5 次失败 → 15 分钟封禁）、客户端访问密钥
-- **模型自动发现** — 通过各提供商官方 API 自动获取可用模型列表
+- **流式支持** — 完整支持 SSE 流式响应，智能解析含内嵌换行的流数据
+- **请求保护** — 5MB 请求体限制，支持图片等多模态输入
+- **调用耗时** — 记录每次 API 调用耗时（ms），流式/非流式均支持
+- **API 地址一键复制** — 管理面板展示完整 API 调用地址，支持一键复制
+- **模型自动发现** — 通过各提供商官方 API 并行获取可用模型列表
 - **边缘计算** — Cloudflare Workers 全球边缘网络，低延迟高可用
 
 ## 技术栈
@@ -70,7 +74,7 @@
 |------|------|------|
 | **概览** | `/dashboard` | 统计卡片（总调用、Token、活跃提供商）+ 提供商状态列表 |
 | **调用记录** | `/dashboard/logs` | 每次 API 调用的时间、IP、提供商、模型、Token，支持搜索和筛选 |
-| **API 设置** | `/dashboard/api-settings` | 提供商 CRUD（添加/编辑/删除/启用禁用）+ 客户端 API Key 管理 |
+| **API 设置** | `/dashboard/api-settings` | API 调用地址一键复制 + 客户端 API Key 管理 + 提供商 CRUD |
 | **面板设置** | `/dashboard/panel-settings` | 修改管理密码 |
 
 ## 快速部署
@@ -185,7 +189,7 @@ curl https://your-worker.workers.dev/v1/chat/completions \
 
 | 路由 | 方法 | 说明 |
 |------|------|------|
-| `/v1/chat/completions` | POST | 对话补全（自动路由） |
+| `/v1/chat/completions` | POST | 对话补全（自动路由，最大 5MB，支持流式/多模态） |
 | `/v1/models` | GET | 聚合模型列表 |
 | `/v1/models/{id}` | GET | 单个模型信息 |
 
@@ -201,7 +205,7 @@ curl https://your-worker.workers.dev/v1/chat/completions \
 | `/admin/client-key` | GET/POST/DELETE | Bearer | 客户端密钥管理 |
 | `/admin/change-password` | POST | Bearer | 修改管理密码 |
 | `/admin/usage` | GET | Bearer | 用量统计 |
-| `/admin/logs` | GET | Bearer | 调用记录（支持 search/providerId/limit/offset） |
+| `/admin/logs` | GET | Bearer | 调用记录（返回模型、Token、耗时、成功/失败，支持搜索/筛选/分页） |
 
 ## 安全设计
 
@@ -221,7 +225,7 @@ vega-api-db
 ├── config            — key-value 配置（密码、密钥、版本号、限流数据）
 ├── providers         — AI 提供商配置（敏感字段 AES-GCM 加密）
 ├── usage_daily       — 每日聚合用量（date, provider_id, model 三维度）
-└── call_logs         — 详细调用记录（最多 10000 条，自动清理旧记录）
+└── call_logs         — 详细调用记录（模型、Token、耗时、成功/失败，最多 10000 条自动清理）
 ```
 
 ## 开发
@@ -245,7 +249,8 @@ npm run deploy           # 部署到 Cloudflare
 ├── vitest.config.js
 ├── migrations/               # D1 数据库迁移
 │   ├── 0001_init.sql
-│   └── 0002_call_logs.sql
+│   ├── 0002_call_logs.sql
+│   └── 0003_duration.sql
 ├── src/                      # Worker 源码 (TypeScript)
 │   ├── index.ts              # Hono 入口：CORS、路由挂载、健康检查、ASSETS fallback
 │   ├── router.ts             # 模型路由引擎：缓存管理、Provider 查找、模型聚合
