@@ -74,13 +74,15 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	if (!upstreamResp.ok || !upstreamResp.body) return upstreamResp;
 
 		const ip = c.req.header('CF-Connecting-IP') || 'unknown';
-		const isStream = !!body.stream;
+			const isStream = !!body.stream;
+			// Capture execCtx now — not available in TransformStream flush() after handler returns
+			const execCtx = (c as any).executionCtx;
 
-		if (isStream) {
-			return handleStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, c);
-		}
+			if (isStream) {
+				return handleStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx);
+			}
 
-		return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, c);
+			return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx);
 	} catch (err) {
 		console.error(`Provider ${provider.id} error:`, (err as Error).message);
 		const ip = c.req.header('CF-Connecting-IP') || 'unknown';
@@ -109,13 +111,12 @@ async function handleNonStreamResponse(
 	providerId: string,
 	modelId: string,
 	ip: string,
-	c: Context<{ Bindings: Env }>,
+	execCtx: ExecutionContext | undefined,
 ): Promise<Response> {
 	const bodyText = await upstreamResp.text();
 	try {
 		const data = JSON.parse(bodyText);
 		if (data?.usage) {
-			const execCtx = (c as any).executionCtx;
 			if (execCtx) {
 				execCtx.waitUntil(
 					recordUsage(env, providerId, modelId, ip, {
@@ -142,7 +143,7 @@ function handleStreamResponse(
 	providerId: string,
 	modelId: string,
 	ip: string,
-	c: Context<{ Bindings: Env }>,
+	execCtx: ExecutionContext | undefined,
 ): Response {
 	// Accumulate all candidate JSON objects from data lines,
 	// then pick the one with usage info on flush.
@@ -166,7 +167,6 @@ function handleStreamResponse(
 				try {
 					const d = JSON.parse(candidates[i]);
 					if (d?.usage) {
-						const execCtx = (c as any).executionCtx;
 						if (execCtx) {
 							execCtx.waitUntil(
 								recordUsage(env, providerId, modelId, ip, {
