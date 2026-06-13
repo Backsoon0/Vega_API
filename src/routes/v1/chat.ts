@@ -145,40 +145,32 @@ function handleStreamResponse(
 	ip: string,
 	execCtx: ExecutionContext | undefined,
 ): Response {
-	// Accumulate all candidate JSON objects from data lines,
-	// then pick the one with usage info on flush.
-	const candidates: string[] = [];
+	// Buffer raw text across chunks — SSE data may contain embedded
+	// newlines in the JSON content, which breaks line-by-line parsing.
+	let rawBuffer = '';
 
 	const ts = new TransformStream({
 		transform(chunk, ctrl) {
 			ctrl.enqueue(chunk);
-			const text = new TextDecoder().decode(chunk);
-			const lines = text.split('\n');
-			for (const line of lines) {
-				const t = line.trim();
-				if (t.startsWith('data: ') && t !== 'data: [DONE]') {
-					candidates.push(t.slice(6).trim());
-				}
-			}
+			rawBuffer += new TextDecoder().decode(chunk);
 		},
 		flush() {
-			// Find the last chunk that has usage info (more robust than assuming last chunk)
-			for (let i = candidates.length - 1; i >= 0; i--) {
+			// Extract "usage":{...} from raw text via regex.
+			// Works even when JSON content contains literal newlines.
+			const usageMatch = rawBuffer.match(/"usage"\s*:\s*\{[^}]+\}/);
+			if (usageMatch) {
 				try {
-					const d = JSON.parse(candidates[i]);
-					if (d?.usage) {
-						if (execCtx) {
-							execCtx.waitUntil(
-								recordUsage(env, providerId, modelId, ip, {
-									prompt: d.usage.prompt_tokens || 0,
-									completion: d.usage.completion_tokens || 0,
-								}, true),
-							);
-						}
-						break;
+					const usageJson = JSON.parse('{' + usageMatch[0] + '}');
+					if (usageJson.usage && execCtx) {
+						execCtx.waitUntil(
+							recordUsage(env, providerId, modelId, ip, {
+								prompt: usageJson.usage.prompt_tokens || 0,
+								completion: usageJson.usage.completion_tokens || 0,
+							}, true),
+						);
 					}
 				} catch {
-					/* skip unparseable candidates */
+					/* skip parse errors */
 				}
 			}
 		},
