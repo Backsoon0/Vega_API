@@ -21,7 +21,8 @@ export async function recordUsage(
   model: string,
   ip: string,
   usage: { prompt: number; completion: number },
-  success: boolean
+  success: boolean,
+  durationMs: number = 0
 ): Promise<void> {
   try {
     const today = isoDate();
@@ -43,10 +44,10 @@ export async function recordUsage(
     // Insert into call_logs
     await env.DB
       .prepare(
-        `INSERT INTO call_logs (timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, success)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO call_logs (timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .bind(now, ip, providerId, model, usage.prompt || 0, usage.completion || 0, success ? 1 : 0)
+      .bind(now, ip, providerId, model, usage.prompt || 0, usage.completion || 0, durationMs, success ? 1 : 0)
       .run();
 
     // Probabilistic cleanup: ~1% of calls (roughly every 100 requests)
@@ -76,13 +77,14 @@ export async function getCallLogs(
     offset?: number;
   } = {}
 ): Promise<{ logs: Array<{
-    timestamp: string;
-    ip: string;
-    providerId: string;
-    model: string;
-    promptTokens: number;
-    completionTokens: number;
-    success: boolean;
+	    timestamp: string;
+	    ip: string;
+	    providerId: string;
+	    model: string;
+	    promptTokens: number;
+	    completionTokens: number;
+	    durationMs: number;
+	    success: boolean;
   }>; total: number }> {
   const limit = opts.limit || 200;
   const offset = opts.offset || 0;
@@ -111,7 +113,7 @@ export async function getCallLogs(
     // Fetch rows
     const rows = await env.DB
       .prepare(
-        `SELECT timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, success
+        `SELECT timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success
          FROM call_logs ${whereClauses}
          ORDER BY timestamp DESC
          LIMIT ? OFFSET ?`
@@ -124,6 +126,7 @@ export async function getCallLogs(
         model: string;
         prompt_tokens: number;
         completion_tokens: number;
+        duration_ms: number;
         success: number;
       }>();
 
@@ -134,6 +137,7 @@ export async function getCallLogs(
       model: r.model,
       promptTokens: r.prompt_tokens,
       completionTokens: r.completion_tokens,
+      durationMs: r.duration_ms,
       success: r.success === 1,
     }));
 

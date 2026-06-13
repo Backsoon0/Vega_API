@@ -65,31 +65,32 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	});
 
 	try {
-		const upstreamResp = await handler.proxyRequest(
-			proxyReq,
-			c.env,
-			provider,
-			'/chat/completions',
-		);
-	if (!upstreamResp.ok || !upstreamResp.body) return upstreamResp;
+			const startMs = Date.now();
+			const upstreamResp = await handler.proxyRequest(
+				proxyReq,
+				c.env,
+				provider,
+				'/chat/completions',
+			);
+		if (!upstreamResp.ok || !upstreamResp.body) return upstreamResp;
 
-		const ip = c.req.header('CF-Connecting-IP') || 'unknown';
+			const ip = c.req.header('CF-Connecting-IP') || 'unknown';
 			const isStream = !!body.stream;
 			// Capture execCtx now — not available in TransformStream flush() after handler returns
 			const execCtx = (c as any).executionCtx;
 
 			if (isStream) {
-				return handleStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx);
+				return handleStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs);
 			}
 
-			return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx);
-	} catch (err) {
+			return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs);
+		} catch (err) {
 		console.error(`Provider ${provider.id} error:`, (err as Error).message);
 		const ip = c.req.header('CF-Connecting-IP') || 'unknown';
 		const execCtx = (c as any).executionCtx;
 		if (execCtx) {
 			execCtx.waitUntil(
-				recordUsage(c.env, provider.id, modelId, ip, { prompt: 0, completion: 0 }, false),
+				recordUsage(c.env, provider.id, modelId, ip, { prompt: 0, completion: 0 }, false, 0),
 			);
 		}
 		return c.json(
@@ -112,17 +113,19 @@ async function handleNonStreamResponse(
 	modelId: string,
 	ip: string,
 	execCtx: ExecutionContext | undefined,
+	startMs: number,
 ): Promise<Response> {
 	const bodyText = await upstreamResp.text();
 	try {
 		const data = JSON.parse(bodyText);
 		if (data?.usage) {
+			const durationMs = Date.now() - startMs;
 			if (execCtx) {
 				execCtx.waitUntil(
 					recordUsage(env, providerId, modelId, ip, {
 						prompt: data.usage.prompt_tokens || 0,
 						completion: data.usage.completion_tokens || 0,
-					}, true),
+					}, true, durationMs),
 				);
 			}
 		}
@@ -144,6 +147,7 @@ function handleStreamResponse(
 	modelId: string,
 	ip: string,
 	execCtx: ExecutionContext | undefined,
+	startMs: number,
 ): Response {
 	// Buffer raw text across chunks — SSE data may contain embedded
 	// newlines in the JSON content, which breaks line-by-line parsing.
@@ -162,11 +166,12 @@ function handleStreamResponse(
 				try {
 					const usageJson = JSON.parse('{' + usageMatch[0] + '}');
 					if (usageJson.usage && execCtx) {
+						const durationMs = Date.now() - startMs;
 						execCtx.waitUntil(
 							recordUsage(env, providerId, modelId, ip, {
 								prompt: usageJson.usage.prompt_tokens || 0,
 								completion: usageJson.usage.completion_tokens || 0,
-							}, true),
+							}, true, durationMs),
 						);
 					}
 				} catch {

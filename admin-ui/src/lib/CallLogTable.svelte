@@ -8,6 +8,7 @@
     model: string;
     promptTokens: number;
     completionTokens: number;
+    durationMs: number;
     success: boolean;
   }
 
@@ -38,6 +39,14 @@
   function formatTime(ts: string): string {
     const d = new Date(ts);
     return d.toLocaleString('zh-CN', { hour12: false });
+  }
+
+  function formatDuration(ms: number): string {
+    if (!ms || ms < 0) return '-';
+    if (ms < 1000) return ms + 'ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+    const secs = Math.floor(ms / 1000);
+    return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
   }
 </script>
 
@@ -89,6 +98,7 @@
             <th class="text-left px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">提供商</th>
             <th class="text-left px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">模型</th>
             <th class="text-right px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">Tokens</th>
+            <th class="text-right px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">耗时</th>
             <th class="text-center px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">状态</th>
           </tr>
         </thead>
@@ -103,6 +113,9 @@
                 <span class="text-accent">{entry.promptTokens.toLocaleString()}</span>
                 <span class="text-muted"> / </span>
                 <span class="text-cta">{entry.completionTokens.toLocaleString()}</span>
+              </td>
+              <td class="px-4 py-2.5 text-muted font-mono text-xs text-right tabular-nums">
+                {formatDuration(entry.durationMs)}
               </td>
               <td class="px-4 py-2.5 text-center">
                 <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold {entry.success ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'}">
@@ -132,6 +145,7 @@
             <div class="col-span-2 flex gap-3">
               <span class="text-muted">Prompt: <span class="text-accent font-mono tabular-nums">{entry.promptTokens.toLocaleString()}</span></span>
               <span class="text-muted">Completion: <span class="text-cta font-mono tabular-nums">{entry.completionTokens.toLocaleString()}</span></span>
+              <span class="text-muted">耗时: <span class="text-secondary font-mono">{formatDuration(entry.durationMs)}</span></span>
             </div>
           </div>
         </div>
