@@ -121,21 +121,27 @@
       </div>
 
       <!-- Page navigation -->
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-1.5">
         <button
-          class="px-2.5 py-1.5 rounded-lg border border-white/[0.08] hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+          class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1
+            {page === 0
+              ? 'text-muted bg-surface border border-white/[0.06] cursor-not-allowed'
+              : 'text-white bg-cta hover:bg-cta-hover shadow-glow-cta active:scale-[0.97]'}"
           onclick={prevPage}
           disabled={page === 0}
         >
           <ChevronLeft class="w-3.5 h-3.5" stroke-width={2} />
           上一页
         </button>
-        <span class="tabular-nums">
+        <span class="tabular-nums px-2">
           第 <span class="text-secondary font-mono">{page + 1}</span> / <span class="text-secondary font-mono">{totalPages}</span> 页
           <span class="hidden sm:inline">（共 {total} 条）</span>
         </span>
         <button
-          class="px-2.5 py-1.5 rounded-lg border border-white/[0.08] hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+          class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1
+            {page >= totalPages - 1
+              ? 'text-muted bg-surface border border-white/[0.06] cursor-not-allowed'
+              : 'text-white bg-cta hover:bg-cta-hover shadow-glow-cta active:scale-[0.97]'}"
           onclick={nextPage}
           disabled={page >= totalPages - 1}
         >
