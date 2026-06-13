@@ -1,7 +1,6 @@
 <script lang="ts">
   import { isAuthenticated, checkAuth } from "$lib/api";
   import { page } from "$app/stores";
-  import { goto } from "$app/navigation";
   import Sidebar from "$lib/Sidebar.svelte";
   import Toast from "$lib/Toast.svelte";
   import { sidebarCollapsed, SIDEBAR_EXPANDED, SIDEBAR_COLLAPSED } from "$lib/sidebar-state";
@@ -10,7 +9,8 @@
   let { children } = $props();
   let checking = $state(true);
   let authed = $state(false);
-  let isDashboard = $state(false);
+  // Init from URL on first render to avoid flash of content without sidebar
+  let isDashboard = $state(typeof window !== 'undefined' ? window.location.pathname.startsWith('/dashboard') : false);
 
   let collapsed = $derived($sidebarCollapsed);
   let sidebarWidth = $derived(collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED);
@@ -20,20 +20,24 @@
     isDashboard = path.startsWith('/dashboard');
 
     if (path === '/' && isAuthenticated()) {
-      goto('/dashboard');
+      window.location.href = '/dashboard';
+      return;
     }
 
     if (isDashboard) {
-      checkAuth().then((ok) => {
-        authed = ok;
+      // Only check auth if we don't already know we're authenticated
+      if (!authed) {
+        checkAuth().then((ok) => {
+          authed = ok;
+          checking = false;
+          if (!ok) {
+            window.location.href = '/';
+          }
+        });
+      } else {
         checking = false;
-        if (!ok) {
-          // Auth failed on dashboard — redirect to login
-          window.location.href = '/';
-        }
-      });
+      }
     } else {
-      // Non-dashboard pages don't need auth check
       authed = false;
       checking = false;
     }

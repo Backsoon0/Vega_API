@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
-  import { login, isAuthenticated } from "$lib/api";
+  import { login } from "$lib/api";
   import { Key, Shield, ChevronRight } from "lucide-svelte";
 
   let password = $state("");

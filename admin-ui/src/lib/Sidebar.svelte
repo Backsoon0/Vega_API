@@ -1,6 +1,5 @@
 <script lang="ts">
   import { page } from "$app/stores";
-  import { goto } from "$app/navigation";
   import { LayoutDashboard, ListTodo, Settings, Wrench, LogOut, Key, ChevronLeft, ChevronRight, Menu } from "lucide-svelte";
   import { clearToken, isAuthenticated } from "$lib/api";
   import { sidebarCollapsed } from "$lib/sidebar-state";
@@ -31,7 +30,7 @@
 
   function handleLogout() {
     clearToken();
-    goto("/");
+    window.location.href = "/";
   }
 
   let mobileOpen = $state(false);
@@ -95,8 +94,8 @@
                  : 'text-secondary hover:bg-surface-hover hover:text-primary'}
                {collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'}"
         onclick={() => {
-          goto(item.href);
           closeMobile();
+          window.location.href = item.href;
         }}
         title={collapsed ? item.label : ''}
       >
