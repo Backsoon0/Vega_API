@@ -1,13 +1,13 @@
 <script lang="ts">
   import { login } from "$lib/api";
-  import { Key, Shield, ChevronRight } from "lucide-svelte";
+  import { Key, Shield, ChevronRight, Eye, EyeOff } from "lucide-svelte";
+  import Spinner from "$lib/Spinner.svelte";
+  import Alert from "$lib/Alert.svelte";
 
   let password = $state("");
   let error = $state("");
   let loading = $state(false);
   let showPassword = $state(false);
-
-  // Redirect handled by parent layout — no need for duplicate here
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
@@ -19,26 +19,25 @@
     }
 
     loading = true;
-	try {
-		const result = await login(password);
-		if (result.ok) {
-				// Use hard redirect — more reliable than SvelteKit goto in SPA mode
-				window.location.href = "/dashboard";
-			} else {
-			const errMsg = typeof result.error === 'string'
-				? result.error
-				: (result.error?.message || "登录失败");
-			error = errMsg;
-			if (result.banned) {
-				error += `（封禁剩余 ${Math.ceil(result.remainingSeconds / 60)} 分钟）`;
-			} else if (result.remaining !== undefined) {
-				error += `（剩余 ${result.remaining} 次尝试）`;
-			}
-		}
-	} catch (err) {
-		error = "网络错误: " + (err.message || String(err));
-	} finally {
-		loading = false;
+    try {
+      const result = await login(password);
+      if (result.ok) {
+        window.location.href = "/dashboard";
+      } else {
+        const errMsg = typeof result.error === 'string'
+          ? result.error
+          : (result.error?.message || "登录失败");
+        error = errMsg;
+        if (result.banned) {
+          error += `（封禁剩余 ${Math.ceil(result.remainingSeconds / 60)} 分钟）`;
+        } else if (result.remaining !== undefined) {
+          error += `（剩余 ${result.remaining} 次尝试）`;
+        }
+      }
+    } catch (err: any) {
+      error = "网络错误: " + (err.message || String(err));
+    } finally {
+      loading = false;
     }
   }
 </script>
@@ -98,9 +97,9 @@
             aria-label={showPassword ? "隐藏密码" : "显示密码"}
           >
             {#if showPassword}
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              <EyeOff class="w-4 h-4" stroke-width={1.5} />
             {:else}
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <Eye class="w-4 h-4" stroke-width={1.5} />
             {/if}
           </button>
         </div>
@@ -108,13 +107,7 @@
 
       <!-- Error -->
       {#if error}
-        <div
-          class="flex items-start gap-2.5 text-sm text-danger bg-danger-subtle rounded-xl px-4 py-3 border border-danger/20"
-          role="alert"
-        >
-          <svg class="w-4 h-4 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-          <span>{error}</span>
-        </div>
+        <Alert type="error" message={error} />
       {/if}
 
       <!-- Submit -->
@@ -129,10 +122,7 @@
                flex items-center justify-center gap-2"
       >
         {#if loading}
-          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-            <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" />
-            <path class="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
+          <Spinner size="sm" />
           <span>验证中...</span>
         {:else}
           <span>登 录</span>

@@ -4,13 +4,8 @@
     Shield, ShieldOff, Check, X, AlertTriangle
   } from "lucide-svelte";
   import { getClientKey, setClientKey, deleteClientKey, revealClientKey } from "$lib/api";
-
-  interface Props {
-    onsuccess: (msg: string) => void;
-    onerror: (msg: string) => void;
-  }
-
-  let { onsuccess, onerror }: Props = $props();
+  import { toasts } from "$lib/toast-store";
+  import Spinner from "$lib/Spinner.svelte";
 
   let configured = $state(false);
   let masked = $state("");
@@ -30,7 +25,7 @@
       masked = info.masked || "";
       length = info.length || 0;
     } catch (err: any) {
-      onerror(err.message);
+      toasts.show(err.message, 'error');
     } finally {
       loading = false;
     }
@@ -42,27 +37,27 @@
       fullKey = result.fullKey;
       showFull = true;
       showInput = false;
-      onsuccess("密钥已生成");
+      toasts.show('密钥已生成');
       await load();
     } catch (err: any) {
-      onerror(err.message);
+      toasts.show(err.message, 'error');
     }
   }
 
   async function handleSet() {
     const key = customKey.trim();
     if (!key || key.length < 8) {
-      onerror("API Key 至少需要 8 个字符");
+      toasts.show('API Key 至少需要 8 个字符', 'error');
       return;
     }
     try {
       await setClientKey(key);
       showInput = false;
       customKey = "";
-      onsuccess("密钥已设置");
+      toasts.show('密钥已设置');
       await load();
     } catch (err: any) {
-      onerror(err.message);
+      toasts.show(err.message, 'error');
     }
   }
 
@@ -75,7 +70,7 @@
         showFull = true;
       }
     } catch (err: any) {
-      onerror(err.message);
+      toasts.show(err.message, 'error');
     } finally {
       revealing = false;
     }
@@ -90,9 +85,9 @@
     copying = true;
     try {
       await navigator.clipboard.writeText(fullKey);
-      onsuccess("已复制到剪贴板");
+      toasts.show('已复制到剪贴板');
     } catch {
-      onerror("复制失败，请手动选择复制");
+      toasts.show('复制失败，请手动选择复制', 'error');
     } finally {
       copying = false;
     }
@@ -104,10 +99,10 @@
       await deleteClientKey();
       showFull = false;
       fullKey = "";
-      onsuccess("密钥已删除 — 接口可公开访问");
+      toasts.show('密钥已删除 — 接口可公开访问');
       await load();
     } catch (err: any) {
-      onerror(err.message);
+      toasts.show(err.message, 'error');
     }
   }
 
@@ -166,10 +161,7 @@
   <!-- Loading -->
   {#if loading}
     <div class="flex items-center gap-2 text-sm text-muted py-2">
-      <svg class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-        <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" />
-        <path class="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-      </svg>
+      <Spinner size="sm" />
       加载中...
     </div>
 
@@ -187,10 +179,7 @@
           disabled={revealing}
         >
           {#if revealing}
-            <svg class="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-              <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" />
-              <path class="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <Spinner size="sm" />
             加载中...
           {:else}
             <Eye class="w-3 h-3" />
@@ -215,7 +204,6 @@
           <div class="flex-1 min-w-0">
             <code class="text-sm text-warning font-mono break-all leading-relaxed">{fullKey}</code>
           </div>
-          <!-- Close button -->
           <button
             class="shrink-0 p-1.5 rounded-lg hover:bg-surface-elevated text-muted hover:text-secondary
                    transition-all duration-150"

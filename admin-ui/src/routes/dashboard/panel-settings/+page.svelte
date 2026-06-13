@@ -1,6 +1,8 @@
 <script lang="ts">
   import { changePassword } from "$lib/api";
-  import { Wrench, Lock } from "lucide-svelte";
+  import { Wrench, Lock, Eye, EyeOff } from "lucide-svelte";
+  import Alert from "$lib/Alert.svelte";
+  import Spinner from "$lib/Spinner.svelte";
 
   let currentPassword = $state('');
   let newPassword = $state('');
@@ -58,6 +60,7 @@
       </h2>
 
       <form onsubmit={handleChangePassword} class="space-y-4">
+        <!-- Current Password -->
         <div>
           <label for="current-password" class="block text-xs text-secondary mb-1.5">当前密码</label>
           <div class="relative">
@@ -70,14 +73,20 @@
             />
             <button
               type="button"
-              class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary text-xs"
+              class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary p-1 transition-colors"
               onclick={() => (showCurrent = !showCurrent)}
+              aria-label={showCurrent ? '隐藏密码' : '显示密码'}
             >
-              {showCurrent ? '隐藏' : '显示'}
+              {#if showCurrent}
+                <EyeOff class="w-3.5 h-3.5" stroke-width={1.5} />
+              {:else}
+                <Eye class="w-3.5 h-3.5" stroke-width={1.5} />
+              {/if}
             </button>
           </div>
         </div>
 
+        <!-- New Password -->
         <div>
           <label for="new-password" class="block text-xs text-secondary mb-1.5">新密码</label>
           <div class="relative">
@@ -90,14 +99,20 @@
             />
             <button
               type="button"
-              class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary text-xs"
+              class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary p-1 transition-colors"
               onclick={() => (showNew = !showNew)}
+              aria-label={showNew ? '隐藏密码' : '显示密码'}
             >
-              {showNew ? '隐藏' : '显示'}
+              {#if showNew}
+                <EyeOff class="w-3.5 h-3.5" stroke-width={1.5} />
+              {:else}
+                <Eye class="w-3.5 h-3.5" stroke-width={1.5} />
+              {/if}
             </button>
           </div>
         </div>
 
+        <!-- Confirm New Password -->
         <div>
           <label for="confirm-password" class="block text-xs text-secondary mb-1.5">确认新密码</label>
           <div class="relative">
@@ -110,27 +125,37 @@
             />
             <button
               type="button"
-              class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary text-xs"
+              class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary p-1 transition-colors"
               onclick={() => (showConfirm = !showConfirm)}
+              aria-label={showConfirm ? '隐藏密码' : '显示密码'}
             >
-              {showConfirm ? '隐藏' : '显示'}
+              {#if showConfirm}
+                <EyeOff class="w-3.5 h-3.5" stroke-width={1.5} />
+              {:else}
+                <Eye class="w-3.5 h-3.5" stroke-width={1.5} />
+              {/if}
             </button>
           </div>
         </div>
 
         {#if error}
-          <div class="text-xs text-danger bg-danger-subtle px-3 py-2 rounded-lg">{error}</div>
+          <Alert type="error" message={error} />
         {/if}
         {#if message}
-          <div class="text-xs text-success bg-success-subtle px-3 py-2 rounded-lg">{message}</div>
+          <Alert type="success" message={message} />
         {/if}
 
         <button
           type="submit"
           disabled={saving}
-          class="w-full py-2.5 text-sm font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          class="w-full py-2.5 text-sm font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
-          {saving ? '保存中...' : '修改密码'}
+          {#if saving}
+            <Spinner size="sm" />
+            保存中...
+          {:else}
+            修改密码
+          {/if}
         </button>
       </form>
     </div>

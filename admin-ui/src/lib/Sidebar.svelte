@@ -55,7 +55,7 @@
 
 <!-- Mobile toggle button -->
 <button
-  class="lg:hidden fixed bottom-5 left-5 z-50 w-11 h-11 rounded-xl bg-cta text-white shadow-lg flex items-center justify-center"
+  class="lg:hidden fixed bottom-6 left-5 z-50 w-11 h-11 rounded-xl bg-cta text-white shadow-lg flex items-center justify-center"
   onclick={() => (mobileOpen = !mobileOpen)}
   aria-label="菜单"
 >

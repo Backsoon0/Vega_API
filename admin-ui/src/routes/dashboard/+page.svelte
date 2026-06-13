@@ -1,6 +1,8 @@
 <script lang="ts">
   import { getProviders, getUsage, type Provider, type UsageData } from "$lib/api";
   import { LayoutDashboard, Server, TrendingUp, Zap, Activity } from "lucide-svelte";
+  import { formatTokens, formatNumber } from "$lib/utils";
+  import Spinner from "$lib/Spinner.svelte";
 
   let providers = $state<Provider[]>([]);
   let usage = $state<UsageData | null>(null);
@@ -29,26 +31,15 @@
       : 0
   );
   const enabledCount = $derived(providers.filter(p => p.enabled).length);
-
-  function formatTokens(n: number): string {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-    return String(n);
-  }
-
-  function formatNumber(n: number): string {
-    return n.toLocaleString();
-  }
 </script>
 
 <svelte:head><title>概览 — Vega API</title></svelte:head>
 
 {#if loading}
-  <div class="space-y-6 animate-pulse">
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      {#each Array(4) as _}
-        <div class="bg-surface rounded-xl p-5 h-24"></div>
-      {/each}
+  <div class="flex items-center justify-center min-h-[50vh]">
+    <div class="flex flex-col items-center gap-4">
+      <Spinner class="text-cta" />
+      <span class="text-sm text-muted font-mono">加载中...</span>
     </div>
   </div>
 {:else}

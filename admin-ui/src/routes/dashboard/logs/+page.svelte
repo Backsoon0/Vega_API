@@ -1,17 +1,9 @@
 <script lang="ts">
+  import { authToken, getCallLogs, type LogEntry } from "$lib/api";
+  import { get } from "svelte/store";
+  import { toasts } from "$lib/toast-store";
   import CallLogTable from "$lib/CallLogTable.svelte";
-  import { authToken } from "$lib/api";
   import { ListTodo, RefreshCw, ChevronLeft, ChevronRight } from "lucide-svelte";
-
-  interface LogEntry {
-    timestamp: string;
-    ip: string;
-    providerId: string;
-    model: string;
-    promptTokens: number;
-    completionTokens: number;
-    success: boolean;
-  }
 
   let entries = $state<LogEntry[]>([]);
   let total = $state(0);
@@ -32,38 +24,21 @@
       if (search) params.set('search', search);
       if (providerFilter) params.set('providerId', providerFilter);
 
-      const resp = await fetch(`/admin/logs?${params}`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      if (!resp.ok) return;
-      const data = await resp.json();
+      const data = await getCallLogs(params);
       entries = data.logs || [];
       total = data.total || 0;
-    } catch {
-      // ignore
+    } catch (err: any) {
+      toasts.show(err.message || '获取日志失败', 'error');
     } finally { loading = false; }
   }
 
-  // Fetch on mount and when filters/page/pageSize change
   $effect(() => {
-    if (!authToken) return;
-    // track dependencies via reading them
+    if (!get(authToken)) return;
     void page; void pageSize; void search; void providerFilter;
     fetchLogs();
   });
 
-  function handleSearch() {
-    page = 0;
-    fetchLogs();
-  }
-
-  function handleRefresh() {
-    fetchLogs();
-  }
-
-  function handleClear() {
-    fetchLogs();
-  }
+  function handleRefresh() { fetchLogs(); }
 
   function changePageSize(size: number) {
     pageSize = size;
@@ -100,7 +75,7 @@
     </button>
   </div>
 
-  <CallLogTable entries={entries} loading={loading} onclear={handleClear} />
+  <CallLogTable entries={entries} loading={loading} />
 
   <!-- Pagination -->
   {#if total > 0}

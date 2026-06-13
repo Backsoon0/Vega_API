@@ -1,18 +1,9 @@
 <script lang="ts">
-  import { Search, Trash2 } from "lucide-svelte";
+  import { Search } from "lucide-svelte";
+  import { formatTime, formatDuration } from "$lib/utils";
+  import type { LogEntry } from "$lib/api";
 
-  interface LogEntry {
-    timestamp: string;
-    ip: string;
-    providerId: string;
-    model: string;
-    promptTokens: number;
-    completionTokens: number;
-    durationMs: number;
-    success: boolean;
-  }
-
-  let { entries = [] as LogEntry[], loading = false, onclear = () => {} } = $props();
+  let { entries = [] as LogEntry[], loading = false } = $props();
 
   let searchQuery = $state('');
   let providerFilter = $state('');
@@ -35,19 +26,6 @@
 
   const filtered = $derived(filterLogs(entries));
   const uniqueProviders = $derived([...new Set(entries.map(e => e.providerId))].sort());
-
-  function formatTime(ts: string): string {
-    const d = new Date(ts);
-    return d.toLocaleString('zh-CN', { hour12: false });
-  }
-
-  function formatDuration(ms: number): string {
-    if (!ms || ms < 0) return '-';
-    if (ms < 1000) return ms + 'ms';
-    if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
-    const secs = Math.floor(ms / 1000);
-    return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
-  }
 </script>
 
 <div class="space-y-4">
@@ -79,7 +57,7 @@
   {#if loading && entries.length === 0}
     <div class="space-y-3">
       {#each Array(5) as _}
-        <div class="bg-surface border border-white/[0.06] rounded-xl p-4 animate-pulse h-[52px]"></div>
+        <div class="bg-surface border border-white/[0.06] rounded-xl p-4 h-[52px] shimmer-skeleton"></div>
       {/each}
     </div>
   {:else if entries.length === 0}

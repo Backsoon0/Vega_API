@@ -2,10 +2,12 @@
   import { getProviders, createProvider, updateProvider, deleteProvider } from "$lib/api";
   import type { Provider } from "$lib/api";
   import { Settings, Plus, Server, Copy, Check } from "lucide-svelte";
+  import { toasts } from "$lib/toast-store";
   import Modal from "$lib/Modal.svelte";
   import ProviderCard from "$lib/ProviderCard.svelte";
   import ProviderForm from "$lib/ProviderForm.svelte";
   import ClientKeySection from "$lib/ClientKeySection.svelte";
+  import Spinner from "$lib/Spinner.svelte";
 
   let providers = $state<Provider[]>([]);
   let loading = $state(true);
@@ -24,8 +26,6 @@
   async function copyApiUrl() {
     try {
       await navigator.clipboard.writeText(apiBase);
-      copied = true;
-      setTimeout(() => (copied = false), 2000);
     } catch {
       // fallback
       const input = document.createElement('input');
@@ -34,21 +34,17 @@
       input.select();
       document.execCommand('copy');
       document.body.removeChild(input);
-      copied = true;
-      setTimeout(() => (copied = false), 2000);
     }
+    copied = true;
+    setTimeout(() => (copied = false), 2000);
   }
 
   // ---- Providers ----
-  function showToast(msg: string, type: 'success' | 'error' = 'success') {
-    window.dispatchEvent(new CustomEvent('toast', { detail: { message: msg, type } }));
-  }
-
   $effect(() => { loadProviders(); });
 
   async function loadProviders() {
     try { providers = await getProviders(); }
-    catch (err: any) { showToast(err.message, 'error'); }
+    catch (err: any) { toasts.show(err.message, 'error'); }
     finally { loading = false; }
   }
 
@@ -66,19 +62,19 @@
         config: p.config, models: p.models, weight: p.weight,
       });
       await loadProviders();
-      showToast(p.enabled ? '已禁用' : '已启用');
-    } catch (err: any) { showToast(err.message, 'error'); }
+      toasts.show(p.enabled ? '已禁用' : '已启用');
+    } catch (err: any) { toasts.show(err.message, 'error'); }
   }
   async function handleDelete(id: string) {
     const p = providers.find(x => x.id === id);
     if (!p || !confirm(`确定删除 "${p.name}"?`)) return;
-    try { await deleteProvider(id); await loadProviders(); showToast('已删除'); }
-    catch (err: any) { showToast(err.message, 'error'); }
+    try { await deleteProvider(id); await loadProviders(); toasts.show('已删除'); }
+    catch (err: any) { toasts.show(err.message, 'error'); }
   }
   function handleSaved() {
     const wasEdit = !!editingProvider;
     modalOpen = false; editingProvider = null; loadProviders();
-    showToast(wasEdit ? '提供商已更新' : '提供商已添加');
+    toasts.show(wasEdit ? '提供商已更新' : '提供商已添加');
   }
 </script>
 
@@ -134,15 +130,16 @@
 
   <!-- Client Key -->
   <div class="mb-8">
-    <ClientKeySection onsuccess={(m: string) => showToast(m)} onerror={(m: string) => showToast(m, 'error')} />
+    <ClientKeySection />
   </div>
 
   <!-- Providers -->
   {#if loading}
-    <div class="space-y-3">
-      {#each Array(3) as _}
-        <div class="bg-surface border border-white/[0.06] rounded-xl p-5 animate-pulse h-[72px]"></div>
-      {/each}
+    <div class="flex items-center justify-center py-12">
+      <div class="flex flex-col items-center gap-4">
+        <Spinner class="text-cta" />
+        <span class="text-sm text-muted font-mono">加载提供商...</span>
+      </div>
     </div>
   {:else if providers.length === 0}
     <div class="bg-surface border border-white/[0.06] border-dashed rounded-2xl p-12 text-center">
@@ -162,5 +159,5 @@
 </div>
 
 <Modal bind:open={modalOpen} title={modalTitle} onclose={() => (editingProvider = null)}>
-  <ProviderForm editing={editingProvider} onsave={handleSaved} onerror={(m: string) => showToast(m, 'error')} />
+  <ProviderForm editing={editingProvider} onsave={handleSaved} />
 </Modal>

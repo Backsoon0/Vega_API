@@ -26,6 +26,11 @@
     }
 
     if (isDashboard) {
+      // Only check auth if we don't already know we're authenticated
+      if (authed) {
+        checking = false;
+        return;
+      }
       checkAuth().then((ok) => {
         authed = ok;
         checking = false;
@@ -56,12 +61,16 @@
           </div>
         </div>
       {:else}
-        {@render children()}
+        <div class="animate-fade-in">
+          {@render children()}
+        </div>
       {/if}
     </main>
   </div>
-  <Toast />
 {:else}
-  {@render children()}
-  <Toast />
+  <div class="animate-fade-in">
+    {@render children()}
+  </div>
 {/if}
+
+<Toast />
