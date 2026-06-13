@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getProviders, createProvider, updateProvider, deleteProvider } from "$lib/api";
   import type { Provider } from "$lib/api";
-  import { Settings, Plus, Server } from "lucide-svelte";
+  import { Settings, Plus, Server, Copy, Check } from "lucide-svelte";
   import Modal from "$lib/Modal.svelte";
   import ProviderCard from "$lib/ProviderCard.svelte";
   import ProviderForm from "$lib/ProviderForm.svelte";
@@ -13,6 +13,33 @@
   let editingProvider = $state<Provider | null>(null);
   let modalTitle = $state('添加提供商');
 
+  // ---- API Endpoint section ----
+  let apiBase = $state('');
+  let copied = $state(false);
+
+  $effect(() => {
+    apiBase = `${window.location.origin}/v1`;
+  });
+
+  async function copyApiUrl() {
+    try {
+      await navigator.clipboard.writeText(apiBase);
+      copied = true;
+      setTimeout(() => (copied = false), 2000);
+    } catch {
+      // fallback
+      const input = document.createElement('input');
+      input.value = apiBase;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+      copied = true;
+      setTimeout(() => (copied = false), 2000);
+    }
+  }
+
+  // ---- Providers ----
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     window.dispatchEvent(new CustomEvent('toast', { detail: { message: msg, type } }));
   }
@@ -72,6 +99,37 @@
     >
       <Plus class="w-4 h-4" stroke-width={2.5} /> 添加提供商
     </button>
+  </div>
+
+  <!-- API Endpoint -->
+  <div class="mb-8 bg-surface border border-white/[0.08] rounded-2xl p-6 shadow-card">
+    <h2 class="text-sm font-semibold text-primary font-mono flex items-center gap-2 mb-4">
+      <Server class="w-4 h-4 text-cta" stroke-width={1.5} />
+      API 调用地址
+    </h2>
+    <p class="text-xs text-muted mb-3">
+      将此地址用作 OpenAI SDK 的 <code class="text-accent bg-accent-subtle px-1.5 py-0.5 rounded text-[11px] font-mono">base_url</code>，即可通过标准 OpenAI 接口访问所有已配置的 AI 模型。
+    </p>
+    <div class="flex items-center gap-2">
+      <code
+        class="flex-1 bg-input border border-white/[0.10] rounded-xl px-4 py-3 text-sm text-primary font-mono break-all select-all"
+      >{apiBase}</code>
+      <button
+        onclick={copyApiUrl}
+        class="shrink-0 px-4 py-3 rounded-xl text-sm text-white font-semibold transition-all duration-200 flex items-center gap-1.5 {copied ? 'bg-accent' : 'bg-cta hover:bg-cta-hover active:scale-[0.97]'}"
+      >
+        {#if copied}
+          <Check class="w-4 h-4" stroke-width={2.5} />
+          已复制
+        {:else}
+          <Copy class="w-4 h-4" stroke-width={1.75} />
+          复制
+        {/if}
+      </button>
+    </div>
+    <p class="text-[11px] text-muted mt-2">
+      完整地址: <span class="text-secondary font-mono">{apiBase}/chat/completions</span>
+    </p>
   </div>
 
   <!-- Client Key -->
