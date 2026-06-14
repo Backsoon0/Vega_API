@@ -71,8 +71,8 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 			body: JSON.stringify(routedBody),
 		});
 
+		const startMs = Date.now();
 		try {
-			const startMs = Date.now();
 			const upstreamResp = await handler.proxyRequest(
 				proxyReq,
 				c.env,
@@ -114,7 +114,7 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 				execCtx.waitUntil(
 					recordUsage(c.env, provider.id, modelId, ip,
 						{ prompt: 0, completion: 0 },
-						false, 0, requestId, !!body.stream,
+						false, Date.now() - startMs, requestId, !!body.stream,
 						{ errorType: 'network_error', errorMessage: errMsg.slice(0, 500) }
 					),
 				);
