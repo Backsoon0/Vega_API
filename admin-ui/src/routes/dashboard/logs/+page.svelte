@@ -10,6 +10,8 @@
   let loading = $state(true);
   let search = $state('');
   let providerFilter = $state('');
+  let streamFilter = $state('');
+  let successFilter = $state('');
   let page = $state(0);
   let pageSize = $state(10);
   const pageSizeOptions = [10, 20, 50, 100];
@@ -23,6 +25,10 @@
       params.set('offset', String(page * pageSize));
       if (search) params.set('search', search);
       if (providerFilter) params.set('providerId', providerFilter);
+      if (streamFilter === 'stream') params.set('isStream', '1');
+      else if (streamFilter === 'nonstream') params.set('isStream', '0');
+      if (successFilter === 'success') params.set('success', '1');
+      else if (successFilter === 'failed') params.set('success', '0');
 
       const data = await getCallLogs(params);
       entries = data.logs || [];
@@ -34,7 +40,7 @@
 
   $effect(() => {
     if (!get(authToken)) return;
-    void page; void pageSize; void search; void providerFilter;
+    void page; void pageSize; void search; void providerFilter; void streamFilter; void successFilter;
     fetchLogs();
   });
 
