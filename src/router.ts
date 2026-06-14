@@ -195,24 +195,12 @@ export async function findProviderForModel(
 		}
 	}
 
-	// 4. Heuristic by model name prefix — match ALL Google or OpenAI providers
-	const prefix = modelId.split('/')[0].toLowerCase();
-	if (['google', 'gemini', 'publishers'].includes(prefix)) {
+	// 4. Fallback: no provider explicitly handles this model — try ALL enabled providers.
+	// No hardcoded provider-type restrictions. The chat handler tries each candidate
+	// in weight order and falls back on failure, so the highest-weight provider wins.
+	if (!matches.length) {
 		for (const p of enabled) {
-			if (p.type === 'vertex_ai' || p.type === 'google_ai_studio') {
-				addMatch(p, modelId);
-			}
-		}
-	}
-	if (
-		['gpt', 'o1', 'o3', 'text-embedding', 'dall-e', 'tts', 'whisper'].some((p) =>
-			modelId.toLowerCase().startsWith(p),
-		)
-	) {
-		for (const p of enabled) {
-			if (p.type === 'openai') {
-				addMatch(p, modelId);
-			}
+			addMatch(p, modelId);
 		}
 	}
 

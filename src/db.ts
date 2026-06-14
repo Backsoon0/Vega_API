@@ -23,4 +23,19 @@ export async function initSchema(env: Env): Promise<void> {
 	for (const stmt of SCHEMA_STATEMENTS) {
 		await env.DB.prepare(stmt).run();
 	}
+
+	// Run schema migrations for columns added after initial table creation.
+	// CREATE TABLE IF NOT EXISTS won't add columns to existing tables, so we
+	// ALTER TABLE with try/catch (D1/SQLite doesn't support IF NOT EXISTS for ALTER).
+	const MIGRATIONS = [
+		'ALTER TABLE rate_limits ADD COLUMN banned_until INTEGER NOT NULL DEFAULT 0',   // 0004
+		'ALTER TABLE call_logs ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0',       // 0003
+	];
+	for (const stmt of MIGRATIONS) {
+		try {
+			await env.DB.prepare(stmt).run();
+		} catch {
+			// Column already exists — safe to ignore
+		}
+	}
 }
