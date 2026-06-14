@@ -117,8 +117,8 @@
             </span>
           </div>
           <div class="grid grid-cols-2 gap-2 text-xs">
-            <div><span class="text-muted">IP: </span><span class="text-secondary font-mono">{entry.ip}</span></div>
-            <div><span class="text-muted">提供商: </span><span class="text-secondary">{entry.providerId}</span></div>
+            <div class="col-span-2"><span class="text-muted">IP: </span><span class="text-secondary font-mono">{entry.ip}</span></div>
+            <div class="col-span-2"><span class="text-muted">提供商: </span><span class="text-secondary">{entry.providerId}</span></div>
             <div class="col-span-2"><span class="text-muted">模型: </span><span class="text-secondary font-mono break-all">{entry.model}</span></div>
             <div class="col-span-2 flex gap-3">
               <span class="text-muted">Prompt: <span class="text-accent font-mono tabular-nums">{entry.promptTokens.toLocaleString()}</span></span>
