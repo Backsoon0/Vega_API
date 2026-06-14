@@ -48,6 +48,7 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	}
 
 	const ip = c.req.header('CF-Connecting-IP') || 'unknown';
+	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 
 	// Try each candidate in weight order; fall back on failure
@@ -82,23 +83,40 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 			if (upstreamResp.ok && upstreamResp.body) {
 				const isStream = !!body.stream;
 				if (isStream) {
-					return handleStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs);
+					return handleStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs, requestId, isStream);
 				}
-				return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs);
+				return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs, requestId, isStream);
 			}
 
 			// Non-ok response: try to read error, then fall through to next provider
 			const errText = await upstreamResp.text().catch(() => '');
 			lastError = `Provider ${provider.id} returned ${upstreamResp.status}: ${errText.slice(0, 200)}`;
 			console.error(lastError);
-			// Failures logged to console.error above; not recorded as usage (0-token noise)
+			if (execCtx) {
+				execCtx.waitUntil(
+					recordUsage(c.env, provider.id, modelId, ip,
+						{ prompt: 0, completion: 0 },
+						false, Date.now() - startMs, requestId, !!body.stream,
+						{
+							errorType: 'upstream_error',
+							errorCode: String(upstreamResp.status),
+							errorMessage: errText.slice(0, 500),
+						}
+					),
+				);
+			}
 			// Continue to next candidate
 		} catch (err) {
 			lastError = `Provider ${provider.id} error: ${(err as Error).message}`;
 			console.error(lastError);
 			if (execCtx) {
+				const errMsg = (err as Error).message || 'Unknown error';
 				execCtx.waitUntil(
-					/* failure logged to console, not recorded as usage */ null as any,
+					recordUsage(c.env, provider.id, modelId, ip,
+						{ prompt: 0, completion: 0 },
+						false, 0, requestId, !!body.stream,
+						{ errorType: 'network_error', errorMessage: errMsg.slice(0, 500) }
+					),
 				);
 			}
 			// Continue to next candidate
@@ -106,6 +124,18 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	}
 
 	// All providers failed
+	if (execCtx) {
+		execCtx.waitUntil(
+			recordUsage(c.env, 'unknown', modelId, ip,
+				{ prompt: 0, completion: 0 },
+				false, 0, requestId, !!body.stream,
+				{
+					errorType: 'all_providers_failed',
+					errorMessage: lastError.slice(0, 500),
+				}
+			),
+		);
+	}
 	return c.json(
 		{
 			error: {
@@ -161,8 +191,16 @@ async function handleNonStreamResponse(
 	ip: string,
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
+	requestId: string,
+	isStream: boolean,
 ): Promise<Response> {
 	const bodyText = await upstreamResp.text();
+	const upstreamRequestId = upstreamResp.headers.get('x-request-id')
+		|| upstreamResp.headers.get('x-goog-request-id')
+		|| '';
+	const extra: Record<string, string> = {};
+	if (upstreamRequestId) extra.upstreamRequestId = upstreamRequestId;
+
 	try {
 		const data = JSON.parse(bodyText);
 		// OpenAI returns `usage`, Google returns `usageMetadata` in OpenAI-compatible mode
@@ -173,16 +211,18 @@ async function handleNonStreamResponse(
 				recordUsage(env, providerId, modelId, ip, {
 					prompt: usage.prompt_tokens || 0,
 					completion: usage.completion_tokens || 0,
-				}, true, durationMs),
+				}, true, durationMs, requestId, isStream, extra),
 			);
 		}
 	} catch {
 		/* ignore parse errors */
 	}
+	const headers = new Headers(upstreamResp.headers);
+	headers.set('x-request-id', requestId);
 	return new Response(bodyText, {
 		status: upstreamResp.status,
 		statusText: upstreamResp.statusText,
-		headers: upstreamResp.headers,
+		headers,
 	});
 }
 
@@ -197,8 +237,15 @@ function handleStreamResponse(
 	ip: string,
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
+	requestId: string,
+	isStream: boolean,
 ): Response {
 	const [clientStream, observerStream] = upstreamResp.body!.tee();
+	const upstreamRequestId = upstreamResp.headers.get('x-request-id')
+		|| upstreamResp.headers.get('x-goog-request-id')
+		|| '';
+	const extra: Record<string, string> = {};
+	if (upstreamRequestId) extra.upstreamRequestId = upstreamRequestId;
 
 	// Always drain the observer stream (prevents leaks), but only record usage if execCtx is available
 	const drainPromise = (async () => {
@@ -217,7 +264,7 @@ function handleStreamResponse(
 					await recordUsage(env, providerId, modelId, ip, {
 						prompt: usage.prompt_tokens,
 						completion: usage.completion_tokens,
-					}, true, durationMs);
+					}, true, durationMs, requestId, isStream, extra);
 				}
 			}
 		} catch {
@@ -230,9 +277,11 @@ function handleStreamResponse(
 		execCtx.waitUntil(drainPromise);
 	}
 
+	const headers = new Headers(upstreamResp.headers);
+	headers.set('x-request-id', requestId);
 	return new Response(clientStream, {
 		status: upstreamResp.status,
 		statusText: upstreamResp.statusText,
-		headers: upstreamResp.headers,
+		headers,
 	});
 }
