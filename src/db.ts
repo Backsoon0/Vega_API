@@ -30,6 +30,9 @@ export async function initSchema(env: Env): Promise<void> {
 	const MIGRATIONS = [
 		'ALTER TABLE rate_limits ADD COLUMN banned_until INTEGER NOT NULL DEFAULT 0',   // 0004
 		'ALTER TABLE call_logs ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0',       // 0003
+		'ALTER TABLE call_logs ADD COLUMN request_id TEXT NOT NULL DEFAULT \'\'',          // 0005
+		'ALTER TABLE call_logs ADD COLUMN is_stream INTEGER NOT NULL DEFAULT 0',          // 0005
+		'ALTER TABLE call_logs ADD COLUMN extra TEXT NOT NULL DEFAULT \'{}\'',             // 0005
 	];
 	for (const stmt of MIGRATIONS) {
 		try {
