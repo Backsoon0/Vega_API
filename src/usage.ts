@@ -81,6 +81,8 @@ export async function getCallLogs(
   opts: {
     search?: string;
     providerId?: string;
+    isStream?: string;
+    success?: string;
     limit?: number;
     offset?: number;
   } = {}
@@ -112,6 +114,16 @@ export async function getCallLogs(
     if (opts.providerId) {
       whereClauses += ' AND provider_id = ?';
       params.push(opts.providerId);
+    }
+    if (opts.isStream === '1') {
+      whereClauses += ' AND is_stream = 1';
+    } else if (opts.isStream === '0') {
+      whereClauses += ' AND is_stream = 0';
+    }
+    if (opts.success === '1') {
+      whereClauses += ' AND success = 1';
+    } else if (opts.success === '0') {
+      whereClauses += ' AND success = 0';
     }
 
     // Count total
