@@ -5,6 +5,7 @@
   import { ListTodo, RefreshCw, ChevronLeft, ChevronRight } from "lucide-svelte";
 
   let entries = $state<LogEntry[]>([]);
+  let total = $state(0);
   let hasMore = $state(false);
   let loading = $state(true);
   let search = $state('');
@@ -14,6 +15,7 @@
   let page = $state(0);
   let pageSize = $state(10);
   const pageSizeOptions = [10, 20, 50, 100];
+  let totalPages = $derived(Math.max(1, Math.ceil((total > 0 ? total : page * pageSize + (hasMore ? pageSize + 1 : entries.length)) / pageSize)));
 
   async function fetchLogs() {
     loading = true;
@@ -30,6 +32,7 @@
 
       const data = await getCallLogs(params);
       entries = data.logs || [];
+      total = data.total || 0;
       hasMore = data.hasMore || false;
     } catch (err: any) {
       toasts.show(err.message || '获取日志失败', 'error');
@@ -63,7 +66,7 @@
         <ListTodo class="w-5 h-5" stroke-width={1.5} />
         调用记录
       </h1>
-      <p class="text-xs text-muted mt-1">API 调用记录（最多保留 10000 条）</p>
+      <p class="text-xs text-muted mt-1">最近 {total} 条 API 调用记录（最多保留 10000 条）</p>
     </div>
     <button
       class="px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]"
@@ -130,15 +133,15 @@
           上一页
         </button>
         <span class="tabular-nums">
-          第 <span class="text-secondary font-mono">{page + 1}</span> 页
+          第 <span class="text-secondary font-mono">{page + 1}</span> / <span class="text-secondary font-mono">{totalPages}</span> 页
         </span>
         <button
           class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1
-            {!hasMore
+            {!hasMore && page >= totalPages - 1
               ? 'text-muted bg-surface border border-white/[0.06] cursor-not-allowed'
               : 'text-white bg-cta hover:bg-cta-hover shadow-glow-cta active:scale-[0.97]'}"
           onclick={() => page++}
-          disabled={!hasMore}
+          disabled={!hasMore && page >= totalPages - 1}
         >
           下一页
           <ChevronRight class="w-3.5 h-3.5" stroke-width={2} />

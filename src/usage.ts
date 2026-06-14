@@ -127,7 +127,19 @@ export async function getCallLogs(
       whereClauses += ' AND success = 0';
     }
 
-    // Fetch limit+1 rows to detect hasMore without a slow COUNT(*)
+    // Count total rows (for pagination page count)
+    let total = 0;
+    try {
+      const countRow = await env.DB
+        .prepare(`SELECT COUNT(*) as cnt FROM call_logs ${whereClauses}`)
+        .bind(...params)
+        .first<{ cnt: number }>();
+      total = countRow?.cnt || 0;
+    } catch {
+      // COUNT failed — total stays 0, pagination falls back to hasMore
+    }
+
+    // Fetch rows (limit+1 to detect hasMore)
     const rows = await env.DB
       .prepare(
         `SELECT id, timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra
@@ -168,7 +180,7 @@ export async function getCallLogs(
       extra: (() => { try { return JSON.parse(r.extra || '{}'); } catch { return {}; } })(),
     }));
 
-    return { logs: trimmed, total: 0, hasMore };
+    return { logs: trimmed, total, hasMore };
   } catch (err) {
     console.error('Call logs query error:', (err as Error).message);
     return { logs: [], total: 0, hasMore: false };
