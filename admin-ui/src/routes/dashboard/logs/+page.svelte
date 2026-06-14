@@ -1,6 +1,5 @@
 <script lang="ts">
   import { authToken, getCallLogs, type LogEntry } from "$lib/api";
-  import { get } from "svelte/store";
   import { toasts } from "$lib/toast-store";
   import CallLogTable from "$lib/CallLogTable.svelte";
   import { ListTodo, RefreshCw, ChevronLeft, ChevronRight } from "lucide-svelte";
@@ -55,7 +54,6 @@
   }
 
   $effect(() => {
-    if (!get(authToken)) return;
     void page; void pageSize; void search; void providerFilter; void streamFilter; void successFilter;
     fetchLogs();
   });
