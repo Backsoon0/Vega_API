@@ -22,7 +22,10 @@ export async function recordUsage(
   ip: string,
   usage: { prompt: number; completion: number },
   success: boolean,
-  durationMs: number = 0
+  durationMs: number = 0,
+  requestId: string = '',
+  isStream: boolean = false,
+  extra: Record<string, string> = {}
 ): Promise<void> {
   try {
     const today = isoDate();
@@ -41,17 +44,22 @@ export async function recordUsage(
       .bind(today, providerId, model, usage.prompt, usage.completion, usage.prompt, usage.completion)
       .run();
 
-    // Insert into call_logs
+    // Insert into call_logs (includes new columns from migration 0005)
     await env.DB
       .prepare(
-        `INSERT INTO call_logs (timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO call_logs (timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .bind(now, ip, providerId, model, usage.prompt || 0, usage.completion || 0, durationMs, success ? 1 : 0)
+      .bind(
+        now, ip, providerId, model,
+        usage.prompt || 0, usage.completion || 0,
+        durationMs, success ? 1 : 0,
+        requestId, isStream ? 1 : 0,
+        JSON.stringify(extra)
+      )
       .run();
 
-    // Probabilistic cleanup: ~1% of calls (roughly every 100 requests)
-    // Avoids full table scan on every single API call
+    // Probabilistic cleanup: ~1% of calls
     if (Math.random() < 0.01) {
       await env.DB
         .prepare(
@@ -77,14 +85,17 @@ export async function getCallLogs(
     offset?: number;
   } = {}
 ): Promise<{ logs: Array<{
-	    timestamp: string;
-	    ip: string;
-	    providerId: string;
-	    model: string;
-	    promptTokens: number;
-	    completionTokens: number;
-	    durationMs: number;
-	    success: boolean;
+    timestamp: string;
+    ip: string;
+    providerId: string;
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    durationMs: number;
+    success: boolean;
+    requestId: string;
+    isStream: boolean;
+    extra: Record<string, string>;
   }>; total: number }> {
   const limit = opts.limit || 200;
   const offset = opts.offset || 0;
@@ -94,9 +105,9 @@ export async function getCallLogs(
     const params: (string | number)[] = [];
 
     if (opts.search) {
-      whereClauses += ' AND (ip LIKE ? OR provider_id LIKE ? OR model LIKE ?)';
+      whereClauses += ' AND (ip LIKE ? OR provider_id LIKE ? OR model LIKE ? OR request_id LIKE ?)';
       const s = `%${opts.search}%`;
-      params.push(s, s, s);
+      params.push(s, s, s, s);
     }
     if (opts.providerId) {
       whereClauses += ' AND provider_id = ?';
@@ -113,7 +124,7 @@ export async function getCallLogs(
     // Fetch rows
     const rows = await env.DB
       .prepare(
-        `SELECT timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success
+        `SELECT timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra
          FROM call_logs ${whereClauses}
          ORDER BY timestamp DESC
          LIMIT ? OFFSET ?`
@@ -128,6 +139,9 @@ export async function getCallLogs(
         completion_tokens: number;
         duration_ms: number;
         success: number;
+        request_id: string;
+        is_stream: number;
+        extra: string;
       }>();
 
     const logs = (rows.results || []).map(r => ({
@@ -139,6 +153,9 @@ export async function getCallLogs(
       completionTokens: r.completion_tokens,
       durationMs: r.duration_ms,
       success: r.success === 1,
+      requestId: r.request_id || '',
+      isStream: r.is_stream === 1,
+      extra: (() => { try { return JSON.parse(r.extra || '{}'); } catch { return {}; } })(),
     }));
 
     return { logs, total };
