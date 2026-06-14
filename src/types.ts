@@ -42,7 +42,11 @@ export interface LogEntry {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  durationMs: number;
   success: boolean;
+  requestId: string;
+  isStream: boolean;
+  extra: Record<string, string>;
 }
 
 export interface Env {
