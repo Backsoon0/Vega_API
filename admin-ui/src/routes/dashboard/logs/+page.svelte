@@ -77,18 +77,9 @@
 
   <CallLogTable entries={entries} loading={loading} />
 
-  <!-- DEBUG: raw state dump -->
-  <div class="mt-4 p-3 bg-surface border border-cta/30 rounded-lg text-xs font-mono">
-    <div class="text-cta mb-1">DEBUG STATE:</div>
-    <div>loading: {String(loading)}</div>
-    <div>entries.length: {entries.length}</div>
-    <div>hasMore: {String(hasMore)}</div>
-    <div>page: {page} / pageSize: {pageSize}</div>
-    <div>first entry preview: {entries.length > 0 ? JSON.stringify(entries[0]).slice(0, 200) : 'EMPTY'}</div>
-  </div>
-
   <!-- Filter bar -->
-  <div class="mt-4 flex flex-wrap gap-2">
+  <div class="mt-6 flex flex-wrap items-center gap-3">
+    <span class="text-xs text-muted">筛选</span>
     <select
       class="px-3 py-2 bg-input border border-white/[0.06] rounded-xl text-xs text-secondary"
       value={streamFilter}
@@ -111,11 +102,11 @@
 
   <!-- Pagination -->
   {#if entries.length > 0 || hasMore}
-    <div class="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted">
+    <div class="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted">
       <div class="flex items-center gap-2">
         <span>每页</span>
         <select
-          class="px-2 py-1.5 bg-input border border-white/[0.08] rounded-lg text-secondary text-xs"
+          class="px-3 py-2 bg-input border border-white/[0.08] rounded-xl text-secondary text-xs"
           value={pageSize}
           onchange={(e) => changePageSize(Number((e.target as HTMLSelectElement).value))}
         >
@@ -126,7 +117,7 @@
         <span>条</span>
       </div>
 
-      <div class="flex items-center gap-1.5">
+      <div class="flex items-center gap-3">
         <button
           class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1
             {page === 0
@@ -138,7 +129,7 @@
           <ChevronLeft class="w-3.5 h-3.5" stroke-width={2} />
           上一页
         </button>
-        <span class="tabular-nums px-2">
+        <span class="tabular-nums">
           第 <span class="text-secondary font-mono">{page + 1}</span> 页
         </span>
         <button
