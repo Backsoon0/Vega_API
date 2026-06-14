@@ -228,6 +228,9 @@ export interface LogEntry {
   completionTokens: number;
   durationMs: number;
   success: boolean;
+  requestId: string;
+  isStream: boolean;
+  extra: Record<string, string>;
 }
 
 // Export state getters
