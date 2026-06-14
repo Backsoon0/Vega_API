@@ -101,6 +101,17 @@
 
   <CallLogTable entries={entries} loading={loading} />
 
+  <!-- DEBUG: raw state dump -->
+  <div class="mt-4 p-3 bg-surface border border-cta/30 rounded-lg text-xs font-mono">
+    <div class="text-cta mb-1">DEBUG STATE:</div>
+    <div>loading: {String(loading)}</div>
+    <div>entries.length: {entries.length}</div>
+    <div>total: {total}</div>
+    <div>cachedTotal: {cachedTotal}</div>
+    <div>lastFilterKey: "{lastFilterKey}"</div>
+    <div>first entry preview: {entries.length > 0 ? JSON.stringify(entries[0]).slice(0, 200) : 'EMPTY'}</div>
+  </div>
+
   <!-- Filter bar -->
   <div class="mt-4 flex flex-wrap gap-2">
     <select
