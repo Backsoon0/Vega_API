@@ -157,9 +157,14 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
  * inside model output content strings.
  *
  * Searches in reverse — usage/usageMetadata is always in the final chunk(s).
+ *
+ * Normalizes line endings first: some providers (e.g. Google) use \r\n\r\n
+ * as event delimiters, while others use \n\n.
  */
 function extractUsageFromSSE(rawBuffer: string): { prompt_tokens: number; completion_tokens: number } | null {
-	const events = rawBuffer.split('\n\n');
+	// Normalize \r\n → \n so both delimiter styles are handled uniformly
+	const normalized = rawBuffer.replace(/\r\n/g, '\n');
+	const events = normalized.split('\n\n');
 	// Search in reverse: usage is always in the last event(s)
 	for (let idx = events.length - 1; idx >= 0; idx--) {
 		const event = events[idx];
@@ -225,12 +230,12 @@ async function handleNonStreamResponse(
 		const data = JSON.parse(bodyText);
 		// OpenAI returns `usage`, Google returns `usageMetadata` in OpenAI-compatible mode
 		const usage = data?.usage || data?.usageMetadata;
-		if (usage && execCtx) {
+		if (execCtx) {
 			const durationMs = Date.now() - startMs;
 			execCtx.waitUntil(
 				recordUsage(env, providerId, modelId, ip, {
-					prompt: usage.prompt_tokens || 0,
-					completion: usage.completion_tokens || 0,
+					prompt: usage?.prompt_tokens || 0,
+					completion: usage?.completion_tokens || 0,
 				}, true, durationMs, requestId, isStream, extra),
 			);
 		}
@@ -267,7 +272,8 @@ function handleStreamResponse(
 	const extra: Record<string, string> = {};
 	if (upstreamRequestId) extra.upstreamRequestId = upstreamRequestId;
 
-	// Always drain the observer stream (prevents leaks), but only record usage if execCtx is available
+	// Always drain the observer stream (prevents leaks); recordUsage fires
+	// whether or not usage data was extractable (tokens default to 0)
 	const drainPromise = (async () => {
 		const reader = observerStream.getReader();
 		let rawBuffer = '';
@@ -279,16 +285,14 @@ function handleStreamResponse(
 			}
 			if (execCtx) {
 				const usage = extractUsageFromSSE(rawBuffer);
-				if (usage) {
-					const durationMs = Date.now() - startMs;
-					await recordUsage(env, providerId, modelId, ip, {
-						prompt: usage.prompt_tokens,
-						completion: usage.completion_tokens,
-					}, true, durationMs, requestId, isStream, extra);
-				}
+				const durationMs = Date.now() - startMs;
+				await recordUsage(env, providerId, modelId, ip, {
+					prompt: usage?.prompt_tokens || 0,
+					completion: usage?.completion_tokens || 0,
+				}, true, durationMs, requestId, isStream, extra);
 			}
 		} catch {
-			/* ignore read errors */
+			/* ignore read errors — response still delivered to client */
 		}
 	})();
 
