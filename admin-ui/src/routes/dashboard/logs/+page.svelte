@@ -55,6 +55,10 @@
     pageSize = size;
     page = 0;
   }
+
+  function jumpPage(v: number) {
+    if (v >= 1 && v <= totalPages) page = v - 1;
+  }
 </script>
 
 <svelte:head><title>调用记录 — Vega API</title></svelte:head>
@@ -132,8 +136,20 @@
           <ChevronLeft class="w-3.5 h-3.5" stroke-width={2} />
           上一页
         </button>
-        <span class="tabular-nums">
-          第 <span class="text-secondary font-mono">{page + 1}</span> / <span class="text-secondary font-mono">{totalPages}</span> 页
+        <span class="tabular-nums flex items-center gap-1.5">
+          第
+          <input
+            type="number"
+            min="1"
+            max={totalPages}
+            value={page + 1}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') jumpPage(parseInt((e.target as HTMLInputElement).value));
+            }}
+            onchange={(e) => jumpPage(parseInt((e.target as HTMLInputElement).value))}
+            class="w-12 px-1.5 py-0.5 bg-input border border-white/[0.10] rounded text-center text-secondary font-mono text-xs focus:outline-none focus:ring-1 focus:ring-cta/50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
+          / <span class="text-secondary font-mono">{totalPages}</span> 页
         </span>
         <button
           class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1
