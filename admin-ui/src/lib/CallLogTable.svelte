@@ -75,6 +75,7 @@
             <th class="text-left px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">IP</th>
             <th class="text-left px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">提供商</th>
             <th class="text-left px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">模型</th>
+            <th class="text-center px-2 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">流式</th>
             <th class="text-right px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">Tokens</th>
             <th class="text-right px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">耗时</th>
             <th class="text-center px-4 py-3 text-[10px] text-muted uppercase tracking-wider font-semibold">状态</th>
@@ -87,6 +88,13 @@
               <td class="px-4 py-2.5 text-muted font-mono text-xs">{entry.ip}</td>
               <td class="px-4 py-2.5 text-secondary text-xs">{entry.providerId}</td>
               <td class="px-4 py-2.5 text-secondary font-mono text-xs max-w-[160px] truncate">{entry.model}</td>
+              <td class="px-2 py-2.5 text-center">
+                {#if entry.isStream}
+                  <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-cta-subtle text-cta">流</span>
+                {:else}
+                  <span class="text-[10px] text-placeholder">—</span>
+                {/if}
+              </td>
               <td class="px-4 py-2.5 text-muted font-mono text-xs text-right tabular-nums">
                 <span class="text-accent">{entry.promptTokens.toLocaleString()}</span>
                 <span class="text-muted"> / </span>
@@ -96,7 +104,10 @@
                 {formatDuration(entry.durationMs)}
               </td>
               <td class="px-4 py-2.5 text-center">
-                <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold {entry.success ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'}">
+                <span
+                  class="text-[10px] px-2 py-0.5 rounded-full font-semibold {entry.success ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'}"
+                  title={!entry.success && entry.extra?.errorMessage ? entry.extra.errorMessage : ''}
+                >
                   {entry.success ? '成功' : '失败'}
                 </span>
               </td>
@@ -112,9 +123,17 @@
         <div class="bg-surface border border-white/[0.06] rounded-xl p-4 space-y-2.5">
           <div class="flex items-center justify-between">
             <span class="font-mono text-xs text-secondary">{formatTime(entry.timestamp)}</span>
-            <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold {entry.success ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'}">
-              {entry.success ? '成功' : '失败'}
-            </span>
+            <div class="flex items-center gap-1.5">
+              {#if entry.isStream}
+                <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-cta-subtle text-cta">流式</span>
+              {/if}
+              <span
+                class="text-[10px] px-2 py-0.5 rounded-full font-semibold {entry.success ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'}"
+                title={!entry.success && entry.extra?.errorMessage ? entry.extra.errorMessage : ''}
+              >
+                {entry.success ? '成功' : '失败'}
+              </span>
+            </div>
           </div>
           <div class="grid grid-cols-2 gap-2 text-xs">
             <div class="col-span-2"><span class="text-muted">IP: </span><span class="text-secondary font-mono">{entry.ip}</span></div>
@@ -125,6 +144,9 @@
               <span class="text-muted">Completion: <span class="text-cta font-mono tabular-nums">{entry.completionTokens.toLocaleString()}</span></span>
               <span class="text-muted">耗时: <span class="text-secondary font-mono">{formatDuration(entry.durationMs)}</span></span>
             </div>
+            {#if !entry.success && entry.extra?.errorMessage}
+              <div class="col-span-2"><span class="text-danger text-[11px]">{entry.extra.errorMessage.slice(0, 120)}</span></div>
+            {/if}
           </div>
         </div>
       {/each}
