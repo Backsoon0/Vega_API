@@ -7,6 +7,7 @@
 
   let entries = $state<LogEntry[]>([]);
   let total = $state(0);
+  let cachedTotal = 0;
   let loading = $state(true);
   let search = $state('');
   let providerFilter = $state('');
@@ -14,6 +15,7 @@
   let successFilter = $state('');
   let page = $state(0);
   let pageSize = $state(10);
+  let lastFilterKey = $state('');
   const pageSizeOptions = [10, 20, 50, 100];
   let totalPages = $derived(Math.max(1, Math.ceil(total / pageSize)));
 
@@ -30,9 +32,23 @@
       if (successFilter === 'success') params.set('success', '1');
       else if (successFilter === 'failed') params.set('success', '0');
 
+      // Build a key representing the current filter state (without page/pageSize)
+      const filterKey = `${search}|${providerFilter}|${streamFilter}|${successFilter}`;
+      const filtersChanged = filterKey !== lastFilterKey;
+
+      if (!filtersChanged) {
+        // Only page changed — skip COUNT, reuse cached total
+        params.set('includeTotal', 'false');
+        total = cachedTotal;
+      }
+
       const data = await getCallLogs(params);
       entries = data.logs || [];
-      total = data.total || 0;
+      if (filtersChanged) {
+        total = data.total || 0;
+        cachedTotal = total;
+        lastFilterKey = filterKey;
+      }
     } catch (err: any) {
       toasts.show(err.message || '获取日志失败', 'error');
     } finally { loading = false; }

@@ -85,6 +85,7 @@ export async function getCallLogs(
     success?: string;
     limit?: number;
     offset?: number;
+    includeTotal?: boolean;
   } = {}
 ): Promise<{ logs: Array<{
     timestamp: string;
@@ -126,12 +127,15 @@ export async function getCallLogs(
       whereClauses += ' AND success = 0';
     }
 
-    // Count total
-    const countRow = await env.DB
-      .prepare(`SELECT COUNT(*) as cnt FROM call_logs ${whereClauses}`)
-      .bind(...params)
-      .first<{ cnt: number }>();
-    const total = countRow?.cnt || 0;
+    // Count total (skip when only paginating within a known result set)
+    let total = 0;
+    if (opts.includeTotal !== false) {
+      const countRow = await env.DB
+        .prepare(`SELECT COUNT(*) as cnt FROM call_logs ${whereClauses}`)
+        .bind(...params)
+        .first<{ cnt: number }>();
+      total = countRow?.cnt || 0;
+    }
 
     // Fetch rows
     const rows = await env.DB

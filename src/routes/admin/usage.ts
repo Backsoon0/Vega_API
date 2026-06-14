@@ -26,8 +26,9 @@ adminUsageRoutes.get('/logs', async (c: Context<{ Bindings: Env }>) => {
 	const providerId = c.req.query('providerId') || '';
 	const isStream = c.req.query('isStream') || '';
 	const success = c.req.query('success') || '';
+	const includeTotal = c.req.query('includeTotal') !== 'false';
 	const limit = parseInt(c.req.query('limit') || '200');
 	const offset = parseInt(c.req.query('offset') || '0');
-	const data = await getCallLogs(c.env, { search, providerId, isStream, success, limit, offset });
+	const data = await getCallLogs(c.env, { search, providerId, isStream, success, includeTotal, limit, offset });
 	return c.json(data);
 });
