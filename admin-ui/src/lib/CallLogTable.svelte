@@ -7,23 +7,11 @@
 
   let searchQuery = $state('');
   let providerFilter = $state('');
-  let streamFilter = $state('');
-  let successFilter = $state('');
 
   function filterLogs(list: LogEntry[]): LogEntry[] {
     let result = list;
     if (providerFilter) {
       result = result.filter(e => e.providerId === providerFilter);
-    }
-    if (streamFilter === 'stream') {
-      result = result.filter(e => e.isStream);
-    } else if (streamFilter === 'nonstream') {
-      result = result.filter(e => !e.isStream);
-    }
-    if (successFilter === 'success') {
-      result = result.filter(e => e.success);
-    } else if (successFilter === 'failed') {
-      result = result.filter(e => !e.success);
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -61,22 +49,6 @@
         {#each uniqueProviders as p}
           <option value={p}>{p}</option>
         {/each}
-      </select>
-      <select
-        class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
-        bind:value={streamFilter}
-      >
-        <option value="">全部类型</option>
-        <option value="stream">流式</option>
-        <option value="nonstream">非流式</option>
-      </select>
-      <select
-        class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
-        bind:value={successFilter}
-      >
-        <option value="">全部状态</option>
-        <option value="success">成功</option>
-        <option value="failed">失败</option>
       </select>
     </div>
   </div>

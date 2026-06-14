@@ -8,6 +8,7 @@
   let entries = $state<LogEntry[]>([]);
   let total = $state(0);
   let cachedTotal = 0;
+  let lastFilterKey = '';
   let loading = $state(true);
   let search = $state('');
   let providerFilter = $state('');
@@ -15,7 +16,6 @@
   let successFilter = $state('');
   let page = $state(0);
   let pageSize = $state(10);
-  let lastFilterKey = $state('');
   const pageSizeOptions = [10, 20, 50, 100];
   let totalPages = $derived(Math.max(1, Math.ceil(total / pageSize)));
 
@@ -98,6 +98,26 @@
   </div>
 
   <CallLogTable entries={entries} loading={loading} />
+
+  <!-- Filter bar -->
+  <div class="mt-4 flex flex-wrap gap-2">
+    <select
+      class="px-3 py-2 bg-input border border-white/[0.06] rounded-xl text-xs text-secondary"
+      bind:value={streamFilter}
+    >
+      <option value="">全部类型</option>
+      <option value="stream">流式</option>
+      <option value="nonstream">非流式</option>
+    </select>
+    <select
+      class="px-3 py-2 bg-input border border-white/[0.06] rounded-xl text-xs text-secondary"
+      bind:value={successFilter}
+    >
+      <option value="">全部状态</option>
+      <option value="success">成功</option>
+      <option value="failed">失败</option>
+    </select>
+  </div>
 
   <!-- Pagination -->
   {#if total > 0}
