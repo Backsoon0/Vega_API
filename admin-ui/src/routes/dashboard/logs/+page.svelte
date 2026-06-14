@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { authToken, getCallLogs, type LogEntry } from "$lib/api";
+  import { getCallLogs, type LogEntry } from "$lib/api";
   import { toasts } from "$lib/toast-store";
   import CallLogTable from "$lib/CallLogTable.svelte";
   import { ListTodo, RefreshCw, ChevronLeft, ChevronRight } from "lucide-svelte";
+  import { onMount } from "svelte";
 
   let entries = $state<LogEntry[]>([]);
   let total = $state(0);
   let cachedTotal = 0;
   let lastFilterKey = '';
-  let loading = $state(true);
+  let loading = $state(false);
   let search = $state('');
   let providerFilter = $state('');
   let streamFilter = $state('');
@@ -31,12 +32,10 @@
       if (successFilter === 'success') params.set('success', '1');
       else if (successFilter === 'failed') params.set('success', '0');
 
-      // Build a key representing the current filter state (without page/pageSize)
       const filterKey = `${search}|${providerFilter}|${streamFilter}|${successFilter}`;
       const filtersChanged = filterKey !== lastFilterKey;
 
       if (!filtersChanged) {
-        // Only page changed — skip COUNT, reuse cached total
         params.set('includeTotal', 'false');
         total = cachedTotal;
       }
@@ -53,24 +52,29 @@
     } finally { loading = false; }
   }
 
-  $effect(() => {
-    void page; void pageSize; void search; void providerFilter; void streamFilter; void successFilter;
+  onMount(() => {
     fetchLogs();
   });
+
+  function onFilterChange() {
+    page = 0;
+    fetchLogs();
+  }
 
   function handleRefresh() { fetchLogs(); }
 
   function changePageSize(size: number) {
     pageSize = size;
     page = 0;
+    fetchLogs();
   }
 
-  function prevPage() {
-    if (page > 0) page--;
-  }
-
-  function nextPage() {
-    if (page < totalPages - 1) page++;
+  function goPage(delta: number) {
+    const newPage = page + delta;
+    if (newPage >= 0 && newPage < totalPages) {
+      page = newPage;
+      fetchLogs();
+    }
   }
 </script>
 
@@ -101,7 +105,8 @@
   <div class="mt-4 flex flex-wrap gap-2">
     <select
       class="px-3 py-2 bg-input border border-white/[0.06] rounded-xl text-xs text-secondary"
-      bind:value={streamFilter}
+      value={streamFilter}
+      onchange={(e) => { streamFilter = (e.target as HTMLSelectElement).value; onFilterChange(); }}
     >
       <option value="">全部类型</option>
       <option value="stream">流式</option>
@@ -109,7 +114,8 @@
     </select>
     <select
       class="px-3 py-2 bg-input border border-white/[0.06] rounded-xl text-xs text-secondary"
-      bind:value={successFilter}
+      value={successFilter}
+      onchange={(e) => { successFilter = (e.target as HTMLSelectElement).value; onFilterChange(); }}
     >
       <option value="">全部状态</option>
       <option value="success">成功</option>
@@ -120,7 +126,6 @@
   <!-- Pagination -->
   {#if total > 0}
     <div class="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted">
-      <!-- Page size selector -->
       <div class="flex items-center gap-2">
         <span>每页</span>
         <select
@@ -135,14 +140,13 @@
         <span>条</span>
       </div>
 
-      <!-- Page navigation -->
       <div class="flex items-center gap-1.5">
         <button
           class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1
             {page === 0
               ? 'text-muted bg-surface border border-white/[0.06] cursor-not-allowed'
               : 'text-white bg-cta hover:bg-cta-hover shadow-glow-cta active:scale-[0.97]'}"
-          onclick={prevPage}
+          onclick={() => goPage(-1)}
           disabled={page === 0}
         >
           <ChevronLeft class="w-3.5 h-3.5" stroke-width={2} />
@@ -157,7 +161,7 @@
             {page >= totalPages - 1
               ? 'text-muted bg-surface border border-white/[0.06] cursor-not-allowed'
               : 'text-white bg-cta hover:bg-cta-hover shadow-glow-cta active:scale-[0.97]'}"
-          onclick={nextPage}
+          onclick={() => goPage(1)}
           disabled={page >= totalPages - 1}
         >
           下一页
