@@ -82,7 +82,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filtered as entry (entry.timestamp + entry.ip + entry.model)}
+          {#each filtered as entry (entry.id)}
             <tr class="border-b border-white/[0.03] hover:bg-surface-hover transition-colors">
               <td class="px-4 py-2.5 text-secondary font-mono text-xs whitespace-nowrap">{formatTime(entry.timestamp)}</td>
               <td class="px-4 py-2.5 text-muted font-mono text-xs">{entry.ip}</td>
@@ -119,7 +119,7 @@
 
     <!-- Mobile cards -->
     <div class="sm:hidden space-y-3">
-      {#each filtered as entry (entry.timestamp + entry.ip + entry.model)}
+      {#each filtered as entry (entry.id)}
         <div class="bg-surface border border-white/[0.06] rounded-xl p-4 space-y-2.5">
           <div class="flex items-center justify-between">
             <span class="font-mono text-xs text-secondary">{formatTime(entry.timestamp)}</span>

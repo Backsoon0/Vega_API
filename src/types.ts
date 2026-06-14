@@ -36,6 +36,7 @@ export interface UsageRecord {
 }
 
 export interface LogEntry {
+  id: number;
   timestamp: string;
   ip: string;
   providerId: string;

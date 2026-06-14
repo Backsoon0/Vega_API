@@ -180,7 +180,7 @@ export async function getCallLogs(params: URLSearchParams, signal?: AbortSignal)
   const qs = params.toString();
   const { ok, data } = await request('GET', `/logs${qs ? `?${qs}` : ''}`, undefined, { signal });
   if (!ok) throw new Error(data.error || 'Failed to fetch logs');
-  return data as { logs: LogEntry[]; total: number };
+  return data as { logs: LogEntry[]; total: number; hasMore: boolean };
 }
 
 export interface UsageData {
@@ -220,6 +220,7 @@ export interface ClientKeyInfo {
 }
 
 export interface LogEntry {
+  id: number;
   timestamp: string;
   ip: string;
   providerId: string;

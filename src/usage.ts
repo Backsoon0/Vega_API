@@ -85,9 +85,9 @@ export async function getCallLogs(
     success?: string;
     limit?: number;
     offset?: number;
-    includeTotal?: boolean;
   } = {}
 ): Promise<{ logs: Array<{
+    id: number;
     timestamp: string;
     ip: string;
     providerId: string;
@@ -99,7 +99,7 @@ export async function getCallLogs(
     requestId: string;
     isStream: boolean;
     extra: Record<string, string>;
-  }>; total: number }> {
+  }>; total: number; hasMore: boolean }> {
   const limit = opts.limit || 200;
   const offset = opts.offset || 0;
 
@@ -127,26 +127,17 @@ export async function getCallLogs(
       whereClauses += ' AND success = 0';
     }
 
-    // Count total (skip when only paginating within a known result set)
-    let total = 0;
-    if (opts.includeTotal !== false) {
-      const countRow = await env.DB
-        .prepare(`SELECT COUNT(*) as cnt FROM call_logs ${whereClauses}`)
-        .bind(...params)
-        .first<{ cnt: number }>();
-      total = countRow?.cnt || 0;
-    }
-
-    // Fetch rows
+    // Fetch limit+1 rows to detect hasMore without a slow COUNT(*)
     const rows = await env.DB
       .prepare(
-        `SELECT timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra
+        `SELECT id, timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra
          FROM call_logs ${whereClauses}
          ORDER BY timestamp DESC
          LIMIT ? OFFSET ?`
       )
-      .bind(...params, limit, offset)
+      .bind(...params, limit + 1, offset)
       .all<{
+        id: number;
         timestamp: string;
         ip: string;
         provider_id: string;
@@ -160,7 +151,10 @@ export async function getCallLogs(
         extra: string;
       }>();
 
-    const logs = (rows.results || []).map(r => ({
+    const results = rows.results || [];
+    const hasMore = results.length > limit;
+    const trimmed = results.slice(0, limit).map(r => ({
+      id: r.id,
       timestamp: r.timestamp,
       ip: r.ip,
       providerId: r.provider_id,
@@ -174,10 +168,10 @@ export async function getCallLogs(
       extra: (() => { try { return JSON.parse(r.extra || '{}'); } catch { return {}; } })(),
     }));
 
-    return { logs, total };
+    return { logs: trimmed, total: 0, hasMore };
   } catch (err) {
     console.error('Call logs query error:', (err as Error).message);
-    return { logs: [], total: 0 };
+    return { logs: [], total: 0, hasMore: false };
   }
 }
 
