@@ -88,9 +88,10 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 				return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs, requestId, isStream);
 			}
 
-			// Non-ok response: try to read error, then fall through to next provider
+			// Non-ok response: try to parse structured error, fall back to raw text
 			const errText = await upstreamResp.text().catch(() => '');
-			lastError = `Provider ${provider.id} returned ${upstreamResp.status}: ${errText.slice(0, 200)}`;
+			const errSummary = extractErrorMessage(errText);
+			lastError = `Provider ${provider.id} returned ${upstreamResp.status}: ${errSummary}`;
 			console.error(lastError);
 			if (execCtx) {
 				execCtx.waitUntil(
@@ -100,7 +101,7 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 						{
 							errorType: 'upstream_error',
 							errorCode: String(upstreamResp.status),
-							errorMessage: errText.slice(0, 500),
+							errorMessage: errSummary,
 						}
 					),
 				);
@@ -180,6 +181,25 @@ function extractUsageFromSSE(rawBuffer: string): { prompt_tokens: number; comple
 		}
 	}
 	return null;
+}
+
+/**
+ * Try to parse an upstream error response as JSON and extract a clean message.
+ * Handles common formats: { error: { message } }, [{ error: { message } }], etc.
+ * Falls back to returning the raw text (truncated) if parsing fails.
+ */
+function extractErrorMessage(rawText: string): string {
+	try {
+		let parsed = JSON.parse(rawText);
+		// Unwrap single-element arrays (common in Google API error responses)
+		if (Array.isArray(parsed) && parsed.length === 1) parsed = parsed[0];
+		if (parsed?.error?.message) return parsed.error.message;
+		if (parsed?.error) return String(parsed.error);
+		if (parsed?.message) return parsed.message;
+	} catch {
+		/* not JSON, use raw text */
+	}
+	return rawText.slice(0, 300);
 }
 
 // ---- Non-streaming response handler ----
