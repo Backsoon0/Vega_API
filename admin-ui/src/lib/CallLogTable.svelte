@@ -1,58 +1,11 @@
 <script lang="ts">
-  import { Search } from "lucide-svelte";
   import { formatTime, formatDuration } from "$lib/utils";
   import type { LogEntry } from "$lib/api";
 
   let { entries = [] as LogEntry[], loading = false } = $props();
-
-  let searchQuery = $state('');
-  let providerFilter = $state('');
-
-  function filterLogs(list: LogEntry[]): LogEntry[] {
-    let result = list;
-    if (providerFilter) {
-      result = result.filter(e => e.providerId === providerFilter);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(e =>
-        e.ip.toLowerCase().includes(q) ||
-        e.providerId.toLowerCase().includes(q) ||
-        e.model.toLowerCase().includes(q)
-      );
-    }
-    return result;
-  }
-
-  const filtered = $derived(filterLogs(entries));
-  const uniqueProviders = $derived([...new Set(entries.map(e => e.providerId))].sort());
 </script>
 
 <div class="space-y-4">
-  <!-- Search bar -->
-  <div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
-    <div class="flex-1 relative">
-      <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-placeholder" stroke-width={1.5} />
-      <input
-        type="text"
-        placeholder="搜索 IP / 模型 / 提供商..."
-        class="w-full pl-10 pr-4 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/50 transition-all"
-        bind:value={searchQuery}
-      />
-    </div>
-    <div class="flex gap-2">
-      <select
-        class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
-        bind:value={providerFilter}
-      >
-        <option value="">全部提供商</option>
-        {#each uniqueProviders as p}
-          <option value={p}>{p}</option>
-        {/each}
-      </select>
-    </div>
-  </div>
-
   <!-- Content -->
   {#if loading && entries.length === 0}
     <div class="space-y-3">
@@ -82,7 +35,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filtered as entry (entry.id)}
+          {#each entries as entry (entry.id)}
             <tr class="border-b border-white/[0.03] hover:bg-surface-hover transition-colors">
               <td class="px-4 py-2.5 text-secondary font-mono text-xs whitespace-nowrap">{formatTime(entry.timestamp)}</td>
               <td class="px-4 py-2.5 text-muted font-mono text-xs">{entry.ip}</td>
@@ -119,7 +72,7 @@
 
     <!-- Mobile cards -->
     <div class="sm:hidden space-y-3">
-      {#each filtered as entry (entry.id)}
+      {#each entries as entry (entry.id)}
         <div class="bg-surface border border-white/[0.06] rounded-xl p-4 space-y-2.5">
           <div class="flex items-center justify-between">
             <span class="font-mono text-xs text-secondary">{formatTime(entry.timestamp)}</span>
@@ -153,7 +106,7 @@
     </div>
 
     <div class="text-xs text-muted text-right">
-      显示 {filtered.length} / {entries.length} 条记录
+      {entries.length} 条记录
     </div>
   {/if}
 </div>

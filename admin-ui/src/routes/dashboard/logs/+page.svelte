@@ -1,21 +1,32 @@
 <script lang="ts">
-  import { getCallLogs, type LogEntry } from "$lib/api";
+  import { getCallLogs, getProviders, type LogEntry } from "$lib/api";
   import { toasts } from "$lib/toast-store";
   import CallLogTable from "$lib/CallLogTable.svelte";
-  import { ListTodo, RefreshCw, ChevronLeft, ChevronRight } from "lucide-svelte";
+  import { ListTodo, RefreshCw, ChevronLeft, ChevronRight, Search } from "lucide-svelte";
 
   let entries = $state<LogEntry[]>([]);
   let total = $state(0);
   let hasMore = $state(false);
   let loading = $state(true);
   let search = $state('');
+  let debouncedSearch = $state('');
   let providerFilter = $state('');
   let streamFilter = $state('');
   let successFilter = $state('');
   let page = $state(0);
   let pageSize = $state(10);
+  let allProviderIds = $state<string[]>([]);
   const pageSizeOptions = [10, 20, 50, 100];
   let totalPages = $derived(Math.max(1, Math.ceil((total > 0 ? total : page * pageSize + (hasMore ? pageSize + 1 : entries.length)) / pageSize)));
+
+  // Load all configured providers for the filter dropdown
+  async function loadProviders() {
+    try {
+      const providers = await getProviders();
+      allProviderIds = providers.map((p: any) => p.id).sort();
+    } catch { /* ignore, providers will fall back to entries */ }
+  }
+  loadProviders();
 
   async function fetchLogs() {
     loading = true;
@@ -23,7 +34,7 @@
       const params = new URLSearchParams();
       params.set('limit', String(pageSize));
       params.set('offset', String(page * pageSize));
-      if (search) params.set('search', search);
+      if (debouncedSearch) params.set('search', debouncedSearch);
       if (providerFilter) params.set('providerId', providerFilter);
       if (streamFilter === 'stream') params.set('isStream', '1');
       else if (streamFilter === 'nonstream') params.set('isStream', '0');
@@ -39,9 +50,25 @@
     } finally { loading = false; }
   }
 
+  // Debounce search: wait 500ms after last keystroke before firing
+  let searchTimer: ReturnType<typeof setTimeout>;
   $effect(() => {
-    void page; void pageSize; void search; void providerFilter; void streamFilter; void successFilter;
+    const q = search;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      debouncedSearch = q;
+    }, 500);
+  });
+
+  $effect(() => {
+    void page; void pageSize; void debouncedSearch; void providerFilter; void streamFilter; void successFilter;
     fetchLogs();
+  });
+
+  // Reset page to 0 when search text changes
+  $effect(() => {
+    debouncedSearch;
+    page = 0;
   });
 
   function handleRefresh() { fetchLogs(); }
@@ -82,30 +109,53 @@
     </button>
   </div>
 
-  <CallLogTable entries={entries} loading={loading} />
-
-  <!-- Filter bar -->
-  <div class="mt-6 flex flex-wrap items-center gap-3">
-    <span class="text-xs text-muted">筛选</span>
-    <select
-      class="px-3 py-2 bg-input border border-white/[0.06] rounded-xl text-xs text-secondary"
-      value={streamFilter}
-      onchange={(e) => changeFilter(() => streamFilter = (e.target as HTMLSelectElement).value)}
-    >
-      <option value="">全部类型</option>
-      <option value="stream">流式</option>
-      <option value="nonstream">非流式</option>
-    </select>
-    <select
-      class="px-3 py-2 bg-input border border-white/[0.06] rounded-xl text-xs text-secondary"
-      value={successFilter}
-      onchange={(e) => changeFilter(() => successFilter = (e.target as HTMLSelectElement).value)}
-    >
-      <option value="">全部状态</option>
-      <option value="success">成功</option>
-      <option value="failed">失败</option>
-    </select>
+  <!-- Search & filter bar -->
+  <div class="mb-4 flex flex-col sm:flex-row gap-2 sm:gap-3">
+    <div class="flex-1 flex items-center gap-2 bg-input border border-white/[0.06] rounded-xl px-3 focus-within:ring-2 focus-within:ring-cta/50 transition-all">
+      <Search
+        class="w-4 h-4 shrink-0 transition-opacity {search ? 'text-muted/30' : 'text-muted'}"
+        stroke-width={1.5}
+      />
+      <input
+        type="text"
+        placeholder="搜索 IP / 模型..."
+        class="flex-1 py-2.5 bg-transparent text-sm text-primary placeholder:text-placeholder focus:outline-none"
+        bind:value={search}
+      />
+    </div>
+    <div class="flex gap-2">
+      <select
+        class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
+        value={providerFilter}
+        onchange={(e) => changeFilter(() => providerFilter = (e.target as HTMLSelectElement).value)}
+      >
+        <option value="">全部提供商</option>
+        {#each allProviderIds as p}
+          <option value={p}>{p}</option>
+        {/each}
+      </select>
+      <select
+        class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
+        value={streamFilter}
+        onchange={(e) => changeFilter(() => streamFilter = (e.target as HTMLSelectElement).value)}
+      >
+        <option value="">全部类型</option>
+        <option value="stream">流式</option>
+        <option value="nonstream">非流式</option>
+      </select>
+      <select
+        class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
+        value={successFilter}
+        onchange={(e) => changeFilter(() => successFilter = (e.target as HTMLSelectElement).value)}
+      >
+        <option value="">全部状态</option>
+        <option value="success">成功</option>
+        <option value="failed">失败</option>
+      </select>
+    </div>
   </div>
+
+  <CallLogTable entries={entries} loading={loading} />
 
   <!-- Pagination -->
   {#if entries.length > 0 || hasMore}
