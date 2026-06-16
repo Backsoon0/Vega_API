@@ -102,6 +102,14 @@ function generateMessageId(): string {
 	return 'msg_' + crypto.randomUUID().replace(/-/g, '').slice(0, 24);
 }
 
+/**
+ * Build extra body headers from explicit extra_body field.
+ */
+function buildExtraBodyHeaders(body: Record<string, unknown>): Record<string, string> | undefined {
+	if (!body.extra_body || typeof body.extra_body !== 'object') return undefined;
+	return { 'X-Vega-Extra-Body': JSON.stringify(body.extra_body) };
+}
+
 // ---- Stream handler ----
 
 async function handleAnthropicStream(
@@ -125,6 +133,7 @@ async function handleAnthropicStream(
 		temperature: body.temperature as number | undefined,
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
+		headers: buildExtraBodyHeaders(body),
 	});
 
 	const encoder = new TextEncoder();
@@ -300,6 +309,7 @@ async function handleAnthropicNonStream(
 		temperature: body.temperature as number | undefined,
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
+		headers: buildExtraBodyHeaders(body),
 	});
 
 	const stopReason = mapStopReason(result.finishReason);

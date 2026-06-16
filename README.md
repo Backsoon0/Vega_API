@@ -12,6 +12,8 @@
 - **调用记录** — D1 持久化存储，记录模型、Token、耗时，支持搜索和提供商筛选
 - **安全设计** — API Key AES-GCM 加密存储、登录限流（5 次失败 → 15 分钟封禁）、多种认证方式
 - **流式支持** — 完整支持 SSE 流式响应（OpenAI/Gemini/Anthropic 三种 SSE 格式）
+- **思考模式控制** — 支持 `thinking: { type: "disabled" }` 禁用推理（Anthropic/Google 通过 AI SDK 原生支持，DeepSeek 通过参数透传支持）
+- **内容过滤兼容** — `content_filter` finish_reason 不会产生虚假 error chunk，客户端正常收到过滤结束信号
 - **请求保护** — 5MB 请求体限制，支持图片等多模态输入
 - **模型自动发现** — 通过各提供商官方 API 并行获取可用模型列表
 
@@ -158,6 +160,46 @@ curl https://your-worker.workers.dev/anthropic/v1/messages \
 | `/anthropic/*` | `x-api-key: <key>` / `Authorization: Bearer <key>` |
 
 > 三种接口共用同一个 Client API Key，在管理面板中设置。
+
+### 参数透传 (Extra Body)
+
+部分下游 API 参数 AI SDK 未原生支持（如 DeepSeek 的 `thinking`），Vega 提供两种透传机制：
+
+#### `/v1/chat/completions` — 自动转发
+
+所有请求体字段（除 `model`、`stream`、`stream_options`）自动转发到下游 API，无需额外包装：
+
+```bash
+# DeepSeek 禁用思考 — thinking 直接放在请求体顶层
+curl https://your-worker.workers.dev/v1/chat/completions \
+  -H "Authorization: Bearer sk-your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-v4-pro",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "thinking": {"type": "disabled"},
+    "some_future_field": "value"
+  }'
+```
+
+#### `/v1beta/*` 和 `/anthropic/*` — 显式 `extra_body`
+
+非 OpenAI 格式路由仅透传 `extra_body` 字段，避免格式冲突：
+
+```bash
+curl https://your-worker.workers.dev/anthropic/v1/messages \
+  -H "x-api-key: sk-your-key" \
+  -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 50,
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "extra_body": {"thinking": {"type": "disabled"}}
+  }'
+```
+
+> 仅 OpenAI 类型 Provider（含 DeepSeek、Groq 等兼容 API）支持透传。Anthropic/Google Provider 使用 AI SDK 原生 providerOptions 处理已知参数。
 
 ## 客户端 SDK 示例
 

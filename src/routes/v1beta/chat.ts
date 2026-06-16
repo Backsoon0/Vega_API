@@ -96,6 +96,14 @@ function buildGeminiChunk(text: string, finishReason?: string, usage?: { inputTo
 }
 
 /**
+ * Build extra body headers from explicit extra_body field.
+ */
+function buildExtraBodyHeaders(body: Record<string, unknown>): Record<string, string> | undefined {
+	if (!body.extra_body || typeof body.extra_body !== 'object') return undefined;
+	return { 'X-Vega-Extra-Body': JSON.stringify(body.extra_body) };
+}
+
+/**
  * Stream handler: supports both Google streaming modes.
  *   - ?alt=sse  → SSE format:  "data: {...}\n\n"
  *   - default   → NDJSON format: "{...}\n" (line-delimited JSON)
@@ -122,6 +130,7 @@ async function handleGeminiStream(
 		temperature: genConfig?.temperature as number | undefined,
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
+		headers: buildExtraBodyHeaders(body),
 	});
 
 	const encoder = new TextEncoder();
@@ -222,6 +231,7 @@ async function handleGeminiNonStream(
 		temperature: genConfig?.temperature as number | undefined,
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
+		headers: buildExtraBodyHeaders(body),
 	});
 
 	const finishReason = mapFinishReason(result.finishReason);

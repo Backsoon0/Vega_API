@@ -132,41 +132,63 @@ export function isVertexJwtMode(config: Record<string, string>): boolean {
 // ---- AI SDK Model Factory ----
 
 /**
- * Create a fetch wrapper that fixes `developer` role back to `system` in the
- * request body before sending to the upstream API.
+ * Create a fetch wrapper that:
+ * 1. Fixes `developer` role back to `system` for non-OpenAI upstreams
+ * 2. Injects extra body fields from X-Vega-Extra-Body header into the HTTP body
  *
- * @ai-sdk/openai v2 auto-converts system → developer for any model not matching
- * gpt-3.x/gpt-4.x/chatgpt-4o.x/gpt-5-chat.x. Non-OpenAI APIs (deepseek etc.)
- * reject the `developer` role, so we reverse the conversion in-flight.
+ * The header is set by route handlers to pass through fields that the AI SDK
+ * providers don't natively support (e.g. DeepSeek `thinking`, generic `extra_body`).
+ * SDK-generated body fields always take precedence over injected fields.
  */
 function patchedFetch(originalFetch: typeof fetch): typeof fetch {
 	return async (url, init) => {
+		let changed = false;
+		const initHeaders = new Headers(init?.headers);
+		let bodyParsed: Record<string, unknown> | null = null;
+
+		// Parse existing body
 		if (init?.body) {
 			try {
 				const bodyStr = typeof init.body === 'string'
 					? init.body
 					: new TextDecoder().decode(init.body as ArrayBuffer);
-				const body = JSON.parse(bodyStr);
-				if (body.messages && Array.isArray(body.messages)) {
-					let changed = false;
-					for (const msg of body.messages) {
+				const parsed: any = JSON.parse(bodyStr);
+
+				if (parsed.messages && Array.isArray(parsed.messages)) {
+					for (const msg of parsed.messages) {
 						if (msg.role === 'developer') {
 							msg.role = 'system';
 							changed = true;
 						}
 					}
-					if (changed) {
-						init = {
-							...init,
-							body: JSON.stringify(body),
-							headers: new Headers(init.headers),
-						};
-					}
 				}
+				bodyParsed = parsed as Record<string, unknown>;
 			} catch {
 				/* ignore parse errors — pass body through unchanged */
 			}
 		}
+
+		// Inject extra body fields from X-Vega-Extra-Body header
+		// SDK body takes precedence to avoid overriding provider-generated fields
+		const extraBodyHeader = initHeaders.get('X-Vega-Extra-Body');
+		if (extraBodyHeader) {
+			initHeaders.delete('X-Vega-Extra-Body');
+			try {
+				const extraBody = JSON.parse(extraBodyHeader);
+				if (extraBody && typeof extraBody === 'object') {
+					if (!bodyParsed) bodyParsed = {};
+					bodyParsed = { ...(extraBody as Record<string, unknown>), ...bodyParsed };
+					changed = true;
+				}
+			} catch {
+				/* ignore parse errors */
+			}
+		}
+
+		if (changed && bodyParsed) {
+			init = { ...init, headers: initHeaders, body: JSON.stringify(bodyParsed) };
+		}
+
 		return originalFetch(url, init);
 	};
 }

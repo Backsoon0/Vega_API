@@ -98,7 +98,7 @@ function mapFinishReason(reason: string): string {
 
 /**
  * Build AI SDK providerOptions from request body.
- * Detects thinking-related fields (Anthropic/Google/OpenAI formats) and maps them
+ * Detects thinking-related fields (Anthropic/Google formats) and maps them
  * so clients can disable thinking via `"thinking":{"type":"disabled"}` etc.
  */
 function buildProviderOptions(body: Record<string, unknown>): Record<string, Record<string, any>> {
@@ -112,8 +112,6 @@ function buildProviderOptions(body: Record<string, unknown>): Record<string, Rec
 		if (t.type === 'disabled') {
 			opts.google = { thinkingConfig: { thinkingBudget: 0 } };
 		}
-		// Map to OpenAI format (some OpenAI-compatible providers also accept this)
-		opts.openai = { ...(opts.openai || {}), thinking: t };
 	}
 
 	// Google direct format: { thinking_config: { thinkingBudget: 0 } }
@@ -122,6 +120,27 @@ function buildProviderOptions(body: Record<string, unknown>): Record<string, Rec
 	}
 
 	return opts;
+}
+
+/** Fields consumed by route handling — never forwarded to downstream API */
+const ROUTING_KEYS = new Set(['model', 'stream', 'stream_options']);
+
+/**
+ * Build extra body headers for AI SDK call.
+ * Auto-forwards all request body fields (except routing keys) so they reach
+ * the downstream API. Used for OpenAI-type providers where the AI SDK strips
+ * unknown fields (e.g. DeepSeek `thinking`).
+ *
+ * SDK-generated body fields always take precedence over injected fields.
+ */
+function buildExtraBodyHeaders(body: Record<string, unknown>): Record<string, string> | undefined {
+	const extra: Record<string, unknown> = {};
+	for (const key of Object.keys(body)) {
+		if (!ROUTING_KEYS.has(key)) {
+			extra[key] = body[key];
+		}
+	}
+	return Object.keys(extra).length > 0 ? { 'X-Vega-Extra-Body': JSON.stringify(extra) } : undefined;
 }
 
 // ---- Stream handler: AI SDK fullStream → OpenAI SSE ----
@@ -152,6 +171,7 @@ async function handleOpenAIStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
+		headers: provider.provider.type === 'openai' ? buildExtraBodyHeaders(body) : undefined,
 	});
 
 	const encoder = new TextEncoder();
@@ -159,6 +179,7 @@ async function handleOpenAIStream(
 
 	const stream = new ReadableStream({
 		async start(controller) {
+			let contentFiltered = false;
 			try {
 				for await (const part of result.fullStream) {
 					switch (part.type) {
@@ -184,6 +205,7 @@ async function handleOpenAIStream(
 
 						case 'finish': {
 							const finishReason = mapFinishReason(part.finishReason);
+							contentFiltered = part.finishReason === 'content-filter';
 							controller.enqueue(
 								encoder.encode(
 									`data: ${JSON.stringify({
@@ -243,15 +265,17 @@ async function handleOpenAIStream(
 					}
 				}
 			} catch (err) {
-				const errMsg = (err as Error).message || 'Unknown error';
-				controller.enqueue(
-					encoder.encode(
-						`data: ${JSON.stringify({
-							error: { message: errMsg, type: 'server_error' },
-						})}\n\n`,
-					),
-				);
-				controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+				if (!contentFiltered) {
+					const errMsg = (err as Error).message || 'Unknown error';
+					controller.enqueue(
+						encoder.encode(
+							`data: ${JSON.stringify({
+								error: { message: errMsg, type: 'server_error' },
+							})}\n\n`,
+						),
+					);
+					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+				}
 			} finally {
 				controller.close();
 			}
@@ -296,6 +320,8 @@ async function handleOpenAINonStream(
 		temperature: body.temperature as number | undefined,
 		topP: body.top_p as number | undefined,
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
+		providerOptions: buildProviderOptions(body),
+		headers: provider.provider.type === 'openai' ? buildExtraBodyHeaders(body) : undefined,
 	});
 
 	const finishReason = mapFinishReason(result.finishReason);
