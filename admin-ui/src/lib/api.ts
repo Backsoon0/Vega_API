@@ -193,7 +193,7 @@ export interface UsageData {
 // Types
 export interface Provider {
   id: string;
-  type: 'vertex_ai' | 'google_ai_studio' | 'openai';
+  type: 'vertex_ai' | 'google_ai_studio' | 'openai' | 'anthropic';
   name: string;
   enabled: boolean;
   config: Record<string, string>;

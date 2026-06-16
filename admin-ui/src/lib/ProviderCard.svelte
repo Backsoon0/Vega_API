@@ -15,12 +15,14 @@
     vertex_ai: "Vertex AI",
     google_ai_studio: "AI Studio",
     openai: "OpenAI",
+    anthropic: "Anthropic",
   };
 
   const typeColorSets: Record<string, { text: string; bg: string; dot: string }> = {
     vertex_ai: { text: "text-vertex", bg: "bg-vertex-subtle", dot: "bg-vertex" },
     google_ai_studio: { text: "text-studio", bg: "bg-studio-subtle", dot: "bg-studio" },
     openai: { text: "text-openai", bg: "bg-openai-subtle", dot: "bg-openai" },
+    anthropic: { text: "text-anthropic", bg: "bg-anthropic-subtle", dot: "bg-anthropic" },
   };
 
   let colors = $derived(typeColorSets[provider.type] || { text: "text-muted", bg: "bg-surface-elevated", dot: "bg-muted" });

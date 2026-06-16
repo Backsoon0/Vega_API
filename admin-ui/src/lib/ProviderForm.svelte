@@ -2,7 +2,7 @@
   import { createProvider, updateProvider } from "$lib/api";
   import type { Provider } from "$lib/api";
   import { toasts } from "$lib/toast-store";
-  import { Upload, Database, Globe, Key, AlertCircle, Lock, ShieldCheck, KeyRound } from "lucide-svelte";
+  import { Upload, Database, Globe, Key, AlertCircle, Lock, ShieldCheck, KeyRound, Brain } from "lucide-svelte";
   import Spinner from "$lib/Spinner.svelte";
   import Alert from "$lib/Alert.svelte";
 
@@ -29,7 +29,7 @@
   let vPrivateKey = $state("");
   let vApiKey = $state("");
 
-  // API Key fields (AI Studio / OpenAI)
+  // API Key fields (AI Studio / OpenAI / Anthropic)
   let fApiKey = $state("");
   let oBaseUrl = $state("");
 
@@ -41,6 +41,7 @@
     { value: "vertex_ai", label: "Google Vertex AI", icon: Database },
     { value: "google_ai_studio", label: "Google AI Studio", icon: Globe },
     { value: "openai", label: "OpenAI 官方", icon: Key },
+    { value: "anthropic", label: "Anthropic", icon: Brain },
   ];
 
   const vertexAuthOptions = [
@@ -67,7 +68,7 @@
         } else {
           vAuthMode = "service_account";
         }
-      } else if (editing.type === "google_ai_studio" || editing.type === "openai") {
+      } else if (editing.type === "google_ai_studio" || editing.type === "openai" || editing.type === "anthropic") {
         fApiKey = "";
         if (editing.type === "openai") oBaseUrl = cfg.baseUrl || "";
       }
@@ -108,7 +109,7 @@
         cfg.privateKey = vPrivateKey.trim();
       }
       return cfg;
-    } else if (type === "google_ai_studio") {
+    } else if (type === "google_ai_studio" || type === "anthropic") {
       return { apiKey: fApiKey.trim() };
     } else {
       const cfg: Record<string, string> = { apiKey: fApiKey.trim() };
@@ -195,7 +196,7 @@
         </span>
       {/if}
     </legend>
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
       {#each typeOptions as opt}
         {@const isSelected = type === opt.value}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -390,9 +391,13 @@
   {/if}
 
   <!-- ═══════════ API Key Fields ═══════════ -->
-  {#if type === "google_ai_studio" || type === "openai"}
+  {#if type === "google_ai_studio" || type === "openai" || type === "anthropic"}
     <div class="space-y-4 p-4 sm:p-5 rounded-xl bg-input border border-white/[0.06]">
-      <span class="text-xs font-semibold text-secondary uppercase tracking-wider">API 密钥配置</span>
+      <span class="text-xs font-semibold text-secondary uppercase tracking-wider">
+        {type === "anthropic" ? "Anthropic" : ""}
+        {type === "google_ai_studio" ? "Google AI Studio" : ""}
+        {type === "openai" ? "OpenAI" : ""} API 密钥配置
+      </span>
 
       <div class="space-y-1.5">
         <label for="pf-apikey" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
