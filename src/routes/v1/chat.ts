@@ -21,34 +21,23 @@ const MAX_BODY_SIZE = 5_242_880;
 // ---- Helpers ----
 
 /**
- * @ai-sdk/openai v2.0.107 treats non-OpenAI models as "reasoning" models
- * and converts system → developer role, which some APIs (e.g. deepseek) reject.
- * Workaround: fold system/developer messages into the first user message.
+ * Extract system/developer message content from the messages array.
+ * Removes system/developer messages in-place and returns the text.
+ * The text is passed as the top-level `system` parameter to streamText.
  */
-function collapseSystemMessages(
-	msgs: Array<{ role: string; content: string | Array<{ type: string; text?: string }> }>,
-): Array<{ role: string; content: string | Array<{ type: string; text?: string }> }> {
-	const systemTexts: string[] = [];
-	const others: typeof msgs = [];
-	for (const m of msgs) {
-		if (m.role === 'system' || m.role === 'developer') {
-			systemTexts.push(typeof m.content === 'string' ? m.content : m.content.map((p: any) => p.text || '').join(''));
-		} else {
-			others.push(m);
+function extractSystem(messages: Array<{ role: string; content: unknown }>): string | undefined {
+	const idx = messages.findIndex((m) => m.role === 'system' || m.role === 'developer');
+	if (idx >= 0) {
+		const sysMsg = messages.splice(idx, 1)[0];
+		if (typeof sysMsg.content === 'string') return sysMsg.content;
+		if (Array.isArray(sysMsg.content)) {
+			return sysMsg.content
+				.filter((p: any) => p.type === 'text')
+				.map((p: any) => p.text)
+				.join('\n');
 		}
 	}
-	if (systemTexts.length === 0) return others;
-
-	const sysBlock = systemTexts.join('\n\n');
-	const firstUserIdx = others.findIndex((m) => m.role === 'user');
-	if (firstUserIdx >= 0) {
-		const msg = others[firstUserIdx];
-		const oldContent = typeof msg.content === 'string' ? msg.content : msg.content.map((p: any) => p.text || '').join('');
-		msg.content = `[System instructions]\n${sysBlock}\n\n${oldContent}`;
-	} else {
-		others.unshift({ role: 'user', content: `[System instructions]\n${sysBlock}` });
-	}
-	return others;
+	return undefined;
 }
 
 /**
@@ -149,15 +138,15 @@ async function handleOpenAIStream(
 	const modelId = String(body.model).trim();
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
 
-	let messages = openaiToAISDKMessages(
+	const messages = openaiToAISDKMessages(
 		(body.messages as Array<{ role: string; content: unknown }>) || [],
 	);
-	messages = collapseSystemMessages(messages);
+	const system = extractSystem(messages);
 
 	const result = streamText({
 		model,
 		messages: messages as any,
-		allowSystemInMessages: true,
+		system,
 		maxOutputTokens: body.max_tokens as number | undefined,
 		temperature: body.temperature as number | undefined,
 		topP: body.top_p as number | undefined,
@@ -294,15 +283,15 @@ async function handleOpenAINonStream(
 	const modelId = String(body.model).trim();
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
 
-	let messages = openaiToAISDKMessages(
+	const messages = openaiToAISDKMessages(
 		(body.messages as Array<{ role: string; content: unknown }>) || [],
 	);
-	messages = collapseSystemMessages(messages);
+	const system = extractSystem(messages);
 
 	const result = await generateText({
 		model,
 		messages: messages as any,
-		allowSystemInMessages: true,
+		system,
 		maxOutputTokens: body.max_tokens as number | undefined,
 		temperature: body.temperature as number | undefined,
 		topP: body.top_p as number | undefined,

@@ -132,6 +132,46 @@ export function isVertexJwtMode(config: Record<string, string>): boolean {
 // ---- AI SDK Model Factory ----
 
 /**
+ * Create a fetch wrapper that fixes `developer` role back to `system` in the
+ * request body before sending to the upstream API.
+ *
+ * @ai-sdk/openai v2 auto-converts system → developer for any model not matching
+ * gpt-3.x/gpt-4.x/chatgpt-4o.x/gpt-5-chat.x. Non-OpenAI APIs (deepseek etc.)
+ * reject the `developer` role, so we reverse the conversion in-flight.
+ */
+function patchedFetch(originalFetch: typeof fetch): typeof fetch {
+	return async (url, init) => {
+		if (init?.body) {
+			try {
+				const bodyStr = typeof init.body === 'string'
+					? init.body
+					: new TextDecoder().decode(init.body as ArrayBuffer);
+				const body = JSON.parse(bodyStr);
+				if (body.messages && Array.isArray(body.messages)) {
+					let changed = false;
+					for (const msg of body.messages) {
+						if (msg.role === 'developer') {
+							msg.role = 'system';
+							changed = true;
+						}
+					}
+					if (changed) {
+						init = {
+							...init,
+							body: JSON.stringify(body),
+							headers: new Headers(init.headers),
+						};
+					}
+				}
+			} catch {
+				/* ignore parse errors — pass body through unchanged */
+			}
+		}
+		return originalFetch(url, init);
+	};
+}
+
+/**
  * Create an AI SDK LanguageModel from a Vega Provider config.
  * Uses the appropriate @ai-sdk/* provider for each backend.
  *
@@ -150,6 +190,8 @@ export function createModelFromProvider(
 			const openai = createOpenAI({
 				apiKey: provider.config.apiKey,
 				baseURL: provider.config.baseUrl || undefined,
+				// Fix system→developer role conversion for non-OpenAI APIs
+				fetch: patchedFetch(fetch),
 			});
 			return openai.chat(modelId);
 		}
