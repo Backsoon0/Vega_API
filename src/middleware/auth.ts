@@ -5,13 +5,30 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { Env } from '../types';
 import { getClientApiKey, getAdminPasswordHash } from '../config';
 
-/** Validate client API key for /v1/* routes. Falls back to env.OPENAI_API_KEY. If neither is set, all requests pass. */
+/** Validate client API key for all API routes.
+ * Checks Authorization: Bearer, x-api-key (Anthropic), x-goog-api-key (Google), and ?key= query parameter.
+ * Falls back to env.OPENAI_API_KEY. If neither is set, all requests pass. */
 export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<boolean> {
 	const env = c.env;
 	const kvKey = await getClientApiKey(env);
 	if (kvKey) {
+		// Authorization: Bearer <key> (OpenAI standard)
 		const auth = c.req.header('Authorization') || '';
-		return auth === `Bearer ${kvKey}`;
+		if (auth === `Bearer ${kvKey}`) return true;
+
+		// x-api-key header (Anthropic standard)
+		const apiKey = c.req.header('x-api-key') || '';
+		if (apiKey === kvKey) return true;
+
+		// x-goog-api-key header (Google Gemini API standard)
+		const googKey = c.req.header('x-goog-api-key') || '';
+		if (googKey === kvKey) return true;
+
+		// ?key= query parameter (Google API fallback)
+		const queryKey = c.req.query('key') || '';
+		if (queryKey === kvKey) return true;
+
+		return false;
 	}
 	if (env.OPENAI_API_KEY) {
 		const auth = c.req.header('Authorization') || '';

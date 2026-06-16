@@ -62,6 +62,7 @@ export function mapOwner(type: string): string {
 		vertex_ai: 'google',
 		google_ai_studio: 'google',
 		openai: 'openai',
+		anthropic: 'anthropic',
 	};
 	return map[type] || type;
 }

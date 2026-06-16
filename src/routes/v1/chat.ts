@@ -1,22 +1,327 @@
 // src/routes/v1/chat.ts
-// OpenAI-compatible /v1/chat/completions — streaming + non-streaming proxy
-// Supports fallback: tries providers in weight order until one succeeds
+// OpenAI-compatible /v1/chat/completions — uses AI SDK streamText/generateText
+// Supports all providers (OpenAI, Google, Vertex AI, Anthropic) with fallback
+//
+// POST /v1/chat/completions — streaming (stream=true) + non-streaming
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { streamText, generateText } from 'ai';
 import type { Env } from '../../types';
 import type { ProviderMatch } from '../../router';
-import { findProviderForModel, PROVIDER_HANDLERS } from '../../router';
+import { findProviderForModel } from '../../router';
+import { createModelFromProvider } from '../../ai-providers';
 import { recordUsage } from '../../usage';
-
-/** Maximum request body size: 5 MB (balances image support vs Worker memory) */
-const MAX_BODY_SIZE = 5_242_880;
 
 export const v1ChatRoutes = new Hono<{ Bindings: Env }>();
 
-// POST /v1/chat/completions
+/** Maximum request body size: 5 MB */
+const MAX_BODY_SIZE = 5_242_880;
+
+// ---- Helpers ----
+
+/**
+ * Extract system message from OpenAI-format messages and return it as standalone string.
+ * Removes the system message from the array in-place.
+ */
+function extractSystem(messages: Array<{ role: string; content: unknown }>): string | undefined {
+	const idx = messages.findIndex((m) => m.role === 'system');
+	if (idx >= 0) {
+		const sysMsg = messages.splice(idx, 1)[0];
+		if (typeof sysMsg.content === 'string') return sysMsg.content;
+		if (Array.isArray(sysMsg.content)) {
+			return sysMsg.content
+				.filter((p: any) => p.type === 'text')
+				.map((p: any) => p.text)
+				.join('\n');
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Convert OpenAI chat completions messages to AI SDK format.
+ * OpenAI: { role, content: string | array<{ type, text/image_url }> }
+ * AI SDK: { role, content: string | array<{ type, text/file }> }
+ */
+function openaiToAISDKMessages(
+	openaiMessages: Array<{ role: string; content: unknown; name?: string }>,
+): Array<{ role: string; content: string | Array<{ type: string; text?: string; data?: string; mediaType?: string }> }> {
+	return openaiMessages.map((msg) => {
+		const content = msg.content;
+		if (typeof content === 'string') {
+			return { role: msg.role, content };
+		}
+		if (Array.isArray(content)) {
+			const parts = content
+				.map((part: any) => {
+					switch (part.type) {
+						case 'text':
+							return { type: 'text', text: String(part.text || '') };
+						case 'image_url':
+							return {
+								type: 'file' as const,
+								data: part.image_url?.url || '',
+								mediaType: 'image/png',
+							};
+						default:
+							return { type: 'text' as const, text: String(part.text || '') };
+					}
+				})
+				.filter((p) => p.type === 'text' ? (p.text?.length || 0) > 0 : true);
+			return { role: msg.role, content: parts };
+		}
+		return { role: msg.role, content: String(content) };
+	});
+}
+
+/**
+ * Map AI SDK finishReason to OpenAI finish_reason.
+ */
+function mapFinishReason(reason: string): string {
+	switch (reason) {
+		case 'stop':
+			return 'stop';
+		case 'length':
+			return 'length';
+		case 'content-filter':
+			return 'content_filter';
+		case 'tool-calls':
+			return 'tool_calls';
+		default:
+			return 'stop';
+	}
+}
+
+// ---- Stream handler: AI SDK fullStream → OpenAI SSE ----
+
+async function handleOpenAIStream(
+	body: Record<string, unknown>,
+	requestId: string,
+	provider: ProviderMatch,
+	env: Env,
+	ip: string,
+	execCtx: ExecutionContext | undefined,
+	startMs: number,
+): Promise<Response> {
+	const modelId = String(body.model).trim();
+	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
+
+	const messages = openaiToAISDKMessages(
+		(body.messages as Array<{ role: string; content: unknown }>) || [],
+	);
+	const system = extractSystem(messages);
+
+	const result = streamText({
+		model,
+		messages: messages as any,
+		system,
+		maxOutputTokens: body.max_tokens as number | undefined,
+		temperature: body.temperature as number | undefined,
+		topP: body.top_p as number | undefined,
+		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
+	});
+
+	const encoder = new TextEncoder();
+	const created = Math.floor(Date.now() / 1000);
+
+	const stream = new ReadableStream({
+		async start(controller) {
+			try {
+				for await (const part of result.fullStream) {
+					switch (part.type) {
+						case 'text-delta':
+							controller.enqueue(
+								encoder.encode(
+									`data: ${JSON.stringify({
+										id: requestId,
+										object: 'chat.completion.chunk',
+										created,
+										model: modelId,
+										choices: [
+											{
+												index: 0,
+												delta: { content: part.text },
+												finish_reason: null,
+											},
+										],
+									})}\n\n`,
+								),
+							);
+							break;
+
+						case 'finish': {
+							const finishReason = mapFinishReason(part.finishReason);
+							controller.enqueue(
+								encoder.encode(
+									`data: ${JSON.stringify({
+										id: requestId,
+										object: 'chat.completion.chunk',
+										created,
+										model: modelId,
+										choices: [
+											{
+												index: 0,
+												delta: {},
+												finish_reason: finishReason,
+											},
+										],
+										usage: {
+											prompt_tokens: part.totalUsage?.inputTokens || 0,
+											completion_tokens: part.totalUsage?.outputTokens || 0,
+											total_tokens: part.totalUsage?.totalTokens || 0,
+										},
+									})}\n\n`,
+								),
+							);
+							controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+
+							if (execCtx) {
+								execCtx.waitUntil(
+									recordUsage(
+										env,
+										provider.provider.id,
+										modelId,
+										ip,
+										{
+											prompt: part.totalUsage?.inputTokens || 0,
+											completion: part.totalUsage?.outputTokens || 0,
+										},
+										true,
+										Date.now() - startMs,
+										requestId,
+										true,
+										{},
+									),
+								);
+							}
+							break;
+						}
+
+						case 'error':
+							controller.enqueue(
+								encoder.encode(
+									`data: ${JSON.stringify({
+										error: { message: String(part.error), type: 'server_error' },
+									})}\n\n`,
+								),
+							);
+							controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+							break;
+					}
+				}
+			} catch (err) {
+				const errMsg = (err as Error).message || 'Unknown error';
+				controller.enqueue(
+					encoder.encode(
+						`data: ${JSON.stringify({
+							error: { message: errMsg, type: 'server_error' },
+						})}\n\n`,
+					),
+				);
+				controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+			} finally {
+				controller.close();
+			}
+		},
+	});
+
+	return new Response(stream, {
+		status: 200,
+		headers: {
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-cache',
+			Connection: 'keep-alive',
+			'x-request-id': requestId,
+		},
+	});
+}
+
+// ---- Non-streaming handler ----
+
+async function handleOpenAINonStream(
+	body: Record<string, unknown>,
+	requestId: string,
+	provider: ProviderMatch,
+	env: Env,
+	ip: string,
+	execCtx: ExecutionContext | undefined,
+	startMs: number,
+): Promise<Response> {
+	const modelId = String(body.model).trim();
+	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
+
+	const messages = openaiToAISDKMessages(
+		(body.messages as Array<{ role: string; content: unknown }>) || [],
+	);
+	const system = extractSystem(messages);
+
+	const result = await generateText({
+		model,
+		messages: messages as any,
+		system,
+		maxOutputTokens: body.max_tokens as number | undefined,
+		temperature: body.temperature as number | undefined,
+		topP: body.top_p as number | undefined,
+		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
+	});
+
+	const finishReason = mapFinishReason(result.finishReason);
+
+	if (execCtx) {
+		execCtx.waitUntil(
+			recordUsage(
+				env,
+				provider.provider.id,
+				modelId,
+				ip,
+				{ prompt: result.usage?.inputTokens || 0, completion: result.usage?.outputTokens || 0 },
+				true,
+				Date.now() - startMs,
+				requestId,
+				false,
+				{},
+			),
+		);
+	}
+
+	return new Response(
+		JSON.stringify({
+			id: requestId,
+			object: 'chat.completion',
+			created: Math.floor(Date.now() / 1000),
+			model: modelId,
+			choices: [
+				{
+					index: 0,
+					message: {
+						role: 'assistant',
+						content: result.text,
+					},
+					finish_reason: finishReason,
+				},
+			],
+			usage: {
+				prompt_tokens: result.usage?.inputTokens || 0,
+				completion_tokens: result.usage?.outputTokens || 0,
+				total_tokens: result.usage?.totalTokens || 0,
+			},
+		}),
+		{
+			status: 200,
+			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+		},
+	);
+}
+
+// ---- Route ----
+
+/**
+ * POST /v1/chat/completions
+ * OpenAI-compatible chat completions using AI SDK.
+ * Supports all provider types (OpenAI, Google, Vertex AI, Anthropic).
+ */
 v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => {
-	// Request body size guard
 	const contentLength = parseInt(c.req.header('Content-Length') || '0', 10);
 	if (contentLength > MAX_BODY_SIZE) {
 		return c.json(
@@ -39,10 +344,12 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	}
 
 	const modelId = String(body.model).trim();
+	const isStream = !!body.stream;
+
 	const candidates: ProviderMatch[] = await findProviderForModel(c.env, modelId);
 	if (!candidates.length) {
 		return c.json(
-			{ error: { message: `No enabled provider for model: ${modelId}` } },
+			{ error: { message: `No enabled provider for model: ${modelId}`, type: 'invalid_request_error' } },
 			400,
 		);
 	}
@@ -50,90 +357,56 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	const ip = c.req.header('CF-Connecting-IP') || 'unknown';
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
+	const startMs = Date.now();
 
 	// Try each candidate in weight order; fall back on failure
-	let lastError: string = '';
-	for (let i = 0; i < candidates.length; i++) {
-		const { provider, matchedModel } = candidates[i];
-		const handler = PROVIDER_HANDLERS[provider.type];
-		if (!handler) {
-			lastError = `Unknown provider type: ${provider.type}`;
-			continue;
-		}
-
-		const routedBody = { ...body, model: matchedModel };
-
-		const newHeaders = new Headers(c.req.raw.headers);
-		newHeaders.delete('content-length');
-		const proxyReq = new Request(c.req.raw.url, {
-			method: 'POST',
-			headers: newHeaders,
-			body: JSON.stringify(routedBody),
-		});
-
-		const startMs = Date.now();
+	let lastError = '';
+	for (const candidate of candidates) {
 		try {
-			const upstreamResp = await handler.proxyRequest(
-				proxyReq,
-				c.env,
-				provider,
-				'/chat/completions',
+			if (isStream) {
+				return await handleOpenAIStream(
+					body, requestId, candidate, c.env, ip, execCtx, startMs,
+				);
+			}
+			return await handleOpenAINonStream(
+				body, requestId, candidate, c.env, ip, execCtx, startMs,
 			);
-
-			if (upstreamResp.ok && upstreamResp.body) {
-				const isStream = !!body.stream;
-				if (isStream) {
-					return handleStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs, requestId, isStream);
-				}
-				return handleNonStreamResponse(upstreamResp, c.env, provider.id, modelId, ip, execCtx, startMs, requestId, isStream);
-			}
-
-			// Non-ok response: try to parse structured error, fall back to raw text
-			const errText = await upstreamResp.text().catch(() => '');
-			const errSummary = extractErrorMessage(errText);
-			lastError = `Provider ${provider.id} returned ${upstreamResp.status}: ${errSummary}`;
-			console.error(lastError);
-			if (execCtx) {
-				execCtx.waitUntil(
-					recordUsage(c.env, provider.id, modelId, ip,
-						{ prompt: 0, completion: 0 },
-						false, Date.now() - startMs, requestId, !!body.stream,
-						{
-							errorType: 'upstream_error',
-							errorCode: String(upstreamResp.status),
-							errorMessage: errSummary,
-						}
-					),
-				);
-			}
-			// Continue to next candidate
 		} catch (err) {
-			lastError = `Provider ${provider.id} error: ${(err as Error).message}`;
+			lastError = `Provider ${candidate.provider.id}: ${(err as Error).message}`;
 			console.error(lastError);
 			if (execCtx) {
-				const errMsg = (err as Error).message || 'Unknown error';
 				execCtx.waitUntil(
-					recordUsage(c.env, provider.id, modelId, ip,
+					recordUsage(
+						c.env,
+						candidate.provider.id,
+						modelId,
+						ip,
 						{ prompt: 0, completion: 0 },
-						false, Date.now() - startMs, requestId, !!body.stream,
-						{ errorType: 'network_error', errorMessage: errMsg.slice(0, 500) }
+						false,
+						Date.now() - startMs,
+						requestId,
+						isStream,
+						{ errorType: 'provider_error', errorMessage: (err as Error).message?.slice(0, 300) },
 					),
 				);
 			}
-			// Continue to next candidate
 		}
 	}
 
 	// All providers failed
 	if (execCtx) {
 		execCtx.waitUntil(
-			recordUsage(c.env, 'unknown', modelId, ip,
+			recordUsage(
+				c.env,
+				'unknown',
+				modelId,
+				ip,
 				{ prompt: 0, completion: 0 },
-				false, 0, requestId, !!body.stream,
-				{
-					errorType: 'all_providers_failed',
-					errorMessage: lastError.slice(0, 500),
-				}
+				false,
+				0,
+				requestId,
+				isStream,
+				{ errorType: 'all_providers_failed', errorMessage: lastError.slice(0, 300) },
 			),
 		);
 	}
@@ -147,165 +420,3 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 		502,
 	);
 });
-
-// ---- Usage extraction helpers ----
-
-/**
- * Parse SSE stream buffer and extract usage from the final event(s).
- * Each SSE event is a standalone JSON line prefixed with "data: ".
- * Parsing individual events avoids false positives where "usage" appears
- * inside model output content strings.
- *
- * Searches in reverse — usage/usageMetadata is always in the final chunk(s).
- *
- * Normalizes line endings first: some providers (e.g. Google) use \r\n\r\n
- * as event delimiters, while others use \n\n.
- */
-function extractUsageFromSSE(rawBuffer: string): { prompt_tokens: number; completion_tokens: number } | null {
-	// Normalize \r\n → \n so both delimiter styles are handled uniformly
-	const normalized = rawBuffer.replace(/\r\n/g, '\n');
-	const events = normalized.split('\n\n');
-	// Search in reverse: usage is always in the last event(s)
-	for (let idx = events.length - 1; idx >= 0; idx--) {
-		const event = events[idx];
-		if (!event.startsWith('data: ')) continue;
-		const jsonStr = event.slice(6); // strip "data: " prefix
-		if (jsonStr === '[DONE]') continue;
-		try {
-			const data = JSON.parse(jsonStr);
-			// OpenAI uses "usage", Google uses "usageMetadata" in OpenAI-compat mode
-			const usage = data?.usage || data?.usageMetadata;
-			if (usage && (usage.prompt_tokens !== undefined || usage.completion_tokens !== undefined)) {
-				return {
-					prompt_tokens: usage.prompt_tokens || 0,
-					completion_tokens: usage.completion_tokens || 0,
-				};
-			}
-		} catch {
-			// Skip malformed JSON — try earlier events
-		}
-	}
-	return null;
-}
-
-/**
- * Try to parse an upstream error response as JSON and extract a clean message.
- * Handles common formats: { error: { message } }, [{ error: { message } }], etc.
- * Falls back to returning the raw text (truncated) if parsing fails.
- */
-function extractErrorMessage(rawText: string): string {
-	try {
-		let parsed = JSON.parse(rawText);
-		// Unwrap single-element arrays (common in Google API error responses)
-		if (Array.isArray(parsed) && parsed.length === 1) parsed = parsed[0];
-		if (parsed?.error?.message) return parsed.error.message;
-		if (parsed?.error) return String(parsed.error);
-		if (parsed?.message) return parsed.message;
-	} catch {
-		/* not JSON, use raw text */
-	}
-	return rawText.slice(0, 300);
-}
-
-// ---- Non-streaming response handler ----
-async function handleNonStreamResponse(
-	upstreamResp: Response,
-	env: Env,
-	providerId: string,
-	modelId: string,
-	ip: string,
-	execCtx: ExecutionContext | undefined,
-	startMs: number,
-	requestId: string,
-	isStream: boolean,
-): Promise<Response> {
-	const bodyText = await upstreamResp.text();
-	const upstreamRequestId = upstreamResp.headers.get('x-request-id')
-		|| upstreamResp.headers.get('x-goog-request-id')
-		|| '';
-	const extra: Record<string, string> = {};
-	if (upstreamRequestId) extra.upstreamRequestId = upstreamRequestId;
-
-	try {
-		const data = JSON.parse(bodyText);
-		// OpenAI returns `usage`, Google returns `usageMetadata` in OpenAI-compatible mode
-		const usage = data?.usage || data?.usageMetadata;
-		if (execCtx) {
-			const durationMs = Date.now() - startMs;
-			execCtx.waitUntil(
-				recordUsage(env, providerId, modelId, ip, {
-					prompt: usage?.prompt_tokens || 0,
-					completion: usage?.completion_tokens || 0,
-				}, true, durationMs, requestId, isStream, extra),
-			);
-		}
-	} catch {
-		/* ignore parse errors */
-	}
-	const headers = new Headers(upstreamResp.headers);
-	headers.set('x-request-id', requestId);
-	return new Response(bodyText, {
-		status: upstreamResp.status,
-		statusText: upstreamResp.statusText,
-		headers,
-	});
-}
-
-// ---- Streaming response handler ----
-// Uses body.tee() so execCtx.waitUntil() is called BEFORE the handler returns.
-// (waitUntil inside TransformStream.flush() runs too late — fetch handler already returned.)
-function handleStreamResponse(
-	upstreamResp: Response,
-	env: Env,
-	providerId: string,
-	modelId: string,
-	ip: string,
-	execCtx: ExecutionContext | undefined,
-	startMs: number,
-	requestId: string,
-	isStream: boolean,
-): Response {
-	const [clientStream, observerStream] = upstreamResp.body!.tee();
-	const upstreamRequestId = upstreamResp.headers.get('x-request-id')
-		|| upstreamResp.headers.get('x-goog-request-id')
-		|| '';
-	const extra: Record<string, string> = {};
-	if (upstreamRequestId) extra.upstreamRequestId = upstreamRequestId;
-
-	// Always drain the observer stream (prevents leaks); recordUsage fires
-	// whether or not usage data was extractable (tokens default to 0)
-	const drainPromise = (async () => {
-		const reader = observerStream.getReader();
-		let rawBuffer = '';
-		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (value) rawBuffer += new TextDecoder().decode(value);
-				if (done) break;
-			}
-			if (execCtx) {
-				const usage = extractUsageFromSSE(rawBuffer);
-				const durationMs = Date.now() - startMs;
-				await recordUsage(env, providerId, modelId, ip, {
-					prompt: usage?.prompt_tokens || 0,
-					completion: usage?.completion_tokens || 0,
-				}, true, durationMs, requestId, isStream, extra);
-			}
-		} catch {
-			/* ignore read errors — response still delivered to client */
-		}
-	})();
-
-	// Register with waitUntil if available so the Worker stays alive until the observer completes
-	if (execCtx) {
-		execCtx.waitUntil(drainPromise);
-	}
-
-	const headers = new Headers(upstreamResp.headers);
-	headers.set('x-request-id', requestId);
-	return new Response(clientStream, {
-		status: upstreamResp.status,
-		statusText: upstreamResp.statusText,
-		headers,
-	});
-}

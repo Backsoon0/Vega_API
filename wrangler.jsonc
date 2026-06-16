@@ -51,6 +51,6 @@
 		"directory": "./admin-ui/build/",
 		"not_found_handling": "single-page-application",
 		"binding": "ASSETS",
-		"run_worker_first": ["/admin/*", "/v1/*", "/health"]
+		"run_worker_first": ["/admin/*", "/v1/*", "/v1beta/*", "/anthropic/*", "/health"]
 	}
 }

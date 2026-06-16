@@ -18,19 +18,41 @@ This project uses **npm workspaces**. The root `package.json` manages the Worker
 
 ## Architecture
 
-Vega API is a Cloudflare Worker (Hono + TypeScript) that aggregates Google Vertex AI, Google AI Studio, and OpenAI into a single OpenAI-compatible API. Model routing is automatic: `google/*`/`gemini/*` → Vertex/AI Studio, `gpt-*`/`o1-*`/`o3-*` → OpenAI.
+Vega API is a Cloudflare Worker (Hono + TypeScript) that provides three AI API interfaces backed by a unified provider layer built on the Vercel AI SDK (`ai@5` + `@ai-sdk/*@2`).
 
-All providers use OpenAI-compatible endpoints — the Worker is a pass-through proxy with auth header management. No format conversion is needed.
+**Three API interfaces:**
+- `/v1/*` — OpenAI-compatible endpoints (chat completions, models)
+- `/v1beta/*` — Native Google Gemini API (models, :generateContent, :streamGenerateContent)
+- `/anthropic/*` — Native Anthropic Messages API (/v1/messages)
+
+**Supported provider types:**
+- `openai` — OpenAI (via `@ai-sdk/openai`)
+- `google_ai_studio` — Google AI Studio (via `@ai-sdk/google`)
+- `vertex_ai` — Google Vertex AI JWT/API Key (via `@ai-sdk/google` + custom auth)
+- `anthropic` — Anthropic Messages API (via `@ai-sdk/anthropic`)
+
+The AI SDK serves as the unified backend: all three API formats are converted to/from the AI SDK's internal format via `streamText`/`generateText`. This avoids per-provider pass-through and enables format conversion (e.g., OpenAI-format requests routed to Anthropic).
 
 ```
 Request flow:
-  Client → Worker (vega-api) at /v1/chat/completions (OpenAI format)
-    ├── AI Studio → generativelanguage.googleapis.com/v1beta/openai (pass-through)
-    ├── Vertex AI → aiplatform.googleapis.com/v1/.../endpoints/openapi (pass-through)
-    └── OpenAI    → api.openai.com/v1 (pass-through)
+  Client → Worker at /v1/chat/completions (OpenAI format)
+    → openaiToAISDKMessages() → AI SDK ModelMessage[]
+    → createModelFromProvider() → LanguageModel
+    → streamText() / generateText()
+    → convert fullStream → OpenAI SSE format
+    → Response to Client
 
-  Non-chat routes (/v1/models, /v1/embeddings, etc.):
-    └── Provider-specific proxy (pass-through)
+  Client → Worker at /v1beta/models/:model:generateContent (Gemini format)
+    → geminiToAISDK() → AI SDK ModelMessage[]
+    → streamText() / generateText()
+    → convert fullStream → Gemini JSON format
+    → Response to Client
+
+  Client → Worker at /anthropic/v1/messages (Anthropic format)
+    → anthropicToAISDK() → AI SDK ModelMessage[]
+    → streamText() / generateText()
+    → convert fullStream → Anthropic SSE format
+    → Response to Client
 ```
 
 **Entry point:** [src/index.ts](src/index.ts) — Hono app with all routes, exported as `export default { async fetch(request, env, ctx) {} }`.
@@ -39,16 +61,36 @@ Request flow:
 
 | File | Role |
 |------|------|
-| [src/index.ts](src/index.ts) | Hono app entry: route dispatch, model routing/aggregation, client auth, all /admin/* and /v1/* routes |
-| [src/types.ts](src/types.ts) | Shared TypeScript interfaces (Provider, Model, Env, ProviderHandler) |
+| [src/index.ts](src/index.ts) | Hono entry: route dispatch, client/admin auth, all API routes |
+| [src/types.ts](src/types.ts) | Shared TypeScript interfaces (Provider, Model, Env) |
 | [src/db.ts](src/db.ts) | D1 schema initialization (run once per cold start) |
-| [src/config.ts](src/config.ts) | D1-backed config CRUD for providers, admin password, client API key (AES-GCM encrypted sensitive fields) |
-| [src/crypto.ts](src/crypto.ts) | AES-256-GCM + SHA-256 (Web Crypto API, zero deps) |
-| [src/rate-limit.ts](src/rate-limit.ts) | D1-backed login rate limiter (5 failures → 15 min ban, 5-min sliding window) |
-| [src/usage.ts](src/usage.ts) | D1 usage tracking: daily aggregates + call_logs detail with 10000-row retention |
-| [src/providers/vertex.ts](src/providers/vertex.ts) | Vertex AI: JWT RS256 (service account) + API Key auth modes, OpenAI-compatible pass-through |
-| [src/providers/ai-studio.ts](src/providers/ai-studio.ts) | AI Studio: API Key auth via Bearer token, OpenAI-compatible pass-through |
-| [src/providers/openai.ts](src/providers/openai.ts) | OpenAI: Bearer token, configurable base URL, pass-through proxy |
+| [src/config.ts](src/config.ts) | D1-backed config CRUD: providers, admin password, client key (AES-GCM) |
+| [src/crypto.ts](src/crypto.ts) | AES-256-GCM + SHA-256 (Web Crypto API) |
+| [src/rate-limit.ts](src/rate-limit.ts) | D1-backed login rate limiter |
+| [src/usage.ts](src/usage.ts) | D1 usage tracking: daily aggregates + call_logs (10000-row retention) |
+| [src/ai-providers.ts](src/ai-providers.ts) | **AI SDK Provider factory**: creates LanguageModel from Provider config. Handles Vertex JWT token management |
+| [src/router.ts](src/router.ts) | Model routing: provider cache, model aggregation, model→provider matching |
+| [src/providers/vertex.ts](src/providers/vertex.ts) | (Legacy) Vertex AI JWT + API Key pass-through — kept for model list fetching |
+| [src/providers/ai-studio.ts](src/providers/ai-studio.ts) | (Legacy) AI Studio pass-through — kept for model list fetching |
+| [src/providers/openai.ts](src/providers/openai.ts) | (Legacy) OpenAI pass-through — kept for model list fetching |
+| [src/routes/v1/chat.ts](src/routes/v1/chat.ts) | **OpenAI-format chat**: AI SDK streamText/generateText, SSE conversion |
+| [src/routes/v1/models.ts](src/routes/v1/models.ts) | OpenAI-format model listing |
+| [src/routes/v1beta/chat.ts](src/routes/v1beta/chat.ts) | **Gemini-native chat**: :generateContent/:streamGenerateContent |
+| [src/routes/v1beta/models.ts](src/routes/v1beta/models.ts) | Gemini-native model listing |
+| [src/routes/anthropic/messages.ts](src/routes/anthropic/messages.ts) | **Anthropic-native Messages API**: SSE streaming |
+| [src/routes/admin/auth.ts](src/routes/admin/auth.ts) | Admin auth (setup, login, check, change-password) |
+| [src/routes/admin/providers.ts](src/routes/admin/providers.ts) | Provider CRUD (supports all 4 types) |
+| [src/routes/admin/client-key.ts](src/routes/admin/client-key.ts) | Client API key management |
+| [src/routes/admin/usage.ts](src/routes/admin/usage.ts) | Usage stats and call logs |
+
+### AI SDK Version Compatibility
+
+| AI SDK Core | Provider Packages | LanguageModel Interface |
+|-------------|-------------------|------------------------|
+| `ai@5.x` | `@ai-sdk/*@2.x` | LanguageModelV2 (`specificationVersion: "v2"`) |
+| `ai@6.x` (beta) | `@ai-sdk/*@3.x` | LanguageModelV3 (`specificationVersion: "v3"`) |
+
+> **Current**: ai@5.0.202 + provider@2.x. Provider v3 packages return LanguageModelV3 which is NOT assignable to ai v5's LanguageModel type.
 | [test/index.spec.js](test/index.spec.js) | Integration tests (`cloudflare:test` Vitest pool) |
 
 **Admin frontend (SvelteKit SPA) — Code Dark theme with sidebar navigation:**
@@ -73,14 +115,27 @@ Request flow:
 | [admin-ui/src/routes/dashboard/api-settings/+page.svelte](admin-ui/src/routes/dashboard/api-settings/+page.svelte) | API settings: provider CRUD + client API key |
 | [admin-ui/src/routes/dashboard/panel-settings/+page.svelte](admin-ui/src/routes/dashboard/panel-settings/+page.svelte) | Panel settings: change admin password |
 
-## Provider Interface Contract
+## AI SDK Provider Layer
 
-Every provider module must export (TypeScript):
+The AI SDK Provider factory in [src/ai-providers.ts](src/ai-providers.ts) creates `LanguageModel` instances from D1 `Provider` records. This is the central abstraction for all three API interfaces.
 
 ```ts
-export async function proxyRequest(request: Request, env: Env, provider: Provider, suffix: string): Promise<Response>
-// suffix: URL path after /v1 (e.g. "/chat/completions")
+export function createModelFromProvider(provider: Provider, env: Env, modelId: string): LanguageModelV2
+// Returns an AI SDK LanguageModel for use with streamText() / generateText()
+// Handles all 4 provider types:
+//   - openai: createOpenAI({ apiKey, baseURL }).chat(modelId)
+//   - google_ai_studio: createGoogleGenerativeAI({ apiKey })(modelId)
+//   - vertex_ai: createGoogleGenerativeAI({ baseURL, fetch: jwtInjector })(modelId)
+//   - anthropic: createAnthropic({ apiKey })(modelId)
+```
 
+**Legacy providers** ([src/providers/*.ts](src/providers/)) are only used for `fetchModelList()` in model aggregation. Chat/completions go through the AI SDK factory.
+
+## Provider Interface Contract (Legacy — model list only)
+
+Legacy provider modules export model fetching (no longer used for chat proxy):
+
+```ts
 export async function fetchModelList(env: Env, config: Record<string, string>): Promise<Model[]>
 // Returns: Array<{ id, object: "model", created, owned_by }>
 ```
@@ -106,6 +161,7 @@ Sensitive fields (`apiKey`, `privateKey`) in `providers.config` stored `enc:` pr
 | `vertex_ai` (API Key) | `projectId`, `location`, `apiKey` |
 | `google_ai_studio` | `apiKey` |
 | `openai` | `apiKey`, `baseUrl` (optional) |
+| `anthropic` | `apiKey` |
 
 Vertex AI auto-detects auth mode: if `config.apiKey` is present → API Key mode; if `config.serviceAccountEmail` + `config.privateKey` → JWT mode.
 
@@ -116,7 +172,7 @@ Vertex AI auto-detects auth mode: if `config.apiKey` is present → API Key mode
 - `d1_databases` → `vega-api-db` (binding: `DB`)
 - `assets.directory` → `./admin-ui/build/` (SvelteKit build output)
 - `assets.not_found_handling` → `"single-page-application"` (SPA fallback)
-- `assets.run_worker_first` → `["/admin/*", "/v1/*", "/health"]` (API routes bypass assets)
+- `assets.run_worker_first` → `["/admin/*", "/v1/*", "/v1beta/*", "/anthropic/*", "/health"]` (API routes bypass assets)
 - `compatibility_flags` → `["nodejs_compat"]`
 
 ## Migrations
@@ -124,6 +180,7 @@ Vertex AI auto-detects auth mode: if `config.apiKey` is present → API Key mode
 D1 migrations live in `migrations/`:
 - `0001_init.sql` — Core tables (config, providers, usage_daily)
 - `0002_call_logs.sql` — Persistent call log storage
+- `0006_provider_types.sql` — Adds 'anthropic' to provider type CHECK constraint
 
 Apply: `npm run db:migrate` (remote) or `npm run db:migrate:local`
 

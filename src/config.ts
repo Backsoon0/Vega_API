@@ -141,7 +141,7 @@ export async function saveProvider(
     throw new Error('Provider must have id, type, and name');
   }
 
-  const VALID_TYPES = ['vertex_ai', 'google_ai_studio', 'openai'];
+  const VALID_TYPES = ['vertex_ai', 'google_ai_studio', 'openai', 'anthropic'];
   if (!VALID_TYPES.includes(type)) {
     throw new Error(`Invalid provider type: ${type}`);
   }

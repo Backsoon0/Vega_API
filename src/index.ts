@@ -1,6 +1,6 @@
 // src/index.ts
 // Vega API — Hono on Cloudflare Workers
-// OpenAI-compatible API aggregating Vertex AI, AI Studio, and OpenAI
+// Multi-interface AI API: OpenAI (/v1/*), Gemini (/v1beta/*), Anthropic (/anthropic/*)
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -17,8 +17,11 @@ import { adminClientKeyRoutes } from './routes/admin/client-key';
 import { adminUsageRoutes } from './routes/admin/usage';
 import { v1ModelRoutes } from './routes/v1/models';
 import { v1ChatRoutes } from './routes/v1/chat';
+import { v1betaModelRoutes } from './routes/v1beta/models';
+import { v1betaChatRoutes } from './routes/v1beta/chat';
+import { anthropicMessagesRoutes } from './routes/anthropic/messages';
 
-// Router utilities (re-exported for potential admin use)
+// Router utilities
 import { loadProviders } from './router';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -39,7 +42,7 @@ app.get('/health', async (c) => {
 		ok: true,
 		message: 'Vega API is running',
 		providers: enabled,
-		routes: ['/', '/health', '/v1/chat/completions', '/v1/models'],
+		routes: ['/', '/health', '/v1/chat/completions', '/v1/models', '/v1beta/models', '/v1beta/models/:model:generateContent', '/anthropic/v1/messages'],
 	});
 });
 
@@ -57,6 +60,17 @@ app.use('/v1/*', clientAuthMiddleware());
 
 app.route('/v1', v1ModelRoutes);
 app.route('/v1', v1ChatRoutes);
+
+// ---- /v1beta/* Gemini-native API routes ----
+app.use('/v1beta/*', clientAuthMiddleware());
+
+app.route('/v1beta', v1betaModelRoutes);
+app.route('/v1beta', v1betaChatRoutes);
+
+// ---- /anthropic/* Anthropic-native API routes ----
+app.use('/anthropic/*', clientAuthMiddleware());
+
+app.route('/anthropic', anthropicMessagesRoutes);
 
 // Generic /v1/* fallback for unimplemented routes
 app.all('/v1/*', async (c) => {
