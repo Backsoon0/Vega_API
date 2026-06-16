@@ -93,6 +93,34 @@ function mapFinishReason(reason: string): string {
 	}
 }
 
+/**
+ * Build AI SDK providerOptions from request body.
+ * Detects thinking-related fields (Anthropic/Google/OpenAI formats) and maps them
+ * so clients can disable thinking via `"thinking":{"type":"disabled"}` etc.
+ */
+function buildProviderOptions(body: Record<string, unknown>): Record<string, Record<string, any>> {
+	const opts: Record<string, Record<string, any>> = {};
+
+	if (body.thinking && typeof body.thinking === 'object' && body.thinking !== null) {
+		const t = body.thinking as Record<string, unknown>;
+		// Anthropic format: { thinking: { type: "disabled" } } or { thinking: { type: "enabled", budget_tokens: 4000 } }
+		opts.anthropic = { thinking: t };
+		// Map disabled thinking to Google format
+		if (t.type === 'disabled') {
+			opts.google = { thinkingConfig: { thinkingBudget: 0 } };
+		}
+		// Map to OpenAI format (some OpenAI-compatible providers also accept this)
+		opts.openai = { ...(opts.openai || {}), thinking: t };
+	}
+
+	// Google direct format: { thinking_config: { thinkingBudget: 0 } }
+	if (body.thinking_config && typeof body.thinking_config === 'object' && body.thinking_config !== null) {
+		opts.google = { ...(opts.google || {}), thinkingConfig: body.thinking_config };
+	}
+
+	return opts;
+}
+
 // ---- Stream handler: AI SDK fullStream → OpenAI SSE ----
 
 async function handleOpenAIStream(
@@ -120,6 +148,7 @@ async function handleOpenAIStream(
 		temperature: body.temperature as number | undefined,
 		topP: body.top_p as number | undefined,
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
+		providerOptions: buildProviderOptions(body),
 	});
 
 	const encoder = new TextEncoder();
