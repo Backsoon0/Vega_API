@@ -23,7 +23,10 @@ const PROVIDERS_CACHE_TTL = 60_000;
 let cachedModels: Model[] | null = null;
 let cachedModelsAt = 0;
 let cachedModelsVersion = -1;
-const MODELS_CACHE_TTL = 300_000;
+const MODELS_CACHE_TTL = 900_000;
+
+// Model → provider ID list (for model-aware routing)
+let cachedModelProviders: Map<string, string[]> | null = null;
 
 // Promise dedup — prevents cache stampede on concurrent cold-start requests
 let providersPromise: Promise<Provider[]> | null = null;
@@ -84,17 +87,27 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 			const providers = await loadProviders(env);
 			const seen = new Set<string>();
 			const models: Model[] = [];
+			const providedBy = new Map<string, string[]>();
 
 			// Collect configured models and build list of live-fetch promises
 			const livePromises: Promise<void>[] = [];
 			// Sort by weight desc — higher weight providers' models take priority
 			const sorted = [...providers].sort((a, b) => (b.weight || 1) - (a.weight || 1));
 
+			function trackProvider(modelId: string, providerId: string) {
+				const ids = providedBy.get(modelId) || [];
+				if (!ids.includes(providerId)) {
+					ids.push(providerId);
+					providedBy.set(modelId, ids);
+				}
+			}
+
 			for (const p of sorted) {
 				if (!p.enabled) continue;
 
 				// Static configured models
 				for (const m of p.models || []) {
+					trackProvider(m, p.id);
 					if (!seen.has(m)) {
 						seen.add(m);
 						models.push({
@@ -115,6 +128,7 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 							.fetchModelList(env, p.config)
 							.then((live) => {
 								for (const m of live) {
+									trackProvider(m.id, p.id);
 									if (!seen.has(m.id)) {
 										seen.add(m.id);
 										models.push({ ...m, _providerId: p.id });
@@ -132,6 +146,7 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 			await Promise.allSettled(livePromises);
 
 			cachedModels = models;
+			cachedModelProviders = providedBy;
 			cachedModelsAt = Date.now();
 			cachedModelsVersion = version;
 			return models;
@@ -146,6 +161,13 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 export interface ProviderMatch {
 	provider: Provider;
 	matchedModel: string;
+}
+
+/** Returns the model→provider IDs map, lazily populated by getAggregatedModels(). */
+export async function getModelProviders(env: Env): Promise<Map<string, string[]>> {
+	// Warm the model cache if not already populated
+	await getAggregatedModels(env);
+	return cachedModelProviders || new Map();
 }
 
 export async function findProviderForModel(
@@ -168,14 +190,12 @@ export async function findProviderForModel(
 		}
 	}
 
-	// 1. Look up from cached model list — collect ALL providers that have this model
-	const models = await getAggregatedModels(env);
-	const foundModels = models.filter((m) => m.id === modelId);
-	for (const fm of foundModels) {
-		if (fm._providerId) {
-			const provider = enabled.find((p) => p.id === fm._providerId);
-			if (provider) addMatch(provider, modelId);
-		}
+	// 1. Use model→provider map to find providers that actually list this model
+	const modelProviders = await getModelProviders(env);
+	const supportedIds = modelProviders.get(modelId) || [];
+	for (const pid of supportedIds) {
+		const provider = enabled.find((p) => p.id === pid);
+		if (provider) addMatch(provider, modelId);
 	}
 
 	// 2. Configured model exact match
@@ -196,16 +216,14 @@ export async function findProviderForModel(
 		}
 	}
 
-	// 4. Fallback: no provider explicitly handles this model — try ALL enabled providers.
-	// No hardcoded provider-type restrictions. The chat handler tries each candidate
-	// in weight order and falls back on failure, so the highest-weight provider wins.
+	// 4. Fallback: no provider explicitly lists this model — try ALL enabled providers.
 	if (!matches.length) {
 		for (const p of enabled) {
 			addMatch(p, modelId);
 		}
 	}
 
-	return matches;
+	return matches.sort((a, b) => (b.provider.weight || 1) - (a.provider.weight || 1));
 }
 
 // ---- Cache invalidation (for testing) ----
@@ -215,6 +233,7 @@ export function invalidateCaches(): void {
 	cachedProvidersVersion = -1;
 	providersPromise = null;
 	cachedModels = null;
+	cachedModelProviders = null;
 	cachedModelsAt = 0;
 	cachedModelsVersion = -1;
 	modelsPromise = null;

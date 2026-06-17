@@ -171,8 +171,13 @@ async function handleGeminiStream(
 							break;
 						}
 
-						case 'error': {
-							const chunk = JSON.stringify({ error: { message: String(part.error), code: 500 } });
+					case 'error': {
+						const errMsg = part.error instanceof Error
+							? part.error.message
+							: typeof part.error === 'string'
+								? part.error
+								: JSON.stringify(part.error);
+						const chunk = JSON.stringify({ error: { message: errMsg, code: 500 } });
 							controller.enqueue(
 								encoder.encode(altSse ? `data: ${chunk}\n\n` : `${chunk}\n`),
 							);
@@ -203,9 +208,13 @@ async function handleGeminiStream(
 						),
 					);
 				}
-			} catch (err) {
-				const errMsg = (err as Error).message || 'Unknown error';
-				const chunk = JSON.stringify({ error: { message: errMsg, code: 500 } });
+		} catch (err) {
+			const errMsg = err instanceof Error
+				? err.message
+				: typeof err === 'string'
+					? err
+					: JSON.stringify(err);
+			const chunk = JSON.stringify({ error: { message: errMsg, code: 500 } });
 				controller.enqueue(
 					encoder.encode(altSse ? `data: ${chunk}\n\n` : `${chunk}\n`),
 				);
@@ -432,8 +441,13 @@ v1betaChatRoutes.post('/models/:modelId', async (c: Context<{ Bindings: Env }>) 
 				body, requestId, candidate, c.env, ip, execCtx, Date.now(), modelId,
 			);
 		} catch (err) {
-			console.error(`Provider ${candidate.provider.id}: ${(err as Error).message}`);
-		}
+		const errMsg = err instanceof Error
+			? err.message
+			: typeof err === 'string'
+				? err
+				: JSON.stringify(err);
+		console.error(`Provider ${candidate.provider.id}: ${errMsg}`);
+	}
 	}
 
 	return c.json(

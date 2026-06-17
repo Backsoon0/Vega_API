@@ -27,6 +27,7 @@ export interface Model {
   created: number;
   owned_by: string;
   _providerId?: string;
+  _providerIds?: string[];
 }
 
 export interface UsageRecord {

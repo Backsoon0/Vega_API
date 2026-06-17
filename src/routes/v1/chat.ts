@@ -237,16 +237,22 @@ async function handleOpenAIStream(
 							break;
 						}
 
-						case 'error':
-							controller.enqueue(
-								encoder.encode(
-									`data: ${JSON.stringify({
-										error: { message: String(part.error), type: 'server_error' },
-									})}\n\n`,
-								),
-							);
-							controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-							break;
+					case 'error': {
+						const errMsg = part.error instanceof Error
+							? part.error.message
+							: typeof part.error === 'string'
+								? part.error
+								: JSON.stringify(part.error);
+						controller.enqueue(
+							encoder.encode(
+								`data: ${JSON.stringify({
+									error: { message: errMsg, type: 'server_error' },
+								})}\n\n`,
+							),
+						);
+						controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+						break;
+					}
 					}
 				}
 
@@ -281,10 +287,14 @@ async function handleOpenAIStream(
 						),
 					);
 				}
-			} catch (err) {
-				if (!contentFiltered) {
-					const errMsg = (err as Error).message || 'Unknown error';
-					controller.enqueue(
+		} catch (err) {
+			if (!contentFiltered) {
+				const errMsg = err instanceof Error
+					? err.message
+					: typeof err === 'string'
+						? err
+						: JSON.stringify(err);
+				controller.enqueue(
 						encoder.encode(
 							`data: ${JSON.stringify({
 								error: { message: errMsg, type: 'server_error' },
@@ -466,7 +476,12 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 				body, requestId, candidate, c.env, ip, execCtx, startMs,
 			);
 		} catch (err) {
-			lastError = `Provider ${candidate.provider.id}: ${(err as Error).message}`;
+		const errMessage = err instanceof Error
+			? err.message
+			: typeof err === 'string'
+				? err
+				: JSON.stringify(err);
+		lastError = `Provider ${candidate.provider.id}: ${errMessage}`;
 			console.error(lastError);
 			if (execCtx) {
 				execCtx.waitUntil(

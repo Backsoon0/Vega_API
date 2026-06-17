@@ -231,16 +231,22 @@ async function handleAnthropicStream(
 							break;
 						}
 
-						case 'error':
-							controller.enqueue(
-								encoder.encode(
-									`event: error\ndata: ${JSON.stringify({
-										type: 'error',
-										error: { message: String(part.error), type: 'api_error' },
-									})}\n\n`,
-								),
-							);
-							break;
+					case 'error': {
+						const errMsg = part.error instanceof Error
+							? part.error.message
+							: typeof part.error === 'string'
+								? part.error
+								: JSON.stringify(part.error);
+						controller.enqueue(
+							encoder.encode(
+								`event: error\ndata: ${JSON.stringify({
+									type: 'error',
+									error: { message: errMsg, type: 'api_error' },
+								})}\n\n`,
+							),
+						);
+						break;
+					}
 					}
 				}
 
@@ -275,9 +281,13 @@ async function handleAnthropicStream(
 						),
 					);
 				}
-			} catch (err) {
-				const errMsg = (err as Error).message || 'Unknown error';
-				controller.enqueue(
+		} catch (err) {
+			const errMsg = err instanceof Error
+				? err.message
+				: typeof err === 'string'
+					? err
+					: JSON.stringify(err);
+			controller.enqueue(
 					encoder.encode(
 						`event: error\ndata: ${JSON.stringify({
 							type: 'error',
@@ -458,7 +468,12 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 				body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId,
 			);
 		} catch (err) {
-			lastError = `Provider ${candidate.provider.id}: ${(err as Error).message}`;
+		const errMsg = err instanceof Error
+			? err.message
+			: typeof err === 'string'
+				? err
+				: JSON.stringify(err);
+		lastError = `Provider ${candidate.provider.id}: ${errMsg}`;
 			console.error(lastError);
 		}
 	}
