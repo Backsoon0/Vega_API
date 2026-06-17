@@ -76,7 +76,14 @@ export async function decrypt(env: Env, value: string): Promise<string> {
  * SHA-256 hash — returns hex string.
  */
 export async function sha256(input: string): Promise<string> {
-  const encoded = new TextEncoder().encode(input);
-  const hash = await crypto.subtle.digest('SHA-256', encoded);
-  return bytesToHex(new Uint8Array(hash));
+	const encoded = new TextEncoder().encode(input);
+	const hash = await crypto.subtle.digest('SHA-256', encoded);
+	return bytesToHex(new Uint8Array(hash));
+}
+
+/**
+ * Hash an API key for lookup — uses SHA-256.
+ */
+export async function hashKey(key: string): Promise<string> {
+	return sha256(key);
 }

@@ -3,37 +3,61 @@
 
 import type { Context, MiddlewareHandler } from 'hono';
 import type { Env } from '../types';
-import { getClientApiKey, getAdminPasswordHash } from '../config';
+import { getClientApiKey, getAdminPasswordHash, findApiKeyNameByHash } from '../config';
+import { hashKey } from '../crypto';
 
 /** Validate client API key for all API routes.
  * Checks Authorization: Bearer, x-api-key (Anthropic), x-goog-api-key (Google), and ?key= query parameter.
- * Falls back to env.OPENAI_API_KEY. If neither is set, all requests pass. */
+ * Falls back to env.OPENAI_API_KEY. If neither is set, all requests pass.
+ * Supports legacy single key (config.client_api_key) and multi-key (api_keys table).
+ * Sets c.env.clientKeyName on match for logging. */
 export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<boolean> {
 	const env = c.env;
-	const kvKey = await getClientApiKey(env);
-	if (kvKey) {
-		// Authorization: Bearer <key> (OpenAI standard)
+
+	// Extract the provided key from headers/query
+	function extractProvidedKey(): string {
 		const auth = c.req.header('Authorization') || '';
-		if (auth === `Bearer ${kvKey}`) return true;
-
-		// x-api-key header (Anthropic standard)
+		if (auth.startsWith('Bearer ')) return auth.slice(7);
 		const apiKey = c.req.header('x-api-key') || '';
-		if (apiKey === kvKey) return true;
-
-		// x-goog-api-key header (Google Gemini API standard)
+		if (apiKey) return apiKey;
 		const googKey = c.req.header('x-goog-api-key') || '';
-		if (googKey === kvKey) return true;
-
-		// ?key= query parameter (Google API fallback)
-		const queryKey = c.req.query('key') || '';
-		if (queryKey === kvKey) return true;
-
-		return false;
+		if (googKey) return googKey;
+		return c.req.query('key') || '';
 	}
+
+	const providedKey = extractProvidedKey();
+
+	// 1. Check legacy single key (config.client_api_key)
+	const kvKey = await getClientApiKey(env);
+	if (kvKey && providedKey === kvKey) {
+		env.clientKeyName = '(默认密钥)';
+		return true;
+	}
+
+	// 2. Check multi-key table (api_keys) — hash-based lookup
+	if (providedKey) {
+		const keyHash = await hashKey(providedKey);
+		const match = await findApiKeyNameByHash(env, keyHash);
+		if (match) {
+			env.clientKeyName = match.name;
+			return true;
+		}
+	}
+
+	// 3. If a legacy key is set and the provided key doesn't match, deny access
+	if (kvKey) return false;
+
+	// 4. Fall back to env.OPENAI_API_KEY
 	if (env.OPENAI_API_KEY) {
 		const auth = c.req.header('Authorization') || '';
-		return auth === `Bearer ${env.OPENAI_API_KEY}`;
+		if (auth === `Bearer ${env.OPENAI_API_KEY}`) {
+			env.clientKeyName = '(环境变量密钥)';
+			return true;
+		}
+		return false;
 	}
+
+	// 5. No keys configured — public mode
 	return true;
 }
 

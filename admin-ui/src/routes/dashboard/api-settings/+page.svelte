@@ -6,7 +6,7 @@
   import Modal from "$lib/Modal.svelte";
   import ProviderCard from "$lib/ProviderCard.svelte";
   import ProviderForm from "$lib/ProviderForm.svelte";
-  import ClientKeySection from "$lib/ClientKeySection.svelte";
+	import ClientKeySection from "$lib/ApiKeyList.svelte";
   import Spinner from "$lib/Spinner.svelte";
 
   let providers = $state<Provider[]>([]);

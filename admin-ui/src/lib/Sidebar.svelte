@@ -15,7 +15,7 @@
     { href: "/dashboard", label: "概览", icon: LayoutDashboard },
     { href: "/dashboard/logs", label: "调用记录", icon: ListTodo },
     { href: "/dashboard/api-settings", label: "API 设置", icon: Settings },
-    { href: "/dashboard/panel-settings", label: "面板设置", icon: Wrench },
+	{ href: "/dashboard/settings", label: "设置", icon: Wrench },
   ];
 
   let collapsed = $derived($sidebarCollapsed);

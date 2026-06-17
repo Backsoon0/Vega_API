@@ -1,8 +1,8 @@
 // src/config.ts
 // D1-based configuration CRUD for providers, admin password, client API key
 
-import type { Env, Provider, ProviderRow } from './types';
-import { encrypt, decrypt } from './crypto';
+import type { Env, Provider, ProviderRow, ApiKeyInfo } from './types';
+import { encrypt, decrypt, hashKey } from './crypto';
 
 // ---- Config table helpers ----
 
@@ -211,10 +211,129 @@ export async function getClientApiKey(env: Env): Promise<string | null> {
 }
 
 export async function setClientApiKey(env: Env, key: string | null): Promise<void> {
-  if (!key) {
-    await deleteConfig(env, 'client_api_key');
-  } else {
-    const encrypted = await encrypt(env, key);
-    await setConfig(env, 'client_api_key', encrypted);
-  }
+	if (!key) {
+		await deleteConfig(env, 'client_api_key');
+	} else {
+		const encrypted = await encrypt(env, key);
+		await setConfig(env, 'client_api_key', encrypted);
+	}
+}
+
+// ---- API Keys (multi-key) ----
+
+export async function listApiKeys(env: Env): Promise<ApiKeyInfo[]> {
+	const rows = await env.DB
+		.prepare('SELECT id, name, created_at, last_used_at FROM api_keys ORDER BY id')
+		.all<{ id: number; name: string; created_at: string; last_used_at: string | null }>();
+	return (rows.results || []).map((r) => ({
+		id: r.id,
+		name: r.name,
+		createdAt: r.created_at,
+		lastUsedAt: r.last_used_at,
+	}));
+}
+
+export async function createApiKey(env: Env, name: string, key: string): Promise<ApiKeyInfo> {
+	const hash = await hashKey(key);
+	const encrypted = await encrypt(env, key);
+	const now = new Date().toISOString();
+	await env.DB
+		.prepare('INSERT INTO api_keys (name, key_hash, encrypted_key, created_at) VALUES (?, ?, ?, ?)')
+		.bind(name, hash, encrypted, now)
+		.run();
+	const row = await env.DB
+		.prepare('SELECT id, name, created_at, last_used_at FROM api_keys WHERE key_hash = ?')
+		.bind(hash)
+		.first<{ id: number; name: string; created_at: string; last_used_at: string | null }>();
+	return { id: row!.id, name: row!.name, createdAt: row!.created_at, lastUsedAt: row!.last_used_at };
+}
+
+export async function deleteApiKey(env: Env, id: number): Promise<boolean> {
+	const result = await env.DB
+		.prepare('DELETE FROM api_keys WHERE id = ?')
+		.bind(id)
+		.run();
+	return result.meta.changes > 0;
+}
+
+export async function renameApiKey(env: Env, id: number, name: string): Promise<boolean> {
+	const result = await env.DB
+		.prepare('UPDATE api_keys SET name = ? WHERE id = ?')
+		.bind(name, id)
+		.run();
+	return result.meta.changes > 0;
+}
+
+/**
+ * Migrate the legacy single key (config.client_api_key) into the api_keys table with a name.
+ * Returns the new key info or null if no legacy key exists.
+ */
+export async function migrateLegacyApiKey(env: Env, name: string): Promise<ApiKeyInfo | null> {
+	const legacyKey = await getClientApiKey(env);
+	if (!legacyKey) return null;
+
+	const hash = await hashKey(legacyKey);
+	const encrypted = await encrypt(env, legacyKey);
+	const now = new Date().toISOString();
+
+	// Check if this key already exists in api_keys (by hash)
+	const existing = await env.DB
+		.prepare('SELECT id FROM api_keys WHERE key_hash = ?')
+		.bind(hash)
+		.first<{ id: number }>();
+	if (existing) {
+		// Key already migrated — just update the name and delete legacy
+		await renameApiKey(env, existing.id, name);
+		await setClientApiKey(env, null);
+		return { id: existing.id, name, createdAt: now, lastUsedAt: null };
+	}
+
+	await env.DB
+		.prepare('INSERT INTO api_keys (name, key_hash, encrypted_key, created_at) VALUES (?, ?, ?, ?)')
+		.bind(name, hash, encrypted, now)
+		.run();
+
+	// Delete the legacy key from config
+	await setClientApiKey(env, null);
+
+	const row = await env.DB
+		.prepare('SELECT id, name, created_at, last_used_at FROM api_keys WHERE key_hash = ?')
+		.bind(hash)
+		.first<{ id: number; name: string; created_at: string; last_used_at: string | null }>();
+	if (!row) return null;
+	return { id: row.id, name: row.name, createdAt: row.created_at, lastUsedAt: row.last_used_at };
+}
+
+export async function updateApiKeyLastUsed(env: Env, keyHash: string): Promise<void> {
+	const now = new Date().toISOString();
+	await env.DB
+		.prepare('UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?')
+		.bind(now, keyHash)
+		.run();
+}
+
+/**
+ * Look up an API key by its hash. Returns the key name if found, null otherwise.
+ * Also updates last_used_at on successful lookup.
+ */
+export async function findApiKeyNameByHash(env: Env, keyHash: string): Promise<{ id: number; name: string } | null> {
+	const row = await env.DB
+		.prepare('SELECT id, name FROM api_keys WHERE key_hash = ?')
+		.bind(keyHash)
+		.first<{ id: number; name: string }>();
+	if (!row) return null;
+	await updateApiKeyLastUsed(env, keyHash);
+	return { id: row.id, name: row.name };
+}
+
+// ---- Failover config ----
+
+export async function getFailoverEnabled(env: Env): Promise<boolean> {
+	const raw = await getConfig(env, 'failover_enabled');
+	if (raw === null) return false;
+	return raw === '1';
+}
+
+export async function setFailoverEnabled(env: Env, enabled: boolean): Promise<void> {
+	await setConfig(env, 'failover_enabled', enabled ? '1' : '0');
 }

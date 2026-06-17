@@ -13,6 +13,7 @@ const SCHEMA_STATEMENTS = [
 	'CREATE TABLE IF NOT EXISTS call_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, ip TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 1)',
 	'CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON call_logs(timestamp)',
 	'CREATE INDEX IF NOT EXISTS idx_logs_provider ON call_logs(provider_id)',
+	'CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT)',
 ];
 
 /**
@@ -33,6 +34,9 @@ export async function initSchema(env: Env): Promise<void> {
 		'ALTER TABLE call_logs ADD COLUMN request_id TEXT NOT NULL DEFAULT \'\'',          // 0005
 		'ALTER TABLE call_logs ADD COLUMN is_stream INTEGER NOT NULL DEFAULT 0',          // 0005
 		'ALTER TABLE call_logs ADD COLUMN extra TEXT NOT NULL DEFAULT \'{}\'',             // 0005
+		'ALTER TABLE call_logs ADD COLUMN cache_read_input_tokens INTEGER NOT NULL DEFAULT 0',    // 0008
+		'ALTER TABLE call_logs ADD COLUMN cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0', // 0008
+		'ALTER TABLE call_logs ADD COLUMN api_key_name TEXT NOT NULL DEFAULT \'\'',               // 0008
 	];
 	for (const stmt of MIGRATIONS) {
 		try {

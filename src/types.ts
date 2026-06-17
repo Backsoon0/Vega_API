@@ -36,25 +36,45 @@ export interface UsageRecord {
 }
 
 export interface LogEntry {
-  id: number;
-  timestamp: string;
-  ip: string;
-  providerId: string;
-  model: string;
-  promptTokens: number;
-  completionTokens: number;
-  durationMs: number;
-  success: boolean;
-  requestId: string;
-  isStream: boolean;
-  extra: Record<string, string>;
+	id: number;
+	timestamp: string;
+	ip: string;
+	providerId: string;
+	model: string;
+	promptTokens: number;
+	completionTokens: number;
+	durationMs: number;
+	success: boolean;
+	requestId: string;
+	isStream: boolean;
+	extra: Record<string, string>;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+	apiKeyName: string;
+}
+
+export interface ApiKeyRecord {
+	id: number;
+	name: string;
+	key_hash: string;
+	encrypted_key: string;
+	created_at: string;
+	last_used_at: string | null;
+}
+
+export interface ApiKeyInfo {
+	id: number;
+	name: string;
+	createdAt: string;
+	lastUsedAt: string | null;
 }
 
 export interface Env {
-  DB: D1Database;
-  ASSETS: { fetch: (request: Request) => Promise<Response> };
-  ENCRYPTION_KEY?: string;
-  OPENAI_API_KEY?: string;
+	DB: D1Database;
+	ASSETS: { fetch: (request: Request) => Promise<Response> };
+	ENCRYPTION_KEY?: string;
+	OPENAI_API_KEY?: string;
+	clientKeyName?: string;
 }
 
 export interface ProviderHandler {

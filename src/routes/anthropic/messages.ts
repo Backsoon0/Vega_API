@@ -11,7 +11,8 @@ import type { Env } from '../../types';
 import type { ProviderMatch } from '../../router';
 import { findProviderForModel, getAggregatedModels } from '../../router';
 import { createModelFromProvider } from '../../ai-providers';
-import { recordUsage } from '../../usage';
+import { recordUsage, extractCacheTokens } from '../../usage';
+import { getFailoverEnabled } from '../../config';
 
 export const anthropicMessagesRoutes = new Hono<{ Bindings: Env }>();
 
@@ -140,6 +141,8 @@ async function handleAnthropicStream(
 	const msgId = generateMessageId();
 	let contentIndex = 0;
 	let hasStartedBlock = false;
+	let lastInputTokens = 0;
+	let lastOutputTokens = 0;
 
 	const stream = new ReadableStream({
 		async start(controller) {
@@ -204,6 +207,8 @@ async function handleAnthropicStream(
 
 						case 'finish': {
 							const stopReason = mapStopReason(part.finishReason);
+							lastInputTokens = part.totalUsage?.inputTokens || 0;
+							lastOutputTokens = part.totalUsage?.outputTokens || 0;
 							controller.enqueue(
 								encoder.encode(
 									`event: message_delta\ndata: ${JSON.stringify({
@@ -212,7 +217,7 @@ async function handleAnthropicStream(
 											stop_reason: stopReason,
 											stop_sequence: null,
 										},
-										usage: { output_tokens: part.totalUsage?.outputTokens || 0 },
+										usage: { output_tokens: lastOutputTokens },
 									})}\n\n`,
 								),
 							);
@@ -223,26 +228,6 @@ async function handleAnthropicStream(
 									})}\n\n`,
 								),
 							);
-
-							if (execCtx) {
-								execCtx.waitUntil(
-									recordUsage(
-										env,
-										provider.provider.id,
-										rawModelId,
-										ip,
-										{
-											prompt: part.totalUsage?.inputTokens || 0,
-											completion: part.totalUsage?.outputTokens || 0,
-										},
-										true,
-										Date.now() - startMs,
-										requestId,
-										true,
-										{},
-									),
-								);
-							}
 							break;
 						}
 
@@ -257,6 +242,38 @@ async function handleAnthropicStream(
 							);
 							break;
 					}
+				}
+
+				// Extract cache tokens from provider metadata
+				let cacheRead = 0;
+				let cacheCreation = 0;
+				try {
+					const metadata = await result.providerMetadata;
+					if (metadata) {
+						const cache = extractCacheTokens(metadata);
+						cacheRead = cache.cacheReadInputTokens;
+						cacheCreation = cache.cacheCreationInputTokens;
+					}
+				} catch { /* provider metadata not available */ }
+
+				if (execCtx && lastInputTokens + lastOutputTokens > 0) {
+					execCtx.waitUntil(
+						recordUsage(
+							env,
+							provider.provider.id,
+							rawModelId,
+							ip,
+							{ prompt: lastInputTokens, completion: lastOutputTokens },
+							true,
+							Date.now() - startMs,
+							requestId,
+							true,
+							{},
+							cacheRead,
+							cacheCreation,
+							env.clientKeyName || '',
+						),
+					);
 				}
 			} catch (err) {
 				const errMsg = (err as Error).message || 'Unknown error';
@@ -315,6 +332,17 @@ async function handleAnthropicNonStream(
 	const stopReason = mapStopReason(result.finishReason);
 	const msgId = generateMessageId();
 
+	let cacheRead = 0;
+	let cacheCreation = 0;
+	try {
+		const metadata = await result.providerMetadata;
+		if (metadata) {
+			const cache = extractCacheTokens(metadata);
+			cacheRead = cache.cacheReadInputTokens;
+			cacheCreation = cache.cacheCreationInputTokens;
+		}
+	} catch { /* provider metadata not available */ }
+
 	if (execCtx) {
 		execCtx.waitUntil(
 			recordUsage(
@@ -328,6 +356,9 @@ async function handleAnthropicNonStream(
 				requestId,
 				false,
 				{},
+				cacheRead,
+				cacheCreation,
+				env.clientKeyName || '',
 			),
 		);
 	}
@@ -412,9 +443,11 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
 
-	// Try each candidate in weight order
+	// Try each candidate in weight order (if failover enabled)
+	const failoverEnabled = await getFailoverEnabled(c.env);
+	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
 	let lastError = '';
-	for (const candidate of candidates) {
+	for (const candidate of tryCandidates) {
 		try {
 			if (isStream) {
 				return await handleAnthropicStream(

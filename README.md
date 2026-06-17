@@ -4,16 +4,19 @@
 
 ## 特性
 
-- **三接口并行** — 同一 Worker 同时提供 OpenAI、Gemini、Anthropic 三种标准 API，一套 key 全部通用
+- **三接口并行** — 同一 Worker 同时提供 OpenAI、Gemini、Anthropic 三种标准 API
 - **AI SDK 驱动** — 基于 Vercel AI SDK v5 (`streamText`/`generateText`) 统一后端调用，自动在各 provider 原生格式间转换
 - **全 Provider 互通** — 任一 provider 均可通过任一接口访问（如 OpenAI-format 请求路由到 Anthropic，Gemini-format 请求路由到 OpenAI）
 - **4 种 Provider** — 支持 OpenAI、Google AI Studio、Vertex AI (JWT/API Key)、Anthropic
-- **SvelteKit 管理面板** — 侧边栏 4 页面（概览 / 调用记录 / API 设置 / 面板设置），Code Dark 深色主题，可折叠侧边栏，响应式设计
-- **调用记录** — D1 持久化存储，记录模型、Token、耗时，支持搜索和提供商筛选
-- **安全设计** — API Key AES-GCM 加密存储、登录限流（5 次失败 → 15 分钟封禁）、多种认证方式
+- **多密钥管理** — 支持创建多个 API 密钥，每个密钥可独立命名和追踪调用来源
+- **故障转移模式** — 可选开启，当 API 调用失败时自动尝试下一个可用 provider 的相同模型
+- **缓存追踪** — 自动记录上游 API 的缓存命中/未命中 token 数，在调用记录中展示
+- **SvelteKit 管理面板** — 侧边栏 4 页面（概览 / 调用记录 / API 设置 / 设置），Code Dark 深色主题，可折叠侧边栏，响应式设计
+- **调用记录增强** — D1 持久化存储，可配置显示栏位，单击记录查看完整详情，追踪密钥来源和缓存信息
+- **安全设计** — API Key AES-GCM 加密存储、SHA-256 哈希快速匹配、登录限流（5 次失败 → 15 分钟封禁）、多种认证方式
 - **流式支持** — 完整支持 SSE 流式响应（OpenAI/Gemini/Anthropic 三种 SSE 格式）
 - **思考模式控制** — 支持 `thinking: { type: "disabled" }` 禁用推理（Anthropic/Google 通过 AI SDK 原生支持，DeepSeek 通过参数透传支持）
-- **内容过滤兼容** — `content_filter` finish_reason 不会产生虚假 error chunk，客户端正常收到过滤结束信号
+- **内容过滤兼容** — `content_filter` finish_reason 不会产生虚假 error chunk
 - **请求保护** — 5MB 请求体限制，支持图片等多模态输入
 - **模型自动发现** — 通过各提供商官方 API 并行获取可用模型列表
 
@@ -146,7 +149,7 @@ curl https://your-worker.workers.dev/anthropic/v1/messages \
   -H "x-api-key: sk-your-key" \
   -H "Content-Type: application/json" \
   -H "anthropic-version: 2023-06-01" \
-  -d '{"model":"claude-sonnet-4-20250514","max_tokens":50,"stream":true,"system":"You are helpful.","messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"claude-sonnet-4-20250514","max_tokens":50,"stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 **认证**: `x-api-key: <key>` 或 `Authorization: Bearer <key>`
@@ -159,7 +162,7 @@ curl https://your-worker.workers.dev/anthropic/v1/messages \
 | `/v1beta/*` | `x-goog-api-key: <key>` / `?key=<key>` / `Authorization: Bearer <key>` |
 | `/anthropic/*` | `x-api-key: <key>` / `Authorization: Bearer <key>` |
 
-> 三种接口共用同一个 Client API Key，在管理面板中设置。
+> 支持多个命名密钥，在管理面板 → API 设置中管理。调用记录中会追踪每次调用使用的密钥名称。
 
 ### 参数透传 (Extra Body)
 
@@ -167,10 +170,9 @@ curl https://your-worker.workers.dev/anthropic/v1/messages \
 
 #### `/v1/chat/completions` — 自动转发
 
-所有请求体字段（除 `model`、`stream`、`stream_options`）自动转发到下游 API，无需额外包装：
+所有请求体字段（除 `model`、`stream`、`stream_options`）自动转发到下游 API：
 
 ```bash
-# DeepSeek 禁用思考 — thinking 直接放在请求体顶层
 curl https://your-worker.workers.dev/v1/chat/completions \
   -H "Authorization: Bearer sk-your-key" \
   -H "Content-Type: application/json" \
@@ -184,7 +186,7 @@ curl https://your-worker.workers.dev/v1/chat/completions \
 
 #### `/v1beta/*` 和 `/anthropic/*` — 显式 `extra_body`
 
-非 OpenAI 格式路由仅透传 `extra_body` 字段，避免格式冲突：
+非 OpenAI 格式路由仅透传 `extra_body` 字段：
 
 ```bash
 curl https://your-worker.workers.dev/anthropic/v1/messages \
@@ -198,8 +200,6 @@ curl https://your-worker.workers.dev/anthropic/v1/messages \
     "extra_body": {"thinking": {"type": "disabled"}}
   }'
 ```
-
-> 仅 OpenAI 类型 Provider（含 DeepSeek、Groq 等兼容 API）支持透传。Anthropic/Google Provider 使用 AI SDK 原生 providerOptions 处理已知参数。
 
 ## 客户端 SDK 示例
 
@@ -263,7 +263,7 @@ response = client.messages.create(
 | `/v1beta/models/:id` | GET | Gemini | 单模型 |
 | `/v1beta/models/:id:generateContent` | POST | Gemini | 内容生成 (非流式) |
 | `/v1beta/models/:id:streamGenerateContent` | POST | Gemini | 内容生成 (流式, SSE/NDJSON) |
-| `/anthropic/v1/models` | GET | OpenAI | 模型列表 (Anthropic 无标准端点) |
+| `/anthropic/v1/models` | GET | OpenAI | 模型列表 |
 | `/anthropic/v1/messages` | POST | Anthropic | Messages API (流式/非流式) |
 
 ### 管理 API
@@ -275,7 +275,11 @@ response = client.messages.create(
 | `/admin/check` | GET | Bearer | 验证 token |
 | `/admin/providers` | GET/POST | Bearer | 列出/添加提供商 |
 | `/admin/providers/{id}` | GET/PUT/DELETE | Bearer | 单个提供商操作 |
-| `/admin/client-key` | GET/POST/DELETE | Bearer | 客户端密钥管理 |
+| `/admin/api-keys` | GET/POST | Bearer | 列出/创建客户端密钥 |
+| `/admin/api-keys/{id}` | PUT/DELETE | Bearer | 重命名/删除密钥 |
+| `/admin/api-keys/legacy` | DELETE | Bearer | 删除旧版密钥 |
+| `/admin/api-keys/legacy/migrate` | POST | Bearer | 旧版密钥迁移为命名密钥 |
+| `/admin/settings` | GET/PUT | Bearer | 获取/更新设置 (故障转移等) |
 | `/admin/change-password` | POST | Bearer | 修改管理密码 |
 | `/admin/usage` | GET | Bearer | 用量统计 |
 | `/admin/logs` | GET | Bearer | 调用记录 |
@@ -285,9 +289,16 @@ response = client.messages.create(
 | 页面 | 路由 | 功能 |
 |------|------|------|
 | **概览** | `/dashboard` | 统计卡片（总调用、Token、活跃提供商）+ 提供商状态列表 |
-| **调用记录** | `/dashboard/logs` | 每次 API 调用的时间、IP、提供商、模型、Token，支持搜索和筛选 |
-| **API 设置** | `/dashboard/api-settings` | API 调用地址一键复制 + 客户端 API Key 管理 + 提供商 CRUD |
-| **面板设置** | `/dashboard/panel-settings` | 修改管理密码 |
+| **调用记录** | `/dashboard/logs` | 调用记录表格，可配置栏位，支持搜索和筛选，单击查看详情（含缓存命中、密钥追踪） |
+| **API 设置** | `/dashboard/api-settings` | API 调用地址一键复制 + 多密钥管理（创建/命名/重命名/删除）+ 提供商 CRUD |
+| **设置** | `/dashboard/settings` | 故障转移开关 + 修改管理密码 + 调用记录栏位配置 |
+
+### 调用记录新增功能
+
+- **密钥追踪** — 每条记录显示调用所使用的密钥名称
+- **缓存追踪** — 自动记录上游 API 缓存的命中/未命中 token 数
+- **栏位配置** — 在设置页面自定义显示哪些列
+- **详情弹窗** — 单击记录查看完整信息（Token 明细、缓存统计、错误信息、Request ID）
 
 ## 快速部署
 
@@ -314,8 +325,8 @@ npx wrangler d1 create vega-api-db
 ### 3. 运行数据库迁移
 
 ```bash
-npm run db:migrate         # 生产环境
-npm run db:migrate:local   # 本地开发
+npm run db:migrate -- --remote   # 生产环境
+npm run db:migrate:local         # 本地开发
 ```
 
 ### 4. 生成加密密钥
@@ -341,13 +352,14 @@ npm run deploy
 浏览器访问 `https://your-worker.workers.dev/`：
 1. 首次访问输入管理密码（≥6 位）
 2. API 设置页 → 添加提供商
-3. 在「客户端 API Key」卡片中生成访问密钥
+3. API 设置页 → 新建密钥 → 输入名称 → 生成/设置
 
 ## 安全设计
 
 | 特性 | 实现 |
 |------|------|
 | **API Key 存储** | AES-256-GCM 加密，密钥存储于 Worker Secret |
+| **密钥查找** | SHA-256 哈希快速匹配，避免全量解密 |
 | **管理面板认证** | SHA-256 密码哈希 → Bearer token |
 | **暴力破解防护** | D1 内置限流：5 次失败 → 15 分钟封禁（5 分钟滑动窗口） |
 | **客户端访问控制** | 支持 Bearer / x-api-key / x-goog-api-key / ?key= 多认证方式 |
@@ -358,10 +370,12 @@ npm run deploy
 
 ```
 vega-api-db
-├── config            — key-value 配置（密码、密钥、版本号、限流数据）
-├── providers         — AI 提供商配置（敏感字段 AES-GCM 加密，支持 4 种类型）
-├── usage_daily       — 每日聚合用量（date, provider_id, model 三维度）
-└── call_logs         — 详细调用记录（模型、Token、耗时，最多 10000 条自动清理）
+├── config         — key-value 配置（密码、版本号、故障转移等设置）
+├── providers      — AI 提供商配置（敏感字段 AES-GCM 加密，支持 4 种类型）
+├── api_keys       — 客户端 API 密钥（名称、SHA-256 哈希、加密存储、使用时间）
+├── usage_daily    — 每日聚合用量（date, provider_id, model 三维度）
+├── call_logs      — 详细调用记录（模型、Token、耗时、缓存命中、密钥追踪，最多 10000 条）
+└── rate_limits    — 登录限流数据
 ```
 
 ## 开发
@@ -384,39 +398,40 @@ npm run deploy           # 构建 + 部署到 Cloudflare
 ├── migrations/               # D1 数据库迁移
 │   ├── 0001_init.sql         # 核心表
 │   ├── 0002_call_logs.sql    # 调用记录表
-│   └── 0006_provider_types.sql # 新增 'anthropic' provider 类型
+│   ├── 0007_api_keys.sql     # 多密钥表
+│   └── 0008_call_logs_enhance.sql # 缓存追踪 + 密钥名
 ├── src/                      # Worker 源码 (TypeScript)
 │   ├── index.ts              # Hono 入口: CORS, 路由挂载, 健康检查
 │   ├── ai-providers.ts       # AI SDK Provider 工厂 + Vertex JWT 管理
 │   ├── router.ts             # 模型路由: 缓存, Provider 查找, 模型聚合
 │   ├── types.ts              # 共享类型定义
-│   ├── db.ts                 # D1 schema 初始化
-│   ├── config.ts             # D1 配置 CRUD
-│   ├── crypto.ts             # AES-GCM + SHA-256
+│   ├── db.ts                 # D1 schema 初始化 + 运行时迁移
+│   ├── config.ts             # D1 配置 CRUD + 多密钥管理 + 故障转移
+│   ├── crypto.ts             # AES-GCM + SHA-256 + 密钥哈希
 │   ├── rate-limit.ts         # 登录限流
-│   ├── usage.ts              # 用量追踪 + 调用记录
+│   ├── usage.ts              # 用量追踪 + 调用记录 + 缓存提取
 │   ├── middleware/
-│   │   └── auth.ts           # 认证中间件 (4 种认证方式)
+│   │   └── auth.ts           # 认证中间件 (多密钥匹配 + 名称注入)
 │   ├── routes/
 │   │   ├── admin/
 │   │   │   ├── auth.ts
 │   │   │   ├── providers.ts
-│   │   │   ├── client-key.ts
+│   │   │   ├── client-key.ts  # 多密钥 CRUD + 迁移
 │   │   │   └── usage.ts
 │   │   ├── v1/
-│   │   │   ├── models.ts     # /v1/models (OpenAI 格式)
-│   │   │   └── chat.ts       # /v1/chat/completions (AI SDK)
+│   │   │   ├── models.ts
+│   │   │   └── chat.ts
 │   │   ├── v1beta/
-│   │   │   ├── models.ts     # /v1beta/models (Gemini 格式)
-│   │   │   └── chat.ts       # /v1beta/models/:model:generateContent
+│   │   │   ├── models.ts
+│   │   │   └── chat.ts
 │   │   └── anthropic/
-│   │       └── messages.ts   # /anthropic/v1/messages (Anthropic SSE)
+│   │       └── messages.ts
 │   └── providers/
-│       ├── vertex.ts         # Vertex AI (JWT + API Key, model list)
-│       ├── ai-studio.ts      # Google AI Studio (model list)
-│       └── openai.ts         # OpenAI 官方 (model list)
+│       ├── vertex.ts
+│       ├── ai-studio.ts
+│       └── openai.ts
 ├── test/
-│   └── index.spec.js         # 集成测试
+│   └── index.spec.js
 └── admin-ui/                 # SvelteKit 管理面板
     ├── package.json
     └── src/
@@ -424,8 +439,9 @@ npm run deploy           # 构建 + 部署到 Cloudflare
         ├── lib/
         │   ├── api.ts        # /admin/* API 客户端
         │   ├── Sidebar.svelte
+        │   ├── ApiKeyList.svelte
         │   ├── CallLogTable.svelte
-        │   ├── ProviderForm.svelte
+        │   ├── LogDetailModal.svelte
         │   └── ...
         └── routes/
             ├── +layout.svelte
@@ -434,7 +450,7 @@ npm run deploy           # 构建 + 部署到 Cloudflare
                 ├── +page.svelte      # 概览
                 ├── logs/+page.svelte
                 ├── api-settings/+page.svelte
-                └── panel-settings/+page.svelte
+                └── settings/+page.svelte
 ```
 
 ## 设计系统 — Code Dark

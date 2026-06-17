@@ -1,4 +1,4 @@
 -- Migration: 0003_duration
 -- Track API call duration in call_logs
-
-ALTER TABLE call_logs ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0;
+-- NOTE: This column is managed by db.ts runtime migration (ALTER TABLE with try/catch).
+-- The migration file exists as a marker only.

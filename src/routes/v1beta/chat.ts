@@ -12,7 +12,8 @@ import type { Env } from '../../types';
 import type { ProviderMatch } from '../../router';
 import { findProviderForModel } from '../../router';
 import { createModelFromProvider } from '../../ai-providers';
-import { recordUsage } from '../../usage';
+import { recordUsage, extractCacheTokens } from '../../usage';
+import { getFailoverEnabled } from '../../config';
 
 export const v1betaChatRoutes = new Hono<{ Bindings: Env }>();
 
@@ -135,6 +136,8 @@ async function handleGeminiStream(
 
 	const encoder = new TextEncoder();
 	let fullText = '';
+	let lastInputTokens = 0;
+	let lastOutputTokens = 0;
 
 	const stream = new ReadableStream({
 		async start(controller) {
@@ -153,25 +156,18 @@ async function handleGeminiStream(
 
 						case 'finish': {
 							const finishReason = mapFinishReason(part.finishReason);
+							lastInputTokens = part.totalUsage?.inputTokens || 0;
+							lastOutputTokens = part.totalUsage?.outputTokens || 0;
 							const chunk = JSON.stringify(
 								buildGeminiChunk(fullText, finishReason, {
-									inputTokens: part.totalUsage?.inputTokens || 0,
-									outputTokens: part.totalUsage?.outputTokens || 0,
+									inputTokens: lastInputTokens,
+									outputTokens: lastOutputTokens,
 									totalTokens: part.totalUsage?.totalTokens || 0,
 								}),
 							);
 							controller.enqueue(
 								encoder.encode(altSse ? `data: ${chunk}\n\n` : `${chunk}\n`),
 							);
-
-							if (execCtx) {
-								execCtx.waitUntil(
-									recordUsage(env, provider.provider.id, rawModelId, ip,
-										{ prompt: part.totalUsage?.inputTokens || 0, completion: part.totalUsage?.outputTokens || 0 },
-										true, Date.now() - startMs, requestId, true, {},
-									),
-								);
-							}
 							break;
 						}
 
@@ -183,6 +179,29 @@ async function handleGeminiStream(
 							break;
 						}
 					}
+				}
+
+				// Extract cache tokens from provider metadata
+				let cacheRead = 0;
+				let cacheCreation = 0;
+				try {
+					const metadata = await result.providerMetadata;
+					if (metadata) {
+						const cache = extractCacheTokens(metadata);
+						cacheRead = cache.cacheReadInputTokens;
+						cacheCreation = cache.cacheCreationInputTokens;
+					}
+				} catch { /* provider metadata not available */ }
+
+				if (execCtx && lastInputTokens + lastOutputTokens > 0) {
+					execCtx.waitUntil(
+						recordUsage(env, provider.provider.id, rawModelId, ip,
+							{ prompt: lastInputTokens, completion: lastOutputTokens },
+							true, Date.now() - startMs, requestId, true, {},
+							cacheRead, cacheCreation,
+							env.clientKeyName || '',
+						),
+					);
 				}
 			} catch (err) {
 				const errMsg = (err as Error).message || 'Unknown error';
@@ -236,6 +255,17 @@ async function handleGeminiNonStream(
 
 	const finishReason = mapFinishReason(result.finishReason);
 
+	let cacheRead = 0;
+	let cacheCreation = 0;
+	try {
+		const metadata = await result.providerMetadata;
+		if (metadata) {
+			const cache = extractCacheTokens(metadata);
+			cacheRead = cache.cacheReadInputTokens;
+			cacheCreation = cache.cacheCreationInputTokens;
+		}
+	} catch { /* provider metadata not available */ }
+
 	if (execCtx) {
 		execCtx.waitUntil(
 			recordUsage(
@@ -249,6 +279,9 @@ async function handleGeminiNonStream(
 				requestId,
 				false,
 				{},
+				cacheRead,
+				cacheCreation,
+				env.clientKeyName || '',
 			),
 		);
 	}
@@ -338,9 +371,11 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
 
-	// Try each candidate in weight order
+	// Try each candidate in weight order (if failover enabled)
+	const failoverEnabled = await getFailoverEnabled(c.env);
+	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
 	let lastError = '';
-	for (const candidate of candidates) {
+	for (const candidate of tryCandidates) {
 		try {
 			if (isStream) {
 				return await handleGeminiStream(
@@ -389,7 +424,9 @@ v1betaChatRoutes.post('/models/:modelId', async (c: Context<{ Bindings: Env }>) 
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 
-	for (const candidate of candidates) {
+	const failoverEnabled = await getFailoverEnabled(c.env);
+	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
+	for (const candidate of tryCandidates) {
 		try {
 			return await handleGeminiNonStream(
 				body, requestId, candidate, c.env, ip, execCtx, Date.now(), modelId,

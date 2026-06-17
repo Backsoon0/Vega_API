@@ -1,53 +1,79 @@
 // src/routes/admin/client-key.ts
-// Admin client API key management routes
+// Admin API key management routes — multi-key CRUD
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
-import { getClientApiKey, setClientApiKey } from '../../config';
+import { listApiKeys, createApiKey, deleteApiKey, renameApiKey, migrateLegacyApiKey, getClientApiKey, setClientApiKey } from '../../config';
 
-export const adminClientKeyRoutes = new Hono<{ Bindings: Env }>();
+export const adminApiKeyRoutes = new Hono<{ Bindings: Env }>();
 
-// GET /admin/client-key — Get client key info (masked by default, ?reveal=true to show)
-adminClientKeyRoutes.get('/client-key', async (c: Context<{ Bindings: Env }>) => {
-	const key = await getClientApiKey(c.env);
-	if (!key) {
-		return c.json({ configured: false, message: 'No client API key set. /v1/* routes are public.' });
-	}
-	const reveal = c.req.query('reveal') === 'true';
-	const masked = key.length > 8 ? '*'.repeat(key.length - 4) + key.slice(-4) : '****';
-	const result: Record<string, unknown> = {
-		configured: true,
-		masked,
-		length: key.length,
-		prefix: key.substring(0, 4),
-	};
-	if (reveal) result.fullKey = key;
-	return c.json(result);
+// GET /admin/api-keys — List all keys (info only, no secrets)
+adminApiKeyRoutes.get('/api-keys', async (c: Context<{ Bindings: Env }>) => {
+	const keys = await listApiKeys(c.env);
+	// Also include legacy key status
+	const legacyKey = await getClientApiKey(c.env);
+	return c.json({
+		keys,
+		hasLegacyKey: !!legacyKey,
+	});
 });
 
-// POST /admin/client-key — Set or generate client API key
-adminClientKeyRoutes.post('/client-key', async (c: Context<{ Bindings: Env }>) => {
+// POST /admin/api-keys — Create a new key with a name
+adminApiKeyRoutes.post('/api-keys', async (c: Context<{ Bindings: Env }>) => {
 	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+	const name = String(body.name || '').trim();
+	if (!name) return c.json({ error: '密钥名称不能为空' }, 400);
+
 	let key = String(body.key || '');
 	if (body.generate || !key) {
 		const bytes = crypto.getRandomValues(new Uint8Array(32));
 		key = 'sk-' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 	}
-	if (key.length < 8) return c.json({ error: 'API key must be at least 8 characters' }, 400);
-	await setClientApiKey(c.env, key);
-	const masked = key.length > 8 ? '*'.repeat(key.length - 4) + key.slice(-4) : '****';
+	if (key.length < 8) return c.json({ error: 'API key 至少需要 8 个字符' }, 400);
+
+	const info = await createApiKey(c.env, name, key);
 	return c.json({
 		ok: true,
-		message: 'Client API key set',
-		masked,
+		message: `密钥 "${name}" 已创建`,
+		key: info,
 		fullKey: key,
-		configured: true,
 	});
 });
 
-// DELETE /admin/client-key — Remove client API key (makes /v1/* public)
-adminClientKeyRoutes.delete('/client-key', async (c: Context<{ Bindings: Env }>) => {
+// PUT /admin/api-keys/:id — Rename a key
+adminApiKeyRoutes.put('/api-keys/:id', async (c: Context<{ Bindings: Env }>) => {
+	const id = parseInt(c.req.param('id') || '0');
+	if (!id) return c.json({ error: '无效的密钥 ID' }, 400);
+	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+	const name = String(body.name || '').trim();
+	if (!name) return c.json({ error: '密钥名称不能为空' }, 400);
+	const updated = await renameApiKey(c.env, id, name);
+	if (!updated) return c.json({ error: '密钥不存在' }, 404);
+	return c.json({ ok: true, message: `密钥已重命名为 "${name}"` });
+});
+
+// POST /admin/api-keys/legacy/migrate — Migrate legacy key to a named key
+adminApiKeyRoutes.post('/api-keys/legacy/migrate', async (c: Context<{ Bindings: Env }>) => {
+	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+	const name = String(body.name || '').trim();
+	if (!name) return c.json({ error: '密钥名称不能为空' }, 400);
+	const info = await migrateLegacyApiKey(c.env, name);
+	if (!info) return c.json({ error: '没有旧版密钥可迁移' }, 404);
+	return c.json({ ok: true, message: `旧版密钥已迁移为 "${name}"`, key: info });
+});
+
+// DELETE /admin/api-keys/:id — Delete a key
+adminApiKeyRoutes.delete('/api-keys/:id', async (c: Context<{ Bindings: Env }>) => {
+	const id = parseInt(c.req.param('id') || '0');
+	if (!id) return c.json({ error: '无效的密钥 ID' }, 400);
+	const deleted = await deleteApiKey(c.env, id);
+	if (!deleted) return c.json({ error: '密钥不存在' }, 404);
+	return c.json({ ok: true, message: '密钥已删除' });
+});
+
+// DELETE /admin/api-keys/legacy — Delete the legacy key
+adminApiKeyRoutes.delete('/api-keys/legacy', async (c: Context<{ Bindings: Env }>) => {
 	await setClientApiKey(c.env, null);
-	return c.json({ ok: true, message: 'Client API key removed. /v1/* routes are now public.' });
+	return c.json({ ok: true, message: '旧版密钥已删除' });
 });

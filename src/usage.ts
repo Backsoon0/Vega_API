@@ -25,7 +25,10 @@ export async function recordUsage(
   durationMs: number = 0,
   requestId: string = '',
   isStream: boolean = false,
-  extra: Record<string, string> = {}
+  extra: Record<string, string> = {},
+  cacheReadInputTokens: number = 0,
+  cacheCreationInputTokens: number = 0,
+  apiKeyName: string = '',
 ): Promise<void> {
   try {
     const today = isoDate();
@@ -44,18 +47,20 @@ export async function recordUsage(
       .bind(today, providerId, model, usage.prompt, usage.completion, usage.prompt, usage.completion)
       .run();
 
-    // Insert into call_logs (includes new columns from migration 0005)
+    // Insert into call_logs (includes new columns from migration 0005 + 0008)
     await env.DB
       .prepare(
-        `INSERT INTO call_logs (timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO call_logs (timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra, cache_read_input_tokens, cache_creation_input_tokens, api_key_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         now, ip, providerId, model,
         usage.prompt || 0, usage.completion || 0,
         durationMs, success ? 1 : 0,
         requestId, isStream ? 1 : 0,
-        JSON.stringify(extra)
+        JSON.stringify(extra),
+        cacheReadInputTokens, cacheCreationInputTokens,
+        apiKeyName,
       )
       .run();
 
@@ -99,6 +104,9 @@ export async function getCallLogs(
     requestId: string;
     isStream: boolean;
     extra: Record<string, string>;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+    apiKeyName: string;
   }>; total: number; hasMore: boolean }> {
   const limit = opts.limit || 200;
   const offset = opts.offset || 0;
@@ -142,7 +150,7 @@ export async function getCallLogs(
     // Fetch rows (limit+1 to detect hasMore)
     const rows = await env.DB
       .prepare(
-        `SELECT id, timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra
+        `SELECT id, timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra, cache_read_input_tokens, cache_creation_input_tokens, api_key_name
          FROM call_logs ${whereClauses}
          ORDER BY timestamp DESC
          LIMIT ? OFFSET ?`
@@ -161,6 +169,9 @@ export async function getCallLogs(
         request_id: string;
         is_stream: number;
         extra: string;
+        cache_read_input_tokens: number;
+        cache_creation_input_tokens: number;
+        api_key_name: string;
       }>();
 
     const results = rows.results || [];
@@ -178,6 +189,9 @@ export async function getCallLogs(
       requestId: r.request_id || '',
       isStream: r.is_stream === 1,
       extra: (() => { try { return JSON.parse(r.extra || '{}'); } catch { return {}; } })(),
+      cacheReadInputTokens: r.cache_read_input_tokens || 0,
+      cacheCreationInputTokens: r.cache_creation_input_tokens || 0,
+      apiKeyName: r.api_key_name || '',
     }));
 
     return { logs: trimmed, total, hasMore };
@@ -287,4 +301,55 @@ export async function getUsageTotals(env: Env): Promise<Record<string, UsageReco
     console.error('Usage totals error:', (err as Error).message);
   }
   return result;
+}
+
+/**
+ * Extract cache hit tokens from AI SDK provider metadata.
+ * Different providers expose cache info in different shapes.
+ * Returns { cacheReadInputTokens, cacheCreationInputTokens }.
+ */
+export function extractCacheTokens(providerMetadata: Record<string, Record<string, unknown>> | undefined): {
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+} {
+	if (!providerMetadata) return { cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+
+	// Anthropic: metadata.anthropic.usage.{cache_read_input_tokens, cache_creation_input_tokens}
+	const anthropic = providerMetadata.anthropic;
+	if (anthropic?.usage && typeof anthropic.usage === 'object') {
+		const usage = anthropic.usage as Record<string, number>;
+		if (usage.cache_read_input_tokens || usage.cache_creation_input_tokens) {
+			return {
+				cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+				cacheCreationInputTokens: usage.cache_creation_input_tokens || 0,
+			};
+		}
+	}
+
+	// OpenAI: may appear as metadata.openai.usage.prompt_tokens_details.cached_tokens
+	const openai = providerMetadata.openai;
+	if (openai?.usage && typeof openai.usage === 'object') {
+		const usage = openai.usage as Record<string, unknown>;
+		const details = usage.prompt_tokens_details as Record<string, number> | undefined;
+		if (details?.cached_tokens) {
+			return {
+				cacheReadInputTokens: details.cached_tokens || 0,
+				cacheCreationInputTokens: 0, // OpenAI only reports cached, not creation
+			};
+		}
+	}
+
+	// Google: may appear as metadata.google.usageMetadata.{cachedContentTokenCount, ...}
+	const google = providerMetadata.google;
+	if (google?.usageMetadata && typeof google.usageMetadata === 'object') {
+		const um = google.usageMetadata as Record<string, number>;
+		if (um.cachedContentTokenCount) {
+			return {
+				cacheReadInputTokens: um.cachedContentTokenCount || 0,
+				cacheCreationInputTokens: 0,
+			};
+		}
+	}
+
+	return { cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
 }

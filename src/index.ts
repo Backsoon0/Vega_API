@@ -13,7 +13,7 @@ import { clientAuthMiddleware, adminAuthMiddleware } from './middleware/auth';
 // Route modules
 import { adminAuthRoutes } from './routes/admin/auth';
 import { adminProviderRoutes } from './routes/admin/providers';
-import { adminClientKeyRoutes } from './routes/admin/client-key';
+import { adminApiKeyRoutes } from './routes/admin/client-key';
 import { adminUsageRoutes } from './routes/admin/usage';
 import { v1ModelRoutes } from './routes/v1/models';
 import { v1ChatRoutes } from './routes/v1/chat';
@@ -52,7 +52,7 @@ app.use('/admin/*', adminAuthMiddleware());
 
 app.route('/admin', adminAuthRoutes);
 app.route('/admin', adminProviderRoutes);
-app.route('/admin', adminClientKeyRoutes);
+app.route('/admin', adminApiKeyRoutes);
 app.route('/admin', adminUsageRoutes);
 
 // ---- /v1/* Client API routes ----

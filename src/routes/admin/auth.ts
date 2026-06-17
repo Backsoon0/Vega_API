@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { sha256 } from '../../crypto';
-import { getAdminPasswordHash, setAdminPassword } from '../../config';
+import { getAdminPasswordHash, setAdminPassword, getFailoverEnabled, setFailoverEnabled } from '../../config';
 import { rateLimitLogin, recordLoginFailure, resetLoginRate, getRateLimitConfig } from '../../rate-limit';
 import { requireAdminAuth } from '../../middleware/auth';
 
@@ -80,4 +80,21 @@ adminAuthRoutes.post('/change-password', async (c: Context<{ Bindings: Env }>) =
 	const newHash = await sha256(newPass);
 	await setAdminPassword(c.env, newHash);
 	return c.json({ ok: true, token: newHash, message: 'Password changed' });
+});
+
+// GET /admin/settings — Get all settings
+adminAuthRoutes.get('/settings', async (c: Context<{ Bindings: Env }>) => {
+	const failoverEnabled = await getFailoverEnabled(c.env);
+	return c.json({
+		failoverEnabled,
+	});
+});
+
+// PUT /admin/settings — Update settings
+adminAuthRoutes.put('/settings', async (c: Context<{ Bindings: Env }>) => {
+	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+	if (typeof body.failoverEnabled === 'boolean') {
+		await setFailoverEnabled(c.env, body.failoverEnabled);
+	}
+	return c.json({ ok: true, message: '设置已保存' });
 });

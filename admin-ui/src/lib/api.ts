@@ -190,7 +190,64 @@ export interface UsageData {
   daily?: Record<string, { calls: number; promptTokens: number; completionTokens: number }>;
 }
 
+// Multi-key API keys
+export async function getApiKeys() {
+	const { ok, data } = await request('GET', '/api-keys');
+	if (!ok) throw new Error(data.error || '获取密钥列表失败');
+	return data as { keys: ApiKeyInfo[]; hasLegacyKey: boolean };
+}
+
+export async function createApiKey(name: string, key?: string, generate?: boolean) {
+	const { ok, data } = await request('POST', '/api-keys', { name, key, generate });
+	if (!ok) throw new Error(data.error || '创建密钥失败');
+	return data as { ok: boolean; message: string; key: ApiKeyInfo; fullKey: string };
+}
+
+export async function deleteApiKey(id: number) {
+	const { ok, data } = await request('DELETE', `/api-keys/${id}`);
+	if (!ok) throw new Error(data.error || '删除密钥失败');
+	return data;
+}
+
+export async function renameApiKey(id: number, name: string) {
+	const { ok, data } = await request('PUT', `/api-keys/${id}`, { name });
+	if (!ok) throw new Error(data.error || '重命名密钥失败');
+	return data;
+}
+
+export async function migrateLegacyKey(name: string) {
+	const { ok, data } = await request('POST', '/api-keys/legacy/migrate', { name });
+	if (!ok) throw new Error(data.error || '迁移旧版密钥失败');
+	return data as { ok: boolean; message: string; key: ApiKeyInfo };
+}
+
+export async function deleteLegacyKey() {
+	const { ok, data } = await request('DELETE', '/api-keys/legacy');
+	if (!ok) throw new Error(data.error || '删除旧版密钥失败');
+	return data;
+}
+
+// Settings
+export async function getSettings() {
+	const { ok, data } = await request('GET', '/settings');
+	if (!ok) throw new Error(data.error || '获取设置失败');
+	return data as { failoverEnabled: boolean };
+}
+
+export async function updateSettings(settings: { failoverEnabled?: boolean }) {
+	const { ok, data } = await request('PUT', '/settings', settings);
+	if (!ok) throw new Error(data.error || '保存设置失败');
+	return data;
+}
+
 // Types
+export interface ApiKeyInfo {
+	id: number;
+	name: string;
+	createdAt: string;
+	lastUsedAt: string | null;
+}
+
 export interface Provider {
   id: string;
   type: 'vertex_ai' | 'google_ai_studio' | 'openai' | 'anthropic';
@@ -220,18 +277,21 @@ export interface ClientKeyInfo {
 }
 
 export interface LogEntry {
-  id: number;
-  timestamp: string;
-  ip: string;
-  providerId: string;
-  model: string;
-  promptTokens: number;
-  completionTokens: number;
-  durationMs: number;
-  success: boolean;
-  requestId: string;
-  isStream: boolean;
-  extra: Record<string, string>;
+	id: number;
+	timestamp: string;
+	ip: string;
+	providerId: string;
+	model: string;
+	promptTokens: number;
+	completionTokens: number;
+	durationMs: number;
+	success: boolean;
+	requestId: string;
+	isStream: boolean;
+	extra: Record<string, string>;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+	apiKeyName: string;
 }
 
 // Export state getters

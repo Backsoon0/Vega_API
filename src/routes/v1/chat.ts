@@ -11,7 +11,8 @@ import type { Env } from '../../types';
 import type { ProviderMatch } from '../../router';
 import { findProviderForModel } from '../../router';
 import { createModelFromProvider } from '../../ai-providers';
-import { recordUsage } from '../../usage';
+import { recordUsage, extractCacheTokens } from '../../usage';
+import { getFailoverEnabled } from '../../config';
 
 export const v1ChatRoutes = new Hono<{ Bindings: Env }>();
 
@@ -180,6 +181,8 @@ async function handleOpenAIStream(
 	const stream = new ReadableStream({
 		async start(controller) {
 			let contentFiltered = false;
+			let lastPromptTokens = 0;
+			let lastCompletionTokens = 0;
 			try {
 				for await (const part of result.fullStream) {
 					switch (part.type) {
@@ -206,6 +209,8 @@ async function handleOpenAIStream(
 						case 'finish': {
 							const finishReason = mapFinishReason(part.finishReason);
 							contentFiltered = part.finishReason === 'content-filter';
+							lastPromptTokens = part.totalUsage?.inputTokens || 0;
+							lastCompletionTokens = part.totalUsage?.outputTokens || 0;
 							controller.enqueue(
 								encoder.encode(
 									`data: ${JSON.stringify({
@@ -221,34 +226,14 @@ async function handleOpenAIStream(
 											},
 										],
 										usage: {
-											prompt_tokens: part.totalUsage?.inputTokens || 0,
-											completion_tokens: part.totalUsage?.outputTokens || 0,
+											prompt_tokens: lastPromptTokens,
+											completion_tokens: lastCompletionTokens,
 											total_tokens: part.totalUsage?.totalTokens || 0,
 										},
 									})}\n\n`,
 								),
 							);
 							controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-
-							if (execCtx) {
-								execCtx.waitUntil(
-									recordUsage(
-										env,
-										provider.provider.id,
-										modelId,
-										ip,
-										{
-											prompt: part.totalUsage?.inputTokens || 0,
-											completion: part.totalUsage?.outputTokens || 0,
-										},
-										true,
-										Date.now() - startMs,
-										requestId,
-										true,
-										{},
-									),
-								);
-							}
 							break;
 						}
 
@@ -263,6 +248,38 @@ async function handleOpenAIStream(
 							controller.enqueue(encoder.encode('data: [DONE]\n\n'));
 							break;
 					}
+				}
+
+				// Extract cache tokens from provider metadata (available after stream)
+				let cacheRead = 0;
+				let cacheCreation = 0;
+				try {
+					const metadata = await result.providerMetadata;
+					if (metadata) {
+						const cache = extractCacheTokens(metadata);
+						cacheRead = cache.cacheReadInputTokens;
+						cacheCreation = cache.cacheCreationInputTokens;
+					}
+				} catch { /* provider metadata not available */ }
+
+				if (execCtx && lastPromptTokens + lastCompletionTokens > 0) {
+					execCtx.waitUntil(
+						recordUsage(
+							env,
+							provider.provider.id,
+							modelId,
+							ip,
+							{ prompt: lastPromptTokens, completion: lastCompletionTokens },
+							true,
+							Date.now() - startMs,
+							requestId,
+							true,
+							{},
+							cacheRead,
+							cacheCreation,
+							env.clientKeyName || '',
+						),
+					);
 				}
 			} catch (err) {
 				if (!contentFiltered) {
@@ -326,6 +343,18 @@ async function handleOpenAINonStream(
 
 	const finishReason = mapFinishReason(result.finishReason);
 
+	// Extract cache tokens from provider metadata
+	let cacheRead = 0;
+	let cacheCreation = 0;
+	try {
+		const metadata = await result.providerMetadata;
+		if (metadata) {
+			const cache = extractCacheTokens(metadata);
+			cacheRead = cache.cacheReadInputTokens;
+			cacheCreation = cache.cacheCreationInputTokens;
+		}
+	} catch { /* provider metadata not available */ }
+
 	if (execCtx) {
 		execCtx.waitUntil(
 			recordUsage(
@@ -339,6 +368,9 @@ async function handleOpenAINonStream(
 				requestId,
 				false,
 				{},
+				cacheRead,
+				cacheCreation,
+				env.clientKeyName || '',
 			),
 		);
 	}
@@ -417,9 +449,13 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
 
-	// Try each candidate in weight order; fall back on failure
+	// Check failover config — if disabled, only try the first candidate
+	const failoverEnabled = await getFailoverEnabled(c.env);
+	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
+
+	// Try each candidate in weight order; fall back on failure (if failover enabled)
 	let lastError = '';
-	for (const candidate of candidates) {
+	for (const candidate of tryCandidates) {
 		try {
 			if (isStream) {
 				return await handleOpenAIStream(
@@ -445,6 +481,8 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 						requestId,
 						isStream,
 						{ errorType: 'provider_error', errorMessage: (err as Error).message?.slice(0, 300) },
+						0, 0,
+						c.env.clientKeyName || '',
 					),
 				);
 			}
@@ -465,6 +503,8 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 				requestId,
 				isStream,
 				{ errorType: 'all_providers_failed', errorMessage: lastError.slice(0, 300) },
+				0, 0,
+				c.env.clientKeyName || '',
 			),
 		);
 	}
