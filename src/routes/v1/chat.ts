@@ -268,25 +268,25 @@ async function handleOpenAIStream(
 					}
 				} catch { /* provider metadata not available */ }
 
-				if (execCtx && lastPromptTokens + lastCompletionTokens > 0) {
-					execCtx.waitUntil(
-						recordUsage(
-							env,
-							provider.provider.id,
-							modelId,
-							ip,
-							{ prompt: lastPromptTokens, completion: lastCompletionTokens },
-							true,
-							Date.now() - startMs,
-							requestId,
-							true,
-							{},
-							cacheRead,
-							cacheCreation,
-							env.clientKeyName || '',
-						),
-					);
-				}
+			if (execCtx) {
+				execCtx.waitUntil(
+					recordUsage(
+						env,
+						provider.provider.id,
+						modelId,
+						ip,
+						{ prompt: lastPromptTokens, completion: lastCompletionTokens },
+						true,
+						Date.now() - startMs,
+						requestId,
+						true,
+						{},
+						cacheRead,
+						cacheCreation,
+						env.clientKeyName || '',
+					),
+				);
+			}
 		} catch (err) {
 			if (!contentFiltered) {
 				const errMsg = err instanceof Error
@@ -294,6 +294,16 @@ async function handleOpenAIStream(
 					: typeof err === 'string'
 						? err
 						: JSON.stringify(err);
+				if (execCtx) {
+					execCtx.waitUntil(
+						recordUsage(env, provider.provider.id, modelId, ip,
+							{ prompt: 0, completion: 0 }, false,
+							Date.now() - startMs, requestId, true,
+							{ errorType: 'stream_error', errorMessage: errMsg.slice(0, 300) },
+							0, 0, env.clientKeyName || '',
+						),
+					);
+				}
 				controller.enqueue(
 						encoder.encode(
 							`data: ${JSON.stringify({

@@ -262,31 +262,41 @@ async function handleAnthropicStream(
 					}
 				} catch { /* provider metadata not available */ }
 
-				if (execCtx && lastInputTokens + lastOutputTokens > 0) {
-					execCtx.waitUntil(
-						recordUsage(
-							env,
-							provider.provider.id,
-							rawModelId,
-							ip,
-							{ prompt: lastInputTokens, completion: lastOutputTokens },
-							true,
-							Date.now() - startMs,
-							requestId,
-							true,
-							{},
-							cacheRead,
-							cacheCreation,
-							env.clientKeyName || '',
-						),
-					);
-				}
+			if (execCtx) {
+				execCtx.waitUntil(
+					recordUsage(
+						env,
+						provider.provider.id,
+						rawModelId,
+						ip,
+						{ prompt: lastInputTokens, completion: lastOutputTokens },
+						true,
+						Date.now() - startMs,
+						requestId,
+						true,
+						{},
+						cacheRead,
+						cacheCreation,
+						env.clientKeyName || '',
+					),
+				);
+			}
 		} catch (err) {
 			const errMsg = err instanceof Error
 				? err.message
 				: typeof err === 'string'
 					? err
 					: JSON.stringify(err);
+			if (execCtx) {
+				execCtx.waitUntil(
+					recordUsage(env, provider.provider.id, rawModelId, ip,
+						{ prompt: 0, completion: 0 }, false,
+						Date.now() - startMs, requestId, true,
+						{ errorType: 'stream_error', errorMessage: errMsg.slice(0, 300) },
+						0, 0, env.clientKeyName || '',
+					),
+				);
+			}
 			controller.enqueue(
 					encoder.encode(
 						`event: error\ndata: ${JSON.stringify({
@@ -474,11 +484,31 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 				? err
 				: JSON.stringify(err);
 		lastError = `Provider ${candidate.provider.id}: ${errMsg}`;
-			console.error(lastError);
+		console.error(lastError);
+		if (execCtx) {
+			execCtx.waitUntil(
+				recordUsage(c.env, candidate.provider.id, rawModelId, ip,
+					{ prompt: 0, completion: 0 }, false,
+					Date.now() - startMs, requestId, isStream,
+					{ errorType: 'provider_error', errorMessage: errMsg.slice(0, 300) },
+					0, 0, c.env.clientKeyName || '',
+				),
+			);
 		}
 	}
+}
 
-	return c.json(
+if (execCtx) {
+	execCtx.waitUntil(
+		recordUsage(c.env, 'unknown', rawModelId, ip,
+			{ prompt: 0, completion: 0 }, false, 0,
+			requestId, isStream,
+			{ errorType: 'all_providers_failed', errorMessage: lastError.slice(0, 300) },
+			0, 0, c.env.clientKeyName || '',
+		),
+	);
+}
+return c.json(
 		{
 			type: 'error',
 			error: {

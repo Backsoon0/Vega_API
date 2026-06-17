@@ -198,22 +198,32 @@ async function handleGeminiStream(
 					}
 				} catch { /* provider metadata not available */ }
 
-				if (execCtx && lastInputTokens + lastOutputTokens > 0) {
-					execCtx.waitUntil(
-						recordUsage(env, provider.provider.id, rawModelId, ip,
-							{ prompt: lastInputTokens, completion: lastOutputTokens },
-							true, Date.now() - startMs, requestId, true, {},
-							cacheRead, cacheCreation,
-							env.clientKeyName || '',
-						),
-					);
-				}
+			if (execCtx) {
+				execCtx.waitUntil(
+					recordUsage(env, provider.provider.id, rawModelId, ip,
+						{ prompt: lastInputTokens, completion: lastOutputTokens },
+						true, Date.now() - startMs, requestId, true, {},
+						cacheRead, cacheCreation,
+						env.clientKeyName || '',
+					),
+				);
+			}
 		} catch (err) {
 			const errMsg = err instanceof Error
 				? err.message
 				: typeof err === 'string'
 					? err
 					: JSON.stringify(err);
+			if (execCtx) {
+				execCtx.waitUntil(
+					recordUsage(env, provider.provider.id, rawModelId, ip,
+						{ prompt: 0, completion: 0 }, false,
+						Date.now() - startMs, requestId, true,
+						{ errorType: 'stream_error', errorMessage: errMsg.slice(0, 300) },
+						0, 0, env.clientKeyName || '',
+					),
+				);
+			}
 			const chunk = JSON.stringify({ error: { message: errMsg, code: 500 } });
 				controller.enqueue(
 					encoder.encode(altSse ? `data: ${chunk}\n\n` : `${chunk}\n`),
@@ -395,15 +405,40 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 				body, requestId, candidate, c.env, ip, execCtx, startMs, modelId,
 			);
 		} catch (err) {
-			lastError = `Provider ${candidate.provider.id}: ${(err as Error).message}`;
-			console.error(lastError);
+		const errMsg = err instanceof Error
+			? err.message
+			: typeof err === 'string'
+				? err
+				: JSON.stringify(err);
+		lastError = `Provider ${candidate.provider.id}: ${errMsg}`;
+		if (execCtx) {
+			execCtx.waitUntil(
+				recordUsage(c.env, candidate.provider.id, modelId, ip,
+					{ prompt: 0, completion: 0 }, false,
+					Date.now() - startMs, requestId, isStream,
+					{ errorType: 'provider_error', errorMessage: errMsg.slice(0, 300) },
+					0, 0, c.env.clientKeyName || '',
+				),
+			);
 		}
 	}
+}
 
-	return c.json(
-		{ error: { message: `All providers failed. Last error: ${lastError}`, code: 502 } },
-		502,
+// All providers failed
+if (execCtx) {
+	execCtx.waitUntil(
+		recordUsage(c.env, 'unknown', modelId, ip,
+			{ prompt: 0, completion: 0 }, false, 0,
+			requestId, isStream,
+			{ errorType: 'all_providers_failed', errorMessage: lastError.slice(0, 300) },
+			0, 0, c.env.clientKeyName || '',
+		),
 	);
+}
+return c.json(
+	{ error: { message: `All providers failed. Last error: ${lastError}`, code: 502 } },
+	502,
+);
 });
 
 /**
@@ -432,13 +467,14 @@ v1betaChatRoutes.post('/models/:modelId', async (c: Context<{ Bindings: Env }>) 
 	const ip = c.req.header('CF-Connecting-IP') || 'unknown';
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
+	const startMs = Date.now();
 
 	const failoverEnabled = await getFailoverEnabled(c.env);
 	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
 	for (const candidate of tryCandidates) {
 		try {
 			return await handleGeminiNonStream(
-				body, requestId, candidate, c.env, ip, execCtx, Date.now(), modelId,
+				body, requestId, candidate, c.env, ip, execCtx, startMs, modelId,
 			);
 		} catch (err) {
 		const errMsg = err instanceof Error
@@ -447,11 +483,31 @@ v1betaChatRoutes.post('/models/:modelId', async (c: Context<{ Bindings: Env }>) 
 				? err
 				: JSON.stringify(err);
 		console.error(`Provider ${candidate.provider.id}: ${errMsg}`);
+		if (execCtx) {
+			execCtx.waitUntil(
+				recordUsage(c.env, candidate.provider.id, modelId, ip,
+					{ prompt: 0, completion: 0 }, false,
+					Date.now() - startMs, requestId, false,
+					{ errorType: 'provider_error', errorMessage: errMsg.slice(0, 300) },
+					0, 0, c.env.clientKeyName || '',
+				),
+			);
+		}
 	}
-	}
+}
 
-	return c.json(
-		{ error: { message: 'All Google providers failed', code: 502 } },
-		502,
+if (execCtx) {
+	execCtx.waitUntil(
+		recordUsage(c.env, 'unknown', modelId, ip,
+			{ prompt: 0, completion: 0 }, false, 0,
+			requestId, false,
+			{ errorType: 'all_providers_failed', errorMessage: 'All Google providers failed' },
+			0, 0, c.env.clientKeyName || '',
+		),
 	);
+}
+return c.json(
+	{ error: { message: 'All Google providers failed', code: 502 } },
+	502,
+);
 });
