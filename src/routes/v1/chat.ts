@@ -21,6 +21,11 @@ const MAX_BODY_SIZE = 5_242_880;
 
 // ---- Helpers ----
 
+/** JSON-escape a string for inline embedding (faster than full object stringify) */
+function escJson(s: string): string {
+	return JSON.stringify(s).slice(1, -1);
+}
+
 /**
  * Extract system/developer message content from the messages array.
  * Removes system/developer messages in-place and returns the text.
@@ -104,8 +109,8 @@ function mapFinishReason(reason: string): string {
 
 /**
  * Build AI SDK providerOptions from request body.
- * Detects thinking-related fields (Anthropic/Google formats) and maps them
- * so clients can disable thinking via `"thinking":{"type":"disabled"}` etc.
+ * Detects thinking-related fields (Anthropic/Google/OpenAI formats) and maps them
+ * to provider-native options so thinking/reasoning is enabled at the API level.
  */
 function buildProviderOptions(body: Record<string, unknown>): Record<string, Record<string, any>> {
 	const opts: Record<string, Record<string, any>> = {};
@@ -114,42 +119,292 @@ function buildProviderOptions(body: Record<string, unknown>): Record<string, Rec
 		const t = body.thinking as Record<string, unknown>;
 		// Anthropic format: { thinking: { type: "disabled" } } or { thinking: { type: "enabled", budget_tokens: 4000 } }
 		opts.anthropic = { thinking: t };
-		// Map disabled thinking to Google format
+		// Map to Google format
 		if (t.type === 'disabled') {
 			opts.google = { thinkingConfig: { thinkingBudget: 0 } };
+		} else if (t.type === 'enabled') {
+			const budget = typeof t.budget_tokens === 'number' ? t.budget_tokens : 8192;
+			opts.google = { thinkingConfig: { thinkingBudget: budget } };
 		}
 	}
 
-	// Google direct format: { thinking_config: { thinkingBudget: 0 } }
+	// Google direct format: { thinking_config: { thinkingBudget: 8192 } }
 	if (body.thinking_config && typeof body.thinking_config === 'object' && body.thinking_config !== null) {
 		opts.google = { ...(opts.google || {}), thinkingConfig: body.thinking_config };
+	}
+
+	// OpenAI reasoning format: { reasoning_effort: "medium" }
+	if (body.reasoning_effort && typeof body.reasoning_effort === 'string') {
+		opts.openai = { ...(opts.openai || {}), reasoningEffort: body.reasoning_effort };
 	}
 
 	return opts;
 }
 
-/** Fields consumed by route handling — never forwarded to downstream API */
-const ROUTING_KEYS = new Set(['model', 'stream', 'stream_options']);
+// ---- Stream handler: AI SDK fullStream → OpenAI SSE ----
+
+// ---- Direct fetch handlers (openai type only — no AI SDK overhead) ----
 
 /**
- * Build extra body headers for AI SDK call.
- * Auto-forwards all request body fields (except routing keys) so they reach
- * the downstream API. Used for OpenAI-type providers where the AI SDK strips
- * unknown fields (e.g. DeepSeek `thinking`).
- *
- * SDK-generated body fields always take precedence over injected fields.
+ * Direct streaming handler for OpenAI-compatible providers.
+ * Bypasses the AI SDK entirely: raw fetch + SSE passthrough with string-scan
+ * reasoning remap. Eliminates the triple-layer SSE parse.
  */
-function buildExtraBodyHeaders(body: Record<string, unknown>): Record<string, string> | undefined {
-	const extra: Record<string, unknown> = {};
-	for (const key of Object.keys(body)) {
-		if (!ROUTING_KEYS.has(key)) {
-			extra[key] = body[key];
-		}
+async function handleOpenAIDirectStream(
+	body: Record<string, unknown>,
+	requestId: string,
+	provider: ProviderMatch,
+	env: Env,
+	ip: string,
+	execCtx: ExecutionContext | undefined,
+	startMs: number,
+): Promise<Response> {
+	const modelId = String(body.model).trim();
+	const apiKey = provider.provider.config.apiKey;
+	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
+	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
+		baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
 	}
-	return Object.keys(extra).length > 0 ? { 'X-Vega-Extra-Body': JSON.stringify(extra) } : undefined;
+
+	const upstreamBody = { ...body };
+	upstreamBody.stream = true;
+
+	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'Authorization': `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify(upstreamBody),
+	});
+
+	if (!upstreamResponse.ok) {
+		const errText = await upstreamResponse.text().catch(() => '');
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+				{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) },
+				0, 0, env.clientKeyName || '',
+			));
+		}
+		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, type: 'server_error' } }), {
+			status: upstreamResponse.status,
+			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+		});
+	}
+
+	const encoder = new TextEncoder();
+	const created = Math.floor(Date.now() / 1000);
+	const REASONING_KEY = '"reasoning_content":"';
+	const CONTENT_KEY = '"content":';
+
+	const stream = new ReadableStream({
+		async start(controller) {
+			let streamError = false;
+			let streamErrorMsg = '';
+			let lastPromptTokens = 0;
+			let lastCompletionTokens = 0;
+
+			const reader = upstreamResponse.body!.getReader();
+			const decoder = new TextDecoder();
+			let buf = '';
+
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					buf += decoder.decode(value, { stream: true });
+
+					let nl: number;
+					while ((nl = buf.indexOf('\n')) >= 0) {
+						const line = buf.slice(0, nl);
+						buf = buf.slice(nl + 1);
+
+						if (!line.startsWith('data:')) {
+							controller.enqueue(encoder.encode(line + '\n'));
+							continue;
+						}
+
+						const json = line.slice(line.startsWith('data: ') ? 6 : 5).trim();
+
+						if (json === '[DONE]') {
+							controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+							continue;
+						}
+
+						// Finish event: extract usage, rewrite with our id/created/model
+						if (json.indexOf('"finish_reason":"') >= 0) {
+							try {
+								const parsed = JSON.parse(json);
+								const usage = parsed?.usage;
+								if (usage) {
+									lastPromptTokens = usage.prompt_tokens || 0;
+									lastCompletionTokens = usage.completion_tokens || 0;
+								}
+								const fr = parsed?.choices?.[0]?.finish_reason || 'stop';
+								const finishReason = fr === 'stop' ? 'stop' : fr === 'length' ? 'length'
+									: fr === 'tool_calls' ? 'tool_calls' : fr === 'content_filter' ? 'content_filter' : 'stop';
+								controller.enqueue(encoder.encode(
+									`data: ${JSON.stringify({
+										id: requestId, object: 'chat.completion.chunk', created, model: modelId,
+										choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
+										usage: usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+									})}\n\n`,
+								));
+								controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+							} catch { /* ignore parse errors */ }
+							continue;
+						}
+
+					// Rare: reasoning + content in same delta chunk → split into two events
+					const rcIdx = json.indexOf(REASONING_KEY);
+					if (rcIdx >= 0 && json.indexOf(CONTENT_KEY, rcIdx + REASONING_KEY.length) >= 0) {
+						try {
+							const parsed = JSON.parse(json);
+							const delta = parsed?.choices?.[0]?.delta;
+							if (delta && delta.reasoning_content != null && delta.reasoning_content !== '') {
+								const rc = delta.reasoning_content;
+								const contentVal = delta.content;
+								delete delta.reasoning_content;
+								delete delta.content;
+								// Reasoning chunk: inherit upstream metadata, replace delta
+								if (rc) {
+									const rChunk = JSON.parse(json);
+									rChunk.choices[0].delta = { reasoning_content: rc };
+									controller.enqueue(encoder.encode(`data: ${JSON.stringify(rChunk)}\n\n`));
+								}
+								// Content chunk: original delta with only content
+								if (contentVal != null && contentVal !== '') {
+									delta.content = contentVal;
+									controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed)}\n\n`));
+								}
+							}
+						} catch { /* skip */ }
+						continue;
+					}
+
+						// Normal chunk: pass through unchanged (content, reasoning, tool calls — all native)
+						controller.enqueue(encoder.encode(line + '\n'));
+					}
+				}
+			} catch (err) {
+				streamError = true;
+				streamErrorMsg = err instanceof Error ? err.message : String(err);
+				controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message: streamErrorMsg, type: 'server_error' } })}\n\n`));
+				controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+			} finally {
+				reader.releaseLock();
+				if (execCtx) {
+					execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
+						{ prompt: lastPromptTokens, completion: lastCompletionTokens },
+						!streamError, Date.now() - startMs, requestId, true,
+						streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
+						0, 0, env.clientKeyName || '',
+					));
+				}
+				controller.close();
+			}
+		},
+	});
+
+	return new Response(stream, {
+		status: 200,
+		headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'x-request-id': requestId },
+	});
 }
 
-// ---- Stream handler: AI SDK fullStream → OpenAI SSE ----
+/**
+ * Direct non-streaming handler for OpenAI-compatible providers.
+ */
+async function handleOpenAIDirectNonStream(
+	body: Record<string, unknown>,
+	requestId: string,
+	provider: ProviderMatch,
+	env: Env,
+	ip: string,
+	execCtx: ExecutionContext | undefined,
+	startMs: number,
+): Promise<Response> {
+	const modelId = String(body.model).trim();
+	const apiKey = provider.provider.config.apiKey;
+	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
+	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
+		baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+	}
+
+	const upstreamBody = { ...body };
+	delete upstreamBody.stream;
+
+	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'Authorization': `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify(upstreamBody),
+	});
+
+	if (!upstreamResponse.ok) {
+		const errText = await upstreamResponse.text().catch(() => '');
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
+				{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) },
+				0, 0, env.clientKeyName || '',
+			));
+		}
+		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
+			status: upstreamResponse.status,
+			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+		});
+	}
+
+	const data: any = await upstreamResponse.json();
+	const choice = data.choices?.[0];
+	const msg = choice?.message || {};
+	const usage = data.usage || {};
+
+	if (execCtx) {
+		execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
+			{ prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0 },
+			true, Date.now() - startMs, requestId, false, {},
+			0, 0, env.clientKeyName || '',
+		));
+	}
+
+	const message: Record<string, unknown> = {
+		role: 'assistant',
+		content: msg.content || null,
+	};
+	if (msg.reasoning_content) {
+		message.reasoning_content = msg.reasoning_content;
+	}
+	if (msg.tool_calls?.length) {
+		message.tool_calls = msg.tool_calls;
+	}
+
+	const fr = choice?.finish_reason || 'stop';
+	const finishReason = fr === 'stop' ? 'stop' : fr === 'length' ? 'length'
+		: fr === 'tool_calls' ? 'tool_calls' : fr === 'content_filter' ? 'content_filter' : 'stop';
+
+	return new Response(JSON.stringify({
+		id: requestId,
+		object: 'chat.completion',
+		created: Math.floor(Date.now() / 1000),
+		model: modelId,
+		choices: [{ index: 0, message, finish_reason: finishReason }],
+		usage: {
+			prompt_tokens: usage.prompt_tokens || 0,
+			completion_tokens: usage.completion_tokens || 0,
+			total_tokens: usage.total_tokens || 0,
+		},
+	}), {
+		status: 200,
+		headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+	});
+}
+
+// ---- AI SDK stream handler ----
 
 async function handleOpenAIStream(
 	body: Record<string, unknown>,
@@ -177,11 +432,17 @@ async function handleOpenAIStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
-		headers: provider.provider.type === 'openai' ? buildExtraBodyHeaders(body) : undefined,
+		headers: undefined,
 	});
 
 	const encoder = new TextEncoder();
 	const created = Math.floor(Date.now() / 1000);
+
+	// Pre-compute constant SSE frame parts
+	const chunkPfx = `data: {"id":"${requestId}","object":"chat.completion.chunk","created":${created},"model":"${escJson(modelId)}","choices":[{"index":0,"delta":{"content":"`;
+	const chunkSfx = `"},"finish_reason":null}]}\n\n`;
+	const reasoningPfx = `data: {"id":"${requestId}","object":"chat.completion.chunk","created":${created},"model":"${escJson(modelId)}","choices":[{"index":0,"delta":{"reasoning_content":"`;
+	const reasoningSfx = `"},"finish_reason":null}]}\n\n`;
 
 	const stream = new ReadableStream({
 		async start(controller) {
@@ -193,25 +454,9 @@ async function handleOpenAIStream(
 			try {
 				for await (const part of result.fullStream) {
 					switch (part.type) {
-						case 'text-delta':
-							controller.enqueue(
-								encoder.encode(
-									`data: ${JSON.stringify({
-										id: requestId,
-										object: 'chat.completion.chunk',
-										created,
-										model: modelId,
-										choices: [
-											{
-												index: 0,
-												delta: { content: part.text },
-												finish_reason: null,
-											},
-										],
-									})}\n\n`,
-								),
-							);
-							break;
+				case 'text-delta':
+					controller.enqueue(encoder.encode(chunkPfx + escJson(part.text) + chunkSfx));
+					break;
 
 						case 'finish': {
 							const finishReason = mapFinishReason(part.finishReason);
@@ -262,23 +507,9 @@ async function handleOpenAIStream(
 						break;
 					}
 
-					case 'reasoning-delta':
-						controller.enqueue(
-							encoder.encode(
-								`data: ${JSON.stringify({
-									id: requestId,
-									object: 'chat.completion.chunk',
-									created,
-									model: modelId,
-									choices: [{
-										index: 0,
-										delta: { reasoning_content: part.text },
-										finish_reason: null,
-									}],
-								})}\n\n`,
-							),
-						);
-						break;
+				case 'reasoning-delta':
+					controller.enqueue(encoder.encode(reasoningPfx + escJson(part.text) + reasoningSfx));
+					break;
 
 					case 'tool-call':
 						controller.enqueue(
@@ -412,8 +643,28 @@ async function handleOpenAINonStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
-		headers: provider.provider.type === 'openai' ? buildExtraBodyHeaders(body) : undefined,
+		headers: undefined,
+	}).catch((err) => {
+		const msg = err instanceof Error ? err.message : String(err);
+		if (/empty assistant|no content generated/i.test(msg)) {
+			return null;
+		}
+		throw err;
 	});
+
+	if (!result) {
+		return new Response(JSON.stringify({
+			id: requestId,
+			object: 'chat.completion',
+			created: Math.floor(Date.now() / 1000),
+			model: modelId,
+			choices: [{ index: 0, message: { role: 'assistant', content: null }, finish_reason: 'stop' }],
+			usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+		}), {
+			status: 200,
+			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+		});
+	}
 
 	const finishReason = mapFinishReason(result.finishReason);
 
@@ -548,14 +799,15 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	let lastError = '';
 	for (const candidate of tryCandidates) {
 		try {
+			const isOpenAI = candidate.provider.type === 'openai';
 			if (isStream) {
-				return await handleOpenAIStream(
-					body, requestId, candidate, c.env, ip, execCtx, startMs,
-				);
+				return await (isOpenAI
+					? handleOpenAIDirectStream(body, requestId, candidate, c.env, ip, execCtx, startMs)
+					: handleOpenAIStream(body, requestId, candidate, c.env, ip, execCtx, startMs));
 			}
-			return await handleOpenAINonStream(
-				body, requestId, candidate, c.env, ip, execCtx, startMs,
-			);
+			return await (isOpenAI
+				? handleOpenAIDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs)
+				: handleOpenAINonStream(body, requestId, candidate, c.env, ip, execCtx, startMs));
 		} catch (err) {
 		const errMessage = err instanceof Error
 			? err.message

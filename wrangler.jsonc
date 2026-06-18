@@ -11,6 +11,7 @@
 		"enabled": true
 	},
 	"upload_source_maps": true,
+	// "limits": { "cpu_ms": 30000 },
 	"compatibility_flags": [
 		"nodejs_compat"
 	],

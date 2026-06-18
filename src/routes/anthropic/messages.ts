@@ -20,6 +20,52 @@ const MAX_BODY_SIZE = 5_242_880; // 5 MB
 
 // ---- Helpers ----
 
+/** JSON-escape a string for inline embedding (faster than full object stringify) */
+function escJson(s: string): string {
+	return JSON.stringify(s).slice(1, -1);
+}
+
+/** Convert Anthropic Messages request to OpenAI-compatible format. */
+function anthropicToOpenAI(body: Record<string, unknown>): Record<string, unknown> {
+	const messages: Array<Record<string, unknown>> = [];
+	const sysMsg = body.system as string | Array<{ text: string; type: string }> | undefined;
+	if (sysMsg) {
+		const text = typeof sysMsg === 'string' ? sysMsg : sysMsg.map((b) => b.text || '').join('\n');
+		if (text) messages.push({ role: 'system', content: text });
+	}
+	for (const msg of (body.messages as Array<Record<string, unknown>>) || []) {
+		const role = String(msg.role || 'user');
+		const content = msg.content;
+		if (typeof content === 'string') {
+			messages.push({ role, content });
+		} else if (Array.isArray(content)) {
+			const text = content
+				.filter((b: any) => b.type === 'text' || b.type === 'tool_result')
+				.map((b: any) => b.text || '')
+				.join('\n');
+			if (text) messages.push({ role, content: text });
+		}
+	}
+	return {
+		messages,
+		max_tokens: body.max_tokens,
+		temperature: body.temperature,
+		top_p: body.top_p,
+		stop: body.stop_sequences,
+	};
+}
+
+/** Match AI SDK finishReason → Anthropic stop_reason */
+function mapStopReasonOpenAI(reason: string): string {
+	switch (reason) {
+		case 'stop': return 'end_turn';
+		case 'length': return 'max_tokens';
+		case 'content_filter': return 'content_filter';
+		case 'tool_calls': return 'tool_use';
+		default: return 'end_turn';
+	}
+}
+
 /**
  * Convert Anthropic Messages API request to AI SDK format.
  * Anthropic: { model, messages, system, max_tokens, temperature, top_p, stop_sequences, stream }
@@ -111,7 +157,185 @@ function buildExtraBodyHeaders(body: Record<string, unknown>): Record<string, st
 	return { 'X-Vega-Extra-Body': JSON.stringify(body.extra_body) };
 }
 
-// ---- Stream handler ----
+// ---- Direct fetch handlers (openai type only) ----
+
+async function handleAnthropicDirectStream(
+	body: Record<string, unknown>,
+	requestId: string,
+	provider: ProviderMatch,
+	env: Env,
+	ip: string,
+	execCtx: ExecutionContext | undefined,
+	startMs: number,
+	rawModelId: string,
+): Promise<Response> {
+	const apiKey = provider.provider.config.apiKey;
+	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
+	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+
+	const upstreamBody = anthropicToOpenAI(body);
+	upstreamBody.stream = true;
+	(upstreamBody as any).model = rawModelId;
+
+	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+		body: JSON.stringify(upstreamBody),
+	});
+
+	if (!upstreamResponse.ok) {
+		const errText = await upstreamResponse.text().catch(() => '');
+		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
+		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
+			status: upstreamResponse.status,
+			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' },
+		});
+	}
+
+	const encoder = new TextEncoder();
+	const msgId = generateMessageId();
+	let contentIndex = 0;
+	let hasStartedBlock = false;
+
+	const stream = new ReadableStream({
+		async start(controller) {
+			let streamError = false;
+			let streamErrorMsg = '';
+			let lastInputTokens = 0;
+			let lastOutputTokens = 0;
+
+			const reader = upstreamResponse.body!.getReader();
+			const decoder = new TextDecoder();
+			let buf = '';
+
+			// Emit message_start
+			controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify({
+				type: 'message_start', message: { id: msgId, type: 'message', role: 'assistant', content: [], model: rawModelId, stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } },
+			})}\n\n`));
+
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					buf += decoder.decode(value, { stream: true });
+
+					let nl: number;
+					while ((nl = buf.indexOf('\n')) >= 0) {
+						const line = buf.slice(0, nl);
+						buf = buf.slice(nl + 1);
+						if (!line.startsWith('data:')) continue;
+						const json = line.slice(line.startsWith('data: ') ? 6 : 5).trim();
+						if (json === '[DONE]') continue;
+
+						try {
+							const parsed = JSON.parse(json);
+							const choice = parsed?.choices?.[0];
+							const delta = choice?.delta;
+							const usage = parsed?.usage;
+
+							// Finish event
+							if (choice?.finish_reason && choice.finish_reason !== 'null' && choice.finish_reason !== null) {
+								if (usage) { lastInputTokens = usage.prompt_tokens || 0; lastOutputTokens = usage.completion_tokens || 0; }
+								if (hasStartedBlock) {
+									controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: contentIndex - 1 })}\n\n`));
+								}
+								const sr = mapStopReasonOpenAI(choice.finish_reason);
+								controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({
+									type: 'message_delta', delta: { stop_reason: sr, stop_sequence: null }, usage: { output_tokens: lastOutputTokens },
+								})}\n\n`));
+								controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`));
+								continue;
+							}
+
+							const ct = delta?.content;
+							if (ct != null && ct !== '') {
+								if (!hasStartedBlock) {
+									hasStartedBlock = true;
+									controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({
+										type: 'content_block_start', index: contentIndex, content_block: { type: 'text', text: '' },
+									})}\n\n`));
+								}
+								controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({
+									type: 'content_block_delta', index: contentIndex, delta: { type: 'text_delta', text: ct },
+								})}\n\n`));
+							}
+						} catch { /* skip */ }
+					}
+				}
+			} catch (err) {
+				streamError = true;
+				streamErrorMsg = err instanceof Error ? err.message : String(err);
+			} finally {
+				reader.releaseLock();
+				if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+					{ prompt: lastInputTokens, completion: lastOutputTokens }, !streamError, Date.now() - startMs, requestId, true,
+					streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
+					0, 0, env.clientKeyName || ''));
+				controller.close();
+			}
+		},
+	});
+
+	return new Response(stream, {
+		status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' },
+	});
+}
+
+async function handleAnthropicDirectNonStream(
+	body: Record<string, unknown>,
+	requestId: string,
+	provider: ProviderMatch,
+	env: Env,
+	ip: string,
+	execCtx: ExecutionContext | undefined,
+	startMs: number,
+	rawModelId: string,
+): Promise<Response> {
+	const apiKey = provider.provider.config.apiKey;
+	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
+	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+
+	const upstreamBody = anthropicToOpenAI(body);
+	(upstreamBody as any).model = rawModelId;
+
+	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+		body: JSON.stringify(upstreamBody),
+	});
+
+	if (!upstreamResponse.ok) {
+		const errText = await upstreamResponse.text().catch(() => '');
+		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
+		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
+			status: upstreamResponse.status, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' },
+		});
+	}
+
+	const data: any = await upstreamResponse.json();
+	const choice = data.choices?.[0];
+	const msg = choice?.message || {};
+	const usage = data.usage || {};
+
+	if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+		{ prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0 },
+		true, Date.now() - startMs, requestId, false, {}, 0, 0, env.clientKeyName || ''));
+
+	const sr = mapStopReasonOpenAI(choice?.finish_reason || 'stop');
+
+	return new Response(JSON.stringify({
+		id: generateMessageId(), type: 'message', role: 'assistant',
+		content: [{ type: 'text', text: msg.content || '' }],
+		model: rawModelId, stop_reason: sr, stop_sequence: null,
+		usage: { input_tokens: usage.prompt_tokens || 0, output_tokens: usage.completion_tokens || 0 },
+	}), { status: 200, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' } });
+}
+
+// ---- Existing AI SDK handlers (google_ai_studio / vertex_ai / anthropic) ----
 
 async function handleAnthropicStream(
 	body: Record<string, unknown>,
@@ -146,6 +370,12 @@ async function handleAnthropicStream(
 	let lastInputTokens = 0;
 	let lastOutputTokens = 0;
 
+	// Pre-computed frame parts — updated at block boundaries
+	let textDeltaPfx = '';
+	let textDeltaSfx = '';
+	let reasoningDeltaPfx = '';
+	let reasoningDeltaSfx = '';
+
 	const stream = new ReadableStream({
 		async start(controller) {
 			try {
@@ -170,30 +400,24 @@ async function handleAnthropicStream(
 
 				for await (const part of result.fullStream) {
 					switch (part.type) {
-						case 'text-start':
-							hasStartedBlock = true;
-							controller.enqueue(
-								encoder.encode(
-									`event: content_block_start\ndata: ${JSON.stringify({
-										type: 'content_block_start',
-										index: contentIndex,
-										content_block: { type: 'text', text: '' },
-									})}\n\n`,
-								),
-							);
-							break;
+					case 'text-start':
+						hasStartedBlock = true;
+						textDeltaPfx = `event: content_block_delta\ndata: {"type":"content_block_delta","index":${contentIndex},"delta":{"type":"text_delta","text":"`;
+						textDeltaSfx = `"}}\n\n`;
+						controller.enqueue(
+							encoder.encode(
+								`event: content_block_start\ndata: ${JSON.stringify({
+									type: 'content_block_start',
+									index: contentIndex,
+									content_block: { type: 'text', text: '' },
+								})}\n\n`,
+							),
+						);
+						break;
 
-						case 'text-delta':
-							controller.enqueue(
-								encoder.encode(
-									`event: content_block_delta\ndata: ${JSON.stringify({
-										type: 'content_block_delta',
-										index: contentIndex,
-										delta: { type: 'text_delta', text: part.text },
-									})}\n\n`,
-								),
-							);
-							break;
+					case 'text-delta':
+						controller.enqueue(encoder.encode(textDeltaPfx + escJson(part.text) + textDeltaSfx));
+						break;
 
 						case 'text-end':
 							controller.enqueue(
@@ -251,29 +475,23 @@ async function handleAnthropicStream(
 						break;
 					}
 
-					case 'reasoning-start':
-						controller.enqueue(
-							encoder.encode(
-								`event: content_block_start\ndata: ${JSON.stringify({
-									type: 'content_block_start',
-									index: contentIndex,
-									content_block: { type: 'thinking', thinking: '' },
-								})}\n\n`,
-							),
-						);
-						break;
+				case 'reasoning-start':
+					reasoningDeltaPfx = `event: content_block_delta\ndata: {"type":"content_block_delta","index":${contentIndex},"delta":{"type":"thinking_delta","thinking":"`;
+					reasoningDeltaSfx = `"}}\n\n`;
+					controller.enqueue(
+						encoder.encode(
+							`event: content_block_start\ndata: ${JSON.stringify({
+								type: 'content_block_start',
+								index: contentIndex,
+								content_block: { type: 'thinking', thinking: '' },
+							})}\n\n`,
+						),
+					);
+					break;
 
-					case 'reasoning-delta':
-						controller.enqueue(
-							encoder.encode(
-								`event: content_block_delta\ndata: ${JSON.stringify({
-									type: 'content_block_delta',
-									index: contentIndex,
-									delta: { type: 'thinking_delta', thinking: part.text },
-								})}\n\n`,
-							),
-						);
-						break;
+				case 'reasoning-delta':
+					controller.enqueue(encoder.encode(reasoningDeltaPfx + escJson(part.text) + reasoningDeltaSfx));
+					break;
 
 					case 'reasoning-end':
 						controller.enqueue(
@@ -424,7 +642,29 @@ async function handleAnthropicNonStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
 		headers: buildExtraBodyHeaders(body),
+	}).catch((err) => {
+		const msg = err instanceof Error ? err.message : String(err);
+		if (/empty assistant|no content generated/i.test(msg)) {
+			return null;
+		}
+		throw err;
 	});
+
+	if (!result) {
+		return new Response(JSON.stringify({
+			id: generateMessageId(),
+			type: 'message',
+			role: 'assistant',
+			content: [{ type: 'text', text: '' }],
+			model: rawModelId,
+			stop_reason: 'end_turn',
+			stop_sequence: null,
+			usage: { input_tokens: 0, output_tokens: 0 },
+		}), {
+			status: 200,
+			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' },
+		});
+	}
 
 	const stopReason = mapStopReason(result.finishReason);
 	const msgId = generateMessageId();
@@ -567,14 +807,15 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 	let lastError = '';
 	for (const candidate of tryCandidates) {
 		try {
+			const isOpenAI = candidate.provider.type === 'openai';
 			if (isStream) {
-				return await handleAnthropicStream(
-					body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId,
-				);
+				return await (isOpenAI
+					? handleAnthropicDirectStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId)
+					: handleAnthropicStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId));
 			}
-			return await handleAnthropicNonStream(
-				body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId,
-			);
+			return await (isOpenAI
+				? handleAnthropicDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId)
+				: handleAnthropicNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId));
 		} catch (err) {
 		const errMsg = err instanceof Error
 			? err.message

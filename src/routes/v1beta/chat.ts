@@ -21,6 +21,35 @@ const MAX_BODY_SIZE = 5_242_880; // 5 MB
 
 // ---- Helpers ----
 
+/** JSON-escape a string for inline embedding (faster than full object stringify) */
+function escJson(s: string): string {
+	return JSON.stringify(s).slice(1, -1);
+}
+
+/** Convert Gemini generateContent request body to OpenAI-compatible format. */
+function geminiToOpenAI(body: Record<string, unknown>): Record<string, unknown> {
+	const messages: Array<Record<string, unknown>> = [];
+	const si = body.systemInstruction as { parts?: Array<{ text: string }> } | undefined;
+	if (si?.parts?.length) {
+		const text = si.parts.map((p) => p.text || '').join('\n');
+		if (text) messages.push({ role: 'system', content: text });
+	}
+	for (const c of (body.contents as Array<Record<string, unknown>>) || []) {
+		const role = c.role === 'model' ? 'assistant' : String(c.role || 'user');
+		const parts = (c.parts as Array<Record<string, unknown>>) || [];
+		const text = parts.map((p: any) => p.text || '').join('\n');
+		if (text) messages.push({ role, content: text });
+	}
+	const gc = body.generationConfig as Record<string, unknown> | undefined;
+	return {
+		messages,
+		max_tokens: gc?.maxOutputTokens,
+		temperature: gc?.temperature,
+		top_p: gc?.topP,
+		stop: gc?.stopSequences,
+	};
+}
+
 /**
  * Convert Gemini generateContent request to AI SDK format.
  * Gemini format: { contents: [{ role, parts: [{ text, ... }] }], systemInstruction, generationConfig, ... }
@@ -96,19 +125,186 @@ function buildGeminiChunk(text: string, finishReason?: string, usage?: { inputTo
 	return resp;
 }
 
-/**
- * Build extra body headers from explicit extra_body field.
- */
-function buildExtraBodyHeaders(body: Record<string, unknown>): Record<string, string> | undefined {
-	if (!body.extra_body || typeof body.extra_body !== 'object') return undefined;
-	return { 'X-Vega-Extra-Body': JSON.stringify(body.extra_body) };
+// ---- Direct fetch handlers (openai type only) ----
+
+async function handleGeminiDirectStream(
+	body: Record<string, unknown>,
+	requestId: string,
+	provider: ProviderMatch,
+	env: Env,
+	ip: string,
+	execCtx: ExecutionContext | undefined,
+	startMs: number,
+	rawModelId: string,
+	altSse: boolean,
+): Promise<Response> {
+	const apiKey = provider.provider.config.apiKey;
+	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
+	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
+		baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+	}
+
+	const upstreamBody = geminiToOpenAI(body);
+	upstreamBody.stream = true;
+	(upstreamBody as any).model = rawModelId;
+
+	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+		body: JSON.stringify(upstreamBody),
+	});
+
+	if (!upstreamResponse.ok) {
+		const errText = await upstreamResponse.text().catch(() => '');
+		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
+		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, code: 500 } }), {
+			status: upstreamResponse.status,
+			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+		});
+	}
+
+	const encoder = new TextEncoder();
+	const ssePfx = altSse ? 'data: ' : '';
+	const sseSfx = altSse ? '\n\n' : '\n';
+
+	const stream = new ReadableStream({
+		async start(controller) {
+			let fullText = '';
+			let streamError = false;
+			let streamErrorMsg = '';
+			let lastInputTokens = 0;
+			let lastOutputTokens = 0;
+
+			const reader = upstreamResponse.body!.getReader();
+			const decoder = new TextDecoder();
+			let buf = '';
+
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					buf += decoder.decode(value, { stream: true });
+
+					let nl: number;
+					while ((nl = buf.indexOf('\n')) >= 0) {
+						const line = buf.slice(0, nl);
+						buf = buf.slice(nl + 1);
+
+						if (!line.startsWith('data:')) continue;
+						const json = line.slice(line.startsWith('data: ') ? 6 : 5).trim();
+						if (json === '[DONE]') continue;
+
+						try {
+							const parsed = JSON.parse(json);
+							const choice = parsed?.choices?.[0];
+							const delta = choice?.delta;
+							const usage = parsed?.usage;
+
+							if (choice?.finish_reason && choice.finish_reason !== 'null' && choice.finish_reason !== null) {
+								if (usage) { lastInputTokens = usage.prompt_tokens || 0; lastOutputTokens = usage.completion_tokens || 0; }
+								const fr = choice.finish_reason;
+								const finishReason = fr === 'stop' ? 'STOP' : fr === 'length' ? 'MAX_TOKENS'
+									: fr === 'tool_calls' ? 'STOP' : fr === 'content_filter' ? 'SAFETY' : 'STOP';
+								controller.enqueue(encoder.encode(ssePfx + JSON.stringify(buildGeminiChunk(fullText, finishReason, {
+									inputTokens: lastInputTokens, outputTokens: lastOutputTokens,
+									totalTokens: usage?.total_tokens || lastInputTokens + lastOutputTokens,
+								})) + sseSfx));
+								continue;
+							}
+
+							const ct = delta?.content;
+							if (ct != null && ct !== '') { fullText += ct; controller.enqueue(encoder.encode(ssePfx + JSON.stringify(buildGeminiChunk(fullText)) + sseSfx)); }
+
+							const rc = delta?.reasoning_content;
+							if (rc != null && rc !== '' && fullText.length === 0) { fullText += rc; controller.enqueue(encoder.encode(ssePfx + JSON.stringify(buildGeminiChunk(fullText)) + sseSfx)); }
+
+							if (delta?.tool_calls?.length) {
+								for (const tc of delta.tool_calls) {
+									const fc = tc.function || tc;
+									controller.enqueue(encoder.encode(ssePfx + JSON.stringify({
+										candidates: [{ content: { role: 'model', parts: [{ functionCall: { name: fc.name, args: fc.arguments } }] }, index: 0, safetyRatings: [] }],
+									}) + sseSfx));
+								}
+							}
+						} catch { /* skip */ }
+					}
+				}
+			} catch (err) {
+				streamError = true;
+				streamErrorMsg = err instanceof Error ? err.message : String(err);
+				controller.enqueue(encoder.encode(ssePfx + JSON.stringify({ error: { message: streamErrorMsg, code: 500 } }) + sseSfx));
+			} finally {
+				reader.releaseLock();
+				if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+					{ prompt: lastInputTokens, completion: lastOutputTokens }, !streamError, Date.now() - startMs, requestId, true,
+					streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
+					0, 0, env.clientKeyName || ''));
+				controller.close();
+			}
+		},
+	});
+
+	return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-request-id': requestId } });
 }
 
-/**
- * Stream handler: supports both Google streaming modes.
- *   - ?alt=sse  → SSE format:  "data: {...}\n\n"
- *   - default   → NDJSON format: "{...}\n" (line-delimited JSON)
- */
+async function handleGeminiDirectNonStream(
+	body: Record<string, unknown>,
+	requestId: string,
+	provider: ProviderMatch,
+	env: Env,
+	ip: string,
+	execCtx: ExecutionContext | undefined,
+	startMs: number,
+	rawModelId: string,
+): Promise<Response> {
+	const apiKey = provider.provider.config.apiKey;
+	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
+	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+
+	const upstreamBody = geminiToOpenAI(body);
+	(upstreamBody as any).model = rawModelId;
+
+	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+		body: JSON.stringify(upstreamBody),
+	});
+
+	if (!upstreamResponse.ok) {
+		const errText = await upstreamResponse.text().catch(() => '');
+		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
+		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
+			status: upstreamResponse.status, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+		});
+	}
+
+	const data: any = await upstreamResponse.json();
+	const choice = data.choices?.[0];
+	const msg = choice?.message || {};
+	const usage = data.usage || {};
+
+	if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+		{ prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0 },
+		true, Date.now() - startMs, requestId, false, {}, 0, 0, env.clientKeyName || ''));
+
+	const fr = choice?.finish_reason || 'stop';
+	const finishReason = fr === 'stop' ? 'STOP' : fr === 'length' ? 'MAX_TOKENS'
+		: fr === 'tool_calls' ? 'STOP' : fr === 'content_filter' ? 'SAFETY' : 'STOP';
+
+	const parts: Array<Record<string, unknown>> = [{ text: msg.content || '' }];
+	if (msg.tool_calls?.length) for (const tc of msg.tool_calls) parts.push({ functionCall: { name: (tc.function || tc).name, args: (tc.function || tc).arguments } });
+
+	return new Response(JSON.stringify({
+		candidates: [{ content: { role: 'model', parts }, finishReason, index: 0, safetyRatings: [] }],
+		usageMetadata: { promptTokenCount: usage.prompt_tokens || 0, candidatesTokenCount: usage.completion_tokens || 0, totalTokenCount: usage.total_tokens || 0 },
+	}), { status: 200, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId } });
+}
+
+// ---- Existing AI SDK handlers (google_ai_studio / vertex_ai / anthropic) ----
 async function handleGeminiStream(
 	body: Record<string, unknown>,
 	requestId: string,
@@ -131,7 +327,7 @@ async function handleGeminiStream(
 		temperature: genConfig?.temperature as number | undefined,
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
-		headers: buildExtraBodyHeaders(body),
+		headers: undefined,
 	});
 
 	const encoder = new TextEncoder();
@@ -141,20 +337,23 @@ async function handleGeminiStream(
 	let lastInputTokens = 0;
 	let lastOutputTokens = 0;
 
+	// Pre-compute Gemini chunk JSON frame parts (text prefix/suffix are constant)
+	const geminiTextPfx = `{"candidates":[{"content":{"role":"model","parts":[{"text":"`;
+	const geminiTextSfx = `"}]},"index":0,"safetyRatings":[]}]}`;
+	const ssePfx = altSse ? 'data: ' : '';
+	const sseSfx = altSse ? '\n\n' : '\n';
+
 	const stream = new ReadableStream({
 		async start(controller) {
 			try {
 				for await (const part of result.fullStream) {
 					switch (part.type) {
-						case 'text-delta':
-							fullText += part.text;
-							{
-								const chunk = JSON.stringify(buildGeminiChunk(fullText));
-								controller.enqueue(
-									encoder.encode(altSse ? `data: ${chunk}\n\n` : `${chunk}\n`),
-								);
-							}
-							break;
+					case 'text-delta':
+						fullText += part.text;
+						controller.enqueue(
+							encoder.encode(ssePfx + geminiTextPfx + escJson(fullText) + geminiTextSfx + sseSfx),
+						);
+						break;
 
 						case 'finish': {
 							const finishReason = mapFinishReason(part.finishReason);
@@ -291,8 +490,24 @@ async function handleGeminiNonStream(
 		temperature: genConfig?.temperature as number | undefined,
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
-		headers: buildExtraBodyHeaders(body),
+		headers: undefined,
+	}).catch((err) => {
+		const msg = err instanceof Error ? err.message : String(err);
+		if (/empty assistant|no content generated/i.test(msg)) {
+			return null;
+		}
+		throw err;
 	});
+
+	if (!result) {
+		return new Response(JSON.stringify({
+			candidates: [{ content: { role: 'model', parts: [{ text: '' }] }, finishReason: 'STOP', index: 0, safetyRatings: [] }],
+			usageMetadata: { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 },
+		}), {
+			status: 200,
+			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+		});
+	}
 
 	const finishReason = mapFinishReason(result.finishReason);
 
@@ -431,14 +646,15 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 	let lastError = '';
 	for (const candidate of tryCandidates) {
 		try {
+			const isOpenAI = candidate.provider.type === 'openai';
 			if (isStream) {
-				return await handleGeminiStream(
-					body, requestId, candidate, c.env, ip, execCtx, startMs, modelId, altSse,
-				);
+				return await (isOpenAI
+					? handleGeminiDirectStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId, altSse)
+					: handleGeminiStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId, altSse));
 			}
-			return await handleGeminiNonStream(
-				body, requestId, candidate, c.env, ip, execCtx, startMs, modelId,
-			);
+			return await (isOpenAI
+				? handleGeminiDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId)
+				: handleGeminiNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId));
 		} catch (err) {
 		const errMsg = err instanceof Error
 			? err.message

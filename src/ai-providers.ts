@@ -1,8 +1,8 @@
 // src/ai-providers.ts
 // AI SDK Provider factory — creates LanguageModel from Vega Provider config
-// Supports OpenAI, Google AI Studio, Vertex AI (JWT + API Key), and Anthropic
+// Supports Google AI Studio, Vertex AI (JWT + API Key), and Anthropic.
+// OpenAI-compatible providers are now handled by direct fetch (src/routes/v1/chat.ts).
 
-import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { Env, Provider } from './types';
@@ -132,68 +132,6 @@ export function isVertexJwtMode(config: Record<string, string>): boolean {
 // ---- AI SDK Model Factory ----
 
 /**
- * Create a fetch wrapper that:
- * 1. Fixes `developer` role back to `system` for non-OpenAI upstreams
- * 2. Injects extra body fields from X-Vega-Extra-Body header into the HTTP body
- *
- * The header is set by route handlers to pass through fields that the AI SDK
- * providers don't natively support (e.g. DeepSeek `thinking`, generic `extra_body`).
- * SDK-generated body fields always take precedence over injected fields.
- */
-function patchedFetch(originalFetch: typeof fetch): typeof fetch {
-	return async (url, init) => {
-		let changed = false;
-		const initHeaders = new Headers(init?.headers);
-		let bodyParsed: Record<string, unknown> | null = null;
-
-		// Parse existing body
-		if (init?.body) {
-			try {
-				const bodyStr = typeof init.body === 'string'
-					? init.body
-					: new TextDecoder().decode(init.body as ArrayBuffer);
-				const parsed: any = JSON.parse(bodyStr);
-
-				if (parsed.messages && Array.isArray(parsed.messages)) {
-					for (const msg of parsed.messages) {
-						if (msg.role === 'developer') {
-							msg.role = 'system';
-							changed = true;
-						}
-					}
-				}
-				bodyParsed = parsed as Record<string, unknown>;
-			} catch {
-				/* ignore parse errors — pass body through unchanged */
-			}
-		}
-
-		// Inject extra body fields from X-Vega-Extra-Body header
-		// SDK body takes precedence to avoid overriding provider-generated fields
-		const extraBodyHeader = initHeaders.get('X-Vega-Extra-Body');
-		if (extraBodyHeader) {
-			initHeaders.delete('X-Vega-Extra-Body');
-			try {
-				const extraBody = JSON.parse(extraBodyHeader);
-				if (extraBody && typeof extraBody === 'object') {
-					if (!bodyParsed) bodyParsed = {};
-					bodyParsed = { ...(extraBody as Record<string, unknown>), ...bodyParsed };
-					changed = true;
-				}
-			} catch {
-				/* ignore parse errors */
-			}
-		}
-
-		if (changed && bodyParsed) {
-			init = { ...init, headers: initHeaders, body: JSON.stringify(bodyParsed) };
-		}
-
-		return originalFetch(url, init);
-	};
-}
-
-/**
  * Create an AI SDK LanguageModel from a Vega Provider config.
  * Uses the appropriate @ai-sdk/* provider for each backend.
  *
@@ -208,16 +146,6 @@ export function createModelFromProvider(
 	modelId: string,
 ) {
 	switch (provider.type) {
-		case 'openai': {
-			const openai = createOpenAI({
-				apiKey: provider.config.apiKey,
-				baseURL: provider.config.baseUrl || undefined,
-				// Fix system→developer role conversion for non-OpenAI APIs
-				fetch: patchedFetch(fetch),
-			});
-			return openai.chat(modelId);
-		}
-
 		case 'google_ai_studio': {
 			const google = createGoogleGenerativeAI({
 				apiKey: provider.config.apiKey,
