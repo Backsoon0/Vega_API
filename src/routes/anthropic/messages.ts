@@ -141,6 +141,8 @@ async function handleAnthropicStream(
 	const msgId = generateMessageId();
 	let contentIndex = 0;
 	let hasStartedBlock = false;
+	let streamError = false;
+	let streamErrorMsg = '';
 	let lastInputTokens = 0;
 	let lastOutputTokens = 0;
 
@@ -232,7 +234,8 @@ async function handleAnthropicStream(
 						}
 
 					case 'error': {
-						const errMsg = part.error instanceof Error
+						streamError = true;
+						streamErrorMsg = part.error instanceof Error
 							? part.error.message
 							: typeof part.error === 'string'
 								? part.error
@@ -241,12 +244,86 @@ async function handleAnthropicStream(
 							encoder.encode(
 								`event: error\ndata: ${JSON.stringify({
 									type: 'error',
-									error: { message: errMsg, type: 'api_error' },
+									error: { message: streamErrorMsg, type: 'api_error' },
 								})}\n\n`,
 							),
 						);
 						break;
 					}
+
+					case 'reasoning-start':
+						controller.enqueue(
+							encoder.encode(
+								`event: content_block_start\ndata: ${JSON.stringify({
+									type: 'content_block_start',
+									index: contentIndex,
+									content_block: { type: 'thinking', thinking: '' },
+								})}\n\n`,
+							),
+						);
+						break;
+
+					case 'reasoning-delta':
+						controller.enqueue(
+							encoder.encode(
+								`event: content_block_delta\ndata: ${JSON.stringify({
+									type: 'content_block_delta',
+									index: contentIndex,
+									delta: { type: 'thinking_delta', thinking: part.text },
+								})}\n\n`,
+							),
+						);
+						break;
+
+					case 'reasoning-end':
+						controller.enqueue(
+							encoder.encode(
+								`event: content_block_stop\ndata: ${JSON.stringify({
+									type: 'content_block_stop',
+									index: contentIndex,
+								})}\n\n`,
+							),
+						);
+						contentIndex++;
+						break;
+
+					case 'tool-call':
+						controller.enqueue(
+							encoder.encode(
+								`event: content_block_start\ndata: ${JSON.stringify({
+									type: 'content_block_start',
+									index: contentIndex,
+									content_block: {
+										type: 'tool_use',
+										id: part.toolCallId,
+										name: part.toolName,
+										input: {},
+									},
+								})}\n\n`,
+							),
+						);
+						controller.enqueue(
+							encoder.encode(
+								`event: content_block_delta\ndata: ${JSON.stringify({
+									type: 'content_block_delta',
+									index: contentIndex,
+									delta: {
+										type: 'input_json_delta',
+										partial_json: JSON.stringify(part.input),
+									},
+								})}\n\n`,
+							),
+						);
+						controller.enqueue(
+							encoder.encode(
+								`event: content_block_stop\ndata: ${JSON.stringify({
+									type: 'content_block_stop',
+									index: contentIndex,
+								})}\n\n`,
+							),
+						);
+						contentIndex++;
+						break;
 					}
 				}
 
@@ -270,11 +347,11 @@ async function handleAnthropicStream(
 						rawModelId,
 						ip,
 						{ prompt: lastInputTokens, completion: lastOutputTokens },
-						true,
+						!streamError,
 						Date.now() - startMs,
 						requestId,
 						true,
-						{},
+						streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
 						cacheRead,
 						cacheCreation,
 						env.clientKeyName || '',
@@ -383,14 +460,35 @@ async function handleAnthropicNonStream(
 		);
 	}
 
+	// Build content blocks: thinking (if any) + text + tool_use (if any)
+	const content: Array<Record<string, unknown>> = [];
+	if (result.reasoningText) {
+		content.push({ type: 'thinking', thinking: result.reasoningText });
+	}
+	content.push({ type: 'text', text: result.text });
+	const toolCalls = result.toolCalls;
+	if (toolCalls?.length) {
+		for (const tc of toolCalls) {
+			content.push({
+				type: 'tool_use',
+				id: tc.toolCallId,
+				name: tc.toolName,
+				input: tc.input,
+			});
+		}
+	}
+
+	// Map stop reason for tool calls
+	const finalStopReason = toolCalls?.length ? 'tool_use' : stopReason;
+
 	return new Response(
 		JSON.stringify({
 			id: msgId,
 			type: 'message',
 			role: 'assistant',
-			content: [{ type: 'text', text: result.text }],
+			content,
 			model: rawModelId,
-			stop_reason: stopReason,
+			stop_reason: finalStopReason,
 			stop_sequence: null,
 			usage: {
 				input_tokens: result.usage?.inputTokens || 0,

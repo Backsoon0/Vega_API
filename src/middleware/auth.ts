@@ -3,7 +3,7 @@
 
 import type { Context, MiddlewareHandler } from 'hono';
 import type { Env } from '../types';
-import { getClientApiKey, getAdminPasswordHash, findApiKeyNameByHash } from '../config';
+import { getClientApiKey, getAdminPasswordHash, findApiKeyNameByHash, hasAnyApiKeys } from '../config';
 import { hashKey } from '../crypto';
 
 /** Validate client API key for all API routes.
@@ -46,6 +46,10 @@ export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<bo
 
 	// 3. If a legacy key is set and the provided key doesn't match, deny access
 	if (kvKey) return false;
+
+	// 3b. If the multi-key table has any rows, deny access — auth is configured,
+	//     the provided key didn't match any of them, so this is NOT public mode.
+	if (await hasAnyApiKeys(env)) return false;
 
 	// 4. Fall back to env.OPENAI_API_KEY
 	if (env.OPENAI_API_KEY) {

@@ -205,11 +205,12 @@ export async function findProviderForModel(
 		}
 	}
 
-	// 3. Configured model prefix match
+	// 3. Configured model prefix match (only with '/' delimiter to avoid over-matching)
+	//    e.g. "openai/gpt-4" matches "openai/gpt-4-0613" but "gpt-4" does NOT match "gpt-4o"
 	for (const p of enabled) {
 		if (
 			(p.models || []).some(
-				(m) => modelId.startsWith(m + '/') || modelId.startsWith(m),
+				(m) => modelId.startsWith(m + '/'),
 			)
 		) {
 			addMatch(p, modelId);

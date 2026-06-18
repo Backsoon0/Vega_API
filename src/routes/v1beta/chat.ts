@@ -136,6 +136,8 @@ async function handleGeminiStream(
 
 	const encoder = new TextEncoder();
 	let fullText = '';
+	let streamError = false;
+	let streamErrorMsg = '';
 	let lastInputTokens = 0;
 	let lastOutputTokens = 0;
 
@@ -172,17 +174,36 @@ async function handleGeminiStream(
 						}
 
 					case 'error': {
-						const errMsg = part.error instanceof Error
+						streamError = true;
+						streamErrorMsg = part.error instanceof Error
 							? part.error.message
 							: typeof part.error === 'string'
 								? part.error
 								: JSON.stringify(part.error);
-						const chunk = JSON.stringify({ error: { message: errMsg, code: 500 } });
+						const chunk = JSON.stringify({ error: { message: streamErrorMsg, code: 500 } });
 							controller.enqueue(
 								encoder.encode(altSse ? `data: ${chunk}\n\n` : `${chunk}\n`),
 							);
 							break;
 						}
+
+					case 'tool-call': {
+						const toolResp: Record<string, unknown> = {
+							candidates: [{
+								content: {
+									role: 'model',
+									parts: [{ functionCall: { name: part.toolName, args: part.input } }],
+								},
+								index: 0,
+								safetyRatings: [],
+							}],
+						};
+						const toolChunk = JSON.stringify(toolResp);
+						controller.enqueue(
+							encoder.encode(altSse ? `data: ${toolChunk}\n\n` : `${toolChunk}\n`),
+						);
+						break;
+					}
 					}
 				}
 
@@ -202,7 +223,8 @@ async function handleGeminiStream(
 				execCtx.waitUntil(
 					recordUsage(env, provider.provider.id, rawModelId, ip,
 						{ prompt: lastInputTokens, completion: lastOutputTokens },
-						true, Date.now() - startMs, requestId, true, {},
+						!streamError, Date.now() - startMs, requestId, true,
+						streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
 						cacheRead, cacheCreation,
 						env.clientKeyName || '',
 					),
@@ -305,13 +327,22 @@ async function handleGeminiNonStream(
 		);
 	}
 
+	// Build parts with optional function calls
+	const parts: Array<Record<string, unknown>> = [{ text: result.text }];
+	const toolCalls = result.toolCalls;
+	if (toolCalls?.length) {
+		for (const tc of toolCalls) {
+			parts.push({ functionCall: { name: tc.toolName, args: tc.input } });
+		}
+	}
+
 	return new Response(
 		JSON.stringify({
 			candidates: [
 				{
 					content: {
 						role: 'model',
-						parts: [{ text: result.text }],
+						parts,
 					},
 					finishReason,
 					index: 0,
@@ -345,13 +376,17 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 	}
 
 	// Parse modelId and action from "gemini-2.5-flash:generateContent" or "gemini-2.5-flash:streamGenerateContent"
+	// When no action (colon) is present, default to generateContent.
 	const colonIdx = rawParam.lastIndexOf(':');
-	if (colonIdx < 0) {
-		return c.json({ error: { message: 'Missing action (e.g. :generateContent)', code: 400 } }, 400);
+	let modelId: string;
+	let action: string;
+	if (colonIdx >= 0) {
+		modelId = decodeURIComponent(rawParam.slice(0, colonIdx)).replace(/^models\//, '');
+		action = rawParam.slice(colonIdx + 1);
+	} else {
+		modelId = decodeURIComponent(rawParam).replace(/^models\//, '');
+		action = 'generateContent';
 	}
-
-	const modelId = decodeURIComponent(rawParam.slice(0, colonIdx)).replace(/^models\//, '');
-	const action = rawParam.slice(colonIdx + 1);
 
 	if (action !== 'generateContent' && action !== 'streamGenerateContent') {
 		return c.json(
@@ -437,77 +472,6 @@ if (execCtx) {
 }
 return c.json(
 	{ error: { message: `All providers failed. Last error: ${lastError}`, code: 502 } },
-	502,
-);
-});
-
-/**
- * Also handle POST /v1beta/models/:modelId (without action) — default to generateContent
- */
-v1betaChatRoutes.post('/models/:modelId', async (c: Context<{ Bindings: Env }>) => {
-	const modelId = decodeURIComponent(c.req.param('modelId') || '').replace(/^models\//, '');
-	// Redirect to generateContent behavior
-	if (!modelId) {
-		return c.json({ error: { message: 'Model ID is required', code: 400 } }, 400);
-	}
-
-	const body = await c.req.json().catch(() => null);
-	if (!body) {
-		return c.json({ error: { message: 'Invalid JSON body', code: 400 } }, 400);
-	}
-
-	const candidates = await findProviderForModel(c.env, modelId);
-	if (!candidates.length) {
-		return c.json(
-			{ error: { message: `No enabled provider for model: ${modelId}`, code: 400 } },
-			400,
-		);
-	}
-
-	const ip = c.req.header('CF-Connecting-IP') || 'unknown';
-	const requestId = crypto.randomUUID();
-	const execCtx = (c as any).executionCtx;
-	const startMs = Date.now();
-
-	const failoverEnabled = await getFailoverEnabled(c.env);
-	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
-	for (const candidate of tryCandidates) {
-		try {
-			return await handleGeminiNonStream(
-				body, requestId, candidate, c.env, ip, execCtx, startMs, modelId,
-			);
-		} catch (err) {
-		const errMsg = err instanceof Error
-			? err.message
-			: typeof err === 'string'
-				? err
-				: JSON.stringify(err);
-		console.error(`Provider ${candidate.provider.id}: ${errMsg}`);
-		if (execCtx) {
-			execCtx.waitUntil(
-				recordUsage(c.env, candidate.provider.id, modelId, ip,
-					{ prompt: 0, completion: 0 }, false,
-					Date.now() - startMs, requestId, false,
-					{ errorType: 'provider_error', errorMessage: errMsg.slice(0, 300) },
-					0, 0, c.env.clientKeyName || '',
-				),
-			);
-		}
-	}
-}
-
-if (execCtx) {
-	execCtx.waitUntil(
-		recordUsage(c.env, 'unknown', modelId, ip,
-			{ prompt: 0, completion: 0 }, false, 0,
-			requestId, false,
-			{ errorType: 'all_providers_failed', errorMessage: 'All Google providers failed' },
-			0, 0, c.env.clientKeyName || '',
-		),
-	);
-}
-return c.json(
-	{ error: { message: 'All Google providers failed', code: 502 } },
 	502,
 );
 });

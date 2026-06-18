@@ -62,12 +62,17 @@ function openaiToAISDKMessages(
 					switch (part.type) {
 						case 'text':
 							return { type: 'text', text: String(part.text || '') };
-						case 'image_url':
-							return {
-								type: 'file' as const,
-								data: part.image_url?.url || '',
-								mediaType: 'image/png',
-							};
+					case 'image_url': {
+						const url = part.image_url?.url || '';
+						let mediaType = 'image/png';
+						const match = url.match(/^data:(image\/[a-zA-Z0-9.+-]+);/i);
+						if (match) mediaType = match[1];
+						return {
+							type: 'file' as const,
+							data: url,
+							mediaType,
+						};
+					}
 						default:
 							return { type: 'text' as const, text: String(part.text || '') };
 					}
@@ -181,6 +186,8 @@ async function handleOpenAIStream(
 	const stream = new ReadableStream({
 		async start(controller) {
 			let contentFiltered = false;
+			let streamError = false;
+			let streamErrorMsg = '';
 			let lastPromptTokens = 0;
 			let lastCompletionTokens = 0;
 			try {
@@ -238,7 +245,8 @@ async function handleOpenAIStream(
 						}
 
 					case 'error': {
-						const errMsg = part.error instanceof Error
+						streamError = true;
+						streamErrorMsg = part.error instanceof Error
 							? part.error.message
 							: typeof part.error === 'string'
 								? part.error
@@ -246,13 +254,59 @@ async function handleOpenAIStream(
 						controller.enqueue(
 							encoder.encode(
 								`data: ${JSON.stringify({
-									error: { message: errMsg, type: 'server_error' },
+									error: { message: streamErrorMsg, type: 'server_error' },
 								})}\n\n`,
 							),
 						);
 						controller.enqueue(encoder.encode('data: [DONE]\n\n'));
 						break;
 					}
+
+					case 'reasoning-delta':
+						controller.enqueue(
+							encoder.encode(
+								`data: ${JSON.stringify({
+									id: requestId,
+									object: 'chat.completion.chunk',
+									created,
+									model: modelId,
+									choices: [{
+										index: 0,
+										delta: { reasoning_content: part.text },
+										finish_reason: null,
+									}],
+								})}\n\n`,
+							),
+						);
+						break;
+
+					case 'tool-call':
+						controller.enqueue(
+							encoder.encode(
+								`data: ${JSON.stringify({
+									id: requestId,
+									object: 'chat.completion.chunk',
+									created,
+									model: modelId,
+									choices: [{
+										index: 0,
+										delta: {
+											tool_calls: [{
+												index: 0,
+												id: part.toolCallId,
+												type: 'function',
+												function: {
+													name: part.toolName,
+													arguments: JSON.stringify(part.input),
+												},
+											}],
+										},
+										finish_reason: null,
+									}],
+								})}\n\n`,
+							),
+						);
+						break;
 					}
 				}
 
@@ -276,11 +330,11 @@ async function handleOpenAIStream(
 						modelId,
 						ip,
 						{ prompt: lastPromptTokens, completion: lastCompletionTokens },
-						true,
+						!streamError,
 						Date.now() - startMs,
 						requestId,
 						true,
-						{},
+						streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
 						cacheRead,
 						cacheCreation,
 						env.clientKeyName || '',
@@ -395,6 +449,26 @@ async function handleOpenAINonStream(
 		);
 	}
 
+	// Build message with optional reasoning and tool_calls
+	const message: Record<string, unknown> = {
+		role: 'assistant',
+		content: result.text || null,
+	};
+	if (result.reasoningText) {
+		message.reasoning_content = result.reasoningText;
+	}
+	const toolCalls = result.toolCalls;
+	if (toolCalls?.length) {
+		message.tool_calls = toolCalls.map((tc) => ({
+			id: tc.toolCallId,
+			type: 'function',
+			function: {
+				name: tc.toolName,
+				arguments: JSON.stringify(tc.input),
+			},
+		}));
+	}
+
 	return new Response(
 		JSON.stringify({
 			id: requestId,
@@ -404,10 +478,7 @@ async function handleOpenAINonStream(
 			choices: [
 				{
 					index: 0,
-					message: {
-						role: 'assistant',
-						content: result.text,
-					},
+					message,
 					finish_reason: finishReason,
 				},
 			],
@@ -505,7 +576,7 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 						Date.now() - startMs,
 						requestId,
 						isStream,
-						{ errorType: 'provider_error', errorMessage: (err as Error).message?.slice(0, 300) },
+						{ errorType: 'provider_error', errorMessage: errMessage.slice(0, 300) },
 						0, 0,
 						c.env.clientKeyName || '',
 					),

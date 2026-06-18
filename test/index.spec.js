@@ -22,6 +22,7 @@ describe("Vega API", () => {
       "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON call_logs(timestamp)",
       "CREATE INDEX IF NOT EXISTS idx_logs_provider ON call_logs(provider_id)",
       "CREATE INDEX IF NOT EXISTS idx_call_logs_request_id ON call_logs(request_id)",
+      "CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT)",
     ];
     for (const stmt of migrations) {
       await env.DB.exec(stmt);

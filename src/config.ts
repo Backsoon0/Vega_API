@@ -135,30 +135,46 @@ export async function saveProvider(
   env: Env,
   provider: Partial<Provider> & { id: string }
 ): Promise<Provider> {
-  const { id, type, name, enabled, config = {}, models = [], weight = 1 } = provider;
+  const { id, type, name, enabled, config = {}, models, weight } = provider;
 
-  if (!id || !type || !name) {
+  if (!id) {
+    throw new Error('Provider must have id');
+  }
+
+  const existing = await getProviderRaw(env, id);
+  const existingConfig: Record<string, string> = existing
+    ? JSON.parse(existing.config || '{}')
+    : {};
+  const existingModels: string[] = existing
+    ? JSON.parse(existing.models || '[]')
+    : [];
+
+  // Resolve final values: use existing row values as defaults for omitted fields
+  const finalType = type ?? (existing ? existing.type : undefined);
+  const finalName = name ?? (existing ? existing.name : undefined);
+  if (!finalType || !finalName) {
     throw new Error('Provider must have id, type, and name');
   }
 
   const VALID_TYPES = ['vertex_ai', 'google_ai_studio', 'openai', 'anthropic'];
-  if (!VALID_TYPES.includes(type)) {
-    throw new Error(`Invalid provider type: ${type}`);
+  if (!VALID_TYPES.includes(finalType)) {
+    throw new Error(`Invalid provider type: ${finalType}`);
   }
 
-  const encryptedConfig: Record<string, string> = { ...config };
+  // Merge config: start with existing non-sensitive fields, overlay new values.
+  // Sensitive fields (apiKey/privateKey) are handled separately below.
+  const encryptedConfig: Record<string, string> = { ...existingConfig, ...config };
   const sensitiveKeys = ['apiKey', 'privateKey'];
 
-  const existing = await getProviderRaw(env, id);
-  const oldConfig: Record<string, string> = existing
-    ? JSON.parse(existing.config || '{}')
-    : {};
-
   for (const key of sensitiveKeys) {
-    const newVal = encryptedConfig[key];
+    const newVal = config[key];
+    if (newVal === undefined) {
+      // Field not provided in update — keep existing encrypted value (already in encryptedConfig from spread)
+      continue;
+    }
     if (!newVal || newVal === '***encrypted***' || newVal.trim() === '') {
-      if (oldConfig[key]) {
-        encryptedConfig[key] = oldConfig[key];
+      if (existingConfig[key]) {
+        encryptedConfig[key] = existingConfig[key];
       } else {
         delete encryptedConfig[key];
       }
@@ -167,20 +183,29 @@ export async function saveProvider(
     }
   }
 
-  const enabledInt = enabled !== false ? 1 : 0;
+  // Resolve enabled/weight/models with existing-row fallbacks
+  const enabledInt = enabled === undefined
+    ? (existing ? existing.enabled : 1)
+    : (enabled !== false ? 1 : 0);
+  const finalWeight = weight === undefined
+    ? (existing ? existing.weight : 1)
+    : weight;
+  const finalModels = models === undefined
+    ? existingModels
+    : models;
 
   await env.DB
     .prepare(
       `INSERT OR REPLACE INTO providers (id, type, name, enabled, config, models, weight)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
-    .bind(id, type, name, enabledInt, JSON.stringify(encryptedConfig), JSON.stringify(models), weight)
+    .bind(id, finalType, finalName, enabledInt, JSON.stringify(encryptedConfig), JSON.stringify(finalModels), finalWeight)
     .run();
 
   await bumpConfigVersion(env);
   return {
-    id, type: type as Provider['type'], name,
-    enabled: enabledInt === 1, config: maskSensitiveConfig(encryptedConfig), models, weight,
+    id, type: finalType as Provider['type'], name: finalName,
+    enabled: enabledInt === 1, config: maskSensitiveConfig(encryptedConfig), models: finalModels, weight: finalWeight,
   };
 }
 
@@ -305,11 +330,25 @@ export async function migrateLegacyApiKey(env: Env, name: string): Promise<ApiKe
 }
 
 export async function updateApiKeyLastUsed(env: Env, keyHash: string): Promise<void> {
-	const now = new Date().toISOString();
-	await env.DB
-		.prepare('UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?')
-		.bind(now, keyHash)
-		.run();
+  const now = new Date().toISOString();
+  await env.DB
+    .prepare('UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?')
+    .bind(now, keyHash)
+    .run();
+}
+
+/** Check if the api_keys table has any rows. Used by auth middleware to decide
+ * whether to deny access when no key matched and no legacy key is configured.
+ * Returns false on error (e.g., table not yet created) to avoid blocking auth. */
+export async function hasAnyApiKeys(env: Env): Promise<boolean> {
+  try {
+    const row = await env.DB
+      .prepare('SELECT 1 as c FROM api_keys LIMIT 1')
+      .first<{ c: number }>();
+    return !!row;
+  } catch {
+    return false;
+  }
 }
 
 /**
