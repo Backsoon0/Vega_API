@@ -165,6 +165,66 @@ async function handleGeminiDirectStream(
 		});
 	}
 
+	// Prefetch first SSE data line to detect immediate stream errors (rate limits, quota).
+	// If the first chunk is an error, we throw so the failover loop can try the next provider.
+	const reader = upstreamResponse.body!.getReader();
+	const decoder = new TextDecoder();
+	let prefetchBuf = '';
+	let prefetchError: string | null = null;
+	let firstDataLine: string | null = null;
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			prefetchBuf += decoder.decode(value, { stream: true });
+
+			const nlIdx = prefetchBuf.indexOf('\n');
+			if (nlIdx < 0) continue;
+
+			const line = prefetchBuf.slice(0, nlIdx);
+			prefetchBuf = prefetchBuf.slice(nlIdx + 1);
+
+			if (line.length === 0 || !line.startsWith('data:')) continue;
+
+			firstDataLine = line;
+			const json = line.slice(line.startsWith('data: ') ? 6 : 5).trim();
+			if (json !== '[DONE]') {
+				try {
+					const parsed = JSON.parse(json);
+					if (parsed?.error) {
+						prefetchError = parsed.error.message || JSON.stringify(parsed.error);
+					}
+				} catch { /* not valid JSON */ }
+			}
+			break;
+		}
+	} catch (err) {
+		reader.releaseLock();
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
+				0, 0, env.clientKeyName || ''));
+		}
+		throw err;
+	}
+
+	if (prefetchError) {
+		reader.releaseLock();
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
+				0, 0, env.clientKeyName || ''));
+		}
+		throw new Error(`Upstream stream error: ${prefetchError}`);
+	}
+
+	if (firstDataLine) {
+		prefetchBuf = firstDataLine + '\n' + prefetchBuf;
+	}
+
 	const encoder = new TextEncoder();
 	const ssePfx = altSse ? 'data: ' : '';
 	const sseSfx = altSse ? '\n\n' : '\n';
@@ -177,9 +237,7 @@ async function handleGeminiDirectStream(
 			let lastInputTokens = 0;
 			let lastOutputTokens = 0;
 
-			const reader = upstreamResponse.body!.getReader();
-			const decoder = new TextDecoder();
-			let buf = '';
+			let buf = prefetchBuf;
 
 			try {
 				while (true) {
@@ -196,13 +254,27 @@ async function handleGeminiDirectStream(
 						const json = line.slice(line.startsWith('data: ') ? 6 : 5).trim();
 						if (json === '[DONE]') continue;
 
-						try {
-							const parsed = JSON.parse(json);
-							const choice = parsed?.choices?.[0];
-							const delta = choice?.delta;
-							const usage = parsed?.usage;
+					try {
+						const parsed = JSON.parse(json);
+						const choice = parsed?.choices?.[0];
+						const delta = choice?.delta;
+						const usage = parsed?.usage;
 
-							if (choice?.finish_reason && choice.finish_reason !== 'null' && choice.finish_reason !== null) {
+						// Error chunk from upstream (e.g., rate limit, quota exhausted)
+						if (parsed?.error) {
+							streamError = true;
+							streamErrorMsg = parsed.error.message || JSON.stringify(parsed.error);
+							controller.enqueue(encoder.encode(ssePfx + JSON.stringify({ error: { message: streamErrorMsg, code: 429 } }) + sseSfx));
+							continue;
+						}
+
+						// Usage-only chunk (choices empty, usage present — captures token counts)
+						if (parsed?.usage && (!parsed?.choices || parsed.choices.length === 0)) {
+							lastInputTokens = parsed.usage.prompt_tokens || 0;
+							lastOutputTokens = parsed.usage.completion_tokens || 0;
+						}
+
+						if (choice?.finish_reason && choice.finish_reason !== 'null' && choice.finish_reason !== null) {
 								if (usage) { lastInputTokens = usage.prompt_tokens || 0; lastOutputTokens = usage.completion_tokens || 0; }
 								const fr = choice.finish_reason;
 								const finishReason = fr === 'stop' ? 'STOP' : fr === 'length' ? 'MAX_TOKENS'

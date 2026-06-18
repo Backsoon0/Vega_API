@@ -193,6 +193,66 @@ async function handleOpenAIDirectStream(
 		});
 	}
 
+	// Prefetch first SSE data line to detect immediate stream errors (rate limits, quota).
+	// If the first chunk is an error, we throw so the failover loop can try the next provider.
+	const reader = upstreamResponse.body!.getReader();
+	const decoder = new TextDecoder();
+	let prefetchBuf = '';
+	let prefetchError: string | null = null;
+	let firstDataLine: string | null = null;
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			prefetchBuf += decoder.decode(value, { stream: true });
+
+			const nlIdx = prefetchBuf.indexOf('\n');
+			if (nlIdx < 0) continue;
+
+			const line = prefetchBuf.slice(0, nlIdx);
+			prefetchBuf = prefetchBuf.slice(nlIdx + 1);
+
+			if (line.length === 0 || !line.startsWith('data:')) continue;
+
+			firstDataLine = line;
+			const json = line.slice(line.startsWith('data: ') ? 6 : 5).trim();
+			if (json !== '[DONE]') {
+				try {
+					const parsed = JSON.parse(json);
+					if (parsed?.error) {
+						prefetchError = parsed.error.message || JSON.stringify(parsed.error);
+					}
+				} catch { /* not valid JSON */ }
+			}
+			break;
+		}
+	} catch (err) {
+		reader.releaseLock();
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
+				0, 0, env.clientKeyName || ''));
+		}
+		throw err;
+	}
+
+	if (prefetchError) {
+		reader.releaseLock();
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
+				0, 0, env.clientKeyName || ''));
+		}
+		throw new Error(`Upstream stream error: ${prefetchError}`);
+	}
+
+	if (firstDataLine) {
+		prefetchBuf = firstDataLine + '\n' + prefetchBuf;
+	}
+
 	const encoder = new TextEncoder();
 	const created = Math.floor(Date.now() / 1000);
 	const REASONING_KEY = '"reasoning_content":"';
@@ -205,9 +265,7 @@ async function handleOpenAIDirectStream(
 			let lastPromptTokens = 0;
 			let lastCompletionTokens = 0;
 
-			const reader = upstreamResponse.body!.getReader();
-			const decoder = new TextDecoder();
-			let buf = '';
+			let buf = prefetchBuf;
 
 			try {
 				while (true) {
@@ -227,13 +285,37 @@ async function handleOpenAIDirectStream(
 
 						const json = line.slice(line.startsWith('data: ') ? 6 : 5).trim();
 
-						if (json === '[DONE]') {
-							controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-							continue;
-						}
+					if (json === '[DONE]') {
+						controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+						continue;
+					}
 
-						// Finish event: extract usage, rewrite with our id/created/model
-						if (json.indexOf('"finish_reason":"') >= 0) {
+					// Error chunk from upstream (e.g., rate limit, quota exhausted)
+					if (json.indexOf('"error"') >= 0) {
+						try {
+							const parsed = JSON.parse(json);
+							if (parsed?.error) {
+								streamError = true;
+								streamErrorMsg = parsed.error.message || JSON.stringify(parsed.error);
+							}
+						} catch { /* ignore parse errors */ }
+						controller.enqueue(encoder.encode(line + '\n'));
+						continue;
+					}
+
+					// Usage-only chunk (choices empty, usage present — captures token counts from chunks like {"choices":[],"usage":{...}})
+					if (json.indexOf('"usage"') >= 0 && json.indexOf('"finish_reason":"') < 0) {
+						try {
+							const parsed = JSON.parse(json);
+							if (parsed?.usage) {
+								lastPromptTokens = parsed.usage.prompt_tokens || 0;
+								lastCompletionTokens = parsed.usage.completion_tokens || 0;
+							}
+						} catch { /* ignore parse errors */ }
+					}
+
+					// Finish event: extract usage, rewrite with our id/created/model
+					if (json.indexOf('"finish_reason":"') >= 0) {
 							try {
 								const parsed = JSON.parse(json);
 								const usage = parsed?.usage;
