@@ -156,6 +156,9 @@ async function handleGeminiDirectStream(
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
+		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, code: 500 } }), {
 			status: upstreamResponse.status,
 			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
@@ -198,11 +201,23 @@ async function handleGeminiDirectStream(
 		}
 	} catch (err) {
 		reader.releaseLock();
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
+				0, 0, env.clientKeyName || ''));
+		}
 		throw err;
 	}
 
 	if (prefetchError) {
 		reader.releaseLock();
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
+				0, 0, env.clientKeyName || ''));
+		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
 
@@ -331,6 +346,9 @@ async function handleGeminiDirectNonStream(
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
+		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
 		});
