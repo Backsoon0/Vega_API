@@ -185,9 +185,6 @@ async function handleAnthropicDirectStream(
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
-			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status,
 			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' },
@@ -230,23 +227,11 @@ async function handleAnthropicDirectStream(
 		}
 	} catch (err) {
 		reader.releaseLock();
-		if (execCtx) {
-			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
-				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
-		}
 		throw err;
 	}
 
 	if (prefetchError) {
 		reader.releaseLock();
-		if (execCtx) {
-			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
-				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
-		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
 
@@ -379,9 +364,6 @@ async function handleAnthropicDirectNonStream(
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
-			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
-			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' },
 		});
@@ -879,14 +861,20 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 	for (const candidate of tryCandidates) {
 		try {
 			const isOpenAI = candidate.provider.type === 'openai';
-			if (isStream) {
-				return await (isOpenAI
+			const response = isStream
+				? await (isOpenAI
 					? handleAnthropicDirectStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId)
-					: handleAnthropicStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId));
+					: handleAnthropicStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId))
+				: await (isOpenAI
+					? handleAnthropicDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId)
+					: handleAnthropicNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId));
+
+			if (response.status >= 400) {
+				lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
+				console.error(lastError);
+				continue;
 			}
-			return await (isOpenAI
-				? handleAnthropicDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId)
-				: handleAnthropicNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId));
+			return response;
 		} catch (err) {
 		const errMsg = err instanceof Error
 			? err.message
@@ -895,18 +883,8 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 				: JSON.stringify(err);
 		lastError = `Provider ${candidate.provider.id}: ${errMsg}`;
 		console.error(lastError);
-		if (execCtx) {
-			execCtx.waitUntil(
-				recordUsage(c.env, candidate.provider.id, rawModelId, ip,
-					{ prompt: 0, completion: 0 }, false,
-					Date.now() - startMs, requestId, isStream,
-					{ errorType: 'provider_error', errorMessage: errMsg.slice(0, 300) },
-					0, 0, c.env.clientKeyName || '',
-				),
-			);
 		}
 	}
-}
 
 if (execCtx) {
 	execCtx.waitUntil(

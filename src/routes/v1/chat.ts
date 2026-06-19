@@ -180,13 +180,6 @@ async function handleOpenAIDirectStream(
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) {
-			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
-				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-				{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) },
-				0, 0, env.clientKeyName || '',
-			));
-		}
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, type: 'server_error' } }), {
 			status: upstreamResponse.status,
 			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
@@ -229,23 +222,11 @@ async function handleOpenAIDirectStream(
 		}
 	} catch (err) {
 		reader.releaseLock();
-		if (execCtx) {
-			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
-				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
-		}
 		throw err;
 	}
 
 	if (prefetchError) {
 		reader.releaseLock();
-		if (execCtx) {
-			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
-				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
-		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
 
@@ -428,13 +409,6 @@ async function handleOpenAIDirectNonStream(
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) {
-			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
-				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
-				{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) },
-				0, 0, env.clientKeyName || '',
-			));
-		}
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status,
 			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
@@ -882,14 +856,20 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	for (const candidate of tryCandidates) {
 		try {
 			const isOpenAI = candidate.provider.type === 'openai';
-			if (isStream) {
-				return await (isOpenAI
+			const response = isStream
+				? await (isOpenAI
 					? handleOpenAIDirectStream(body, requestId, candidate, c.env, ip, execCtx, startMs)
-					: handleOpenAIStream(body, requestId, candidate, c.env, ip, execCtx, startMs));
+					: handleOpenAIStream(body, requestId, candidate, c.env, ip, execCtx, startMs))
+				: await (isOpenAI
+					? handleOpenAIDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs)
+					: handleOpenAINonStream(body, requestId, candidate, c.env, ip, execCtx, startMs));
+
+			if (response.status >= 400) {
+				lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
+				console.error(lastError);
+				continue;
 			}
-			return await (isOpenAI
-				? handleOpenAIDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs)
-				: handleOpenAINonStream(body, requestId, candidate, c.env, ip, execCtx, startMs));
+			return response;
 		} catch (err) {
 		const errMessage = err instanceof Error
 			? err.message
@@ -898,24 +878,6 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 				: JSON.stringify(err);
 		lastError = `Provider ${candidate.provider.id}: ${errMessage}`;
 			console.error(lastError);
-			if (execCtx) {
-				execCtx.waitUntil(
-					recordUsage(
-						c.env,
-						candidate.provider.id,
-						modelId,
-						ip,
-						{ prompt: 0, completion: 0 },
-						false,
-						Date.now() - startMs,
-						requestId,
-						isStream,
-						{ errorType: 'provider_error', errorMessage: errMessage.slice(0, 300) },
-						0, 0,
-						c.env.clientKeyName || '',
-					),
-				);
-			}
 		}
 	}
 

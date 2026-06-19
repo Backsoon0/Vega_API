@@ -156,9 +156,6 @@ async function handleGeminiDirectStream(
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
-			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, code: 500 } }), {
 			status: upstreamResponse.status,
 			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
@@ -201,23 +198,11 @@ async function handleGeminiDirectStream(
 		}
 	} catch (err) {
 		reader.releaseLock();
-		if (execCtx) {
-			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
-				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
-		}
 		throw err;
 	}
 
 	if (prefetchError) {
 		reader.releaseLock();
-		if (execCtx) {
-			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
-				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
-		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
 
@@ -346,9 +331,6 @@ async function handleGeminiDirectNonStream(
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
-			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
-			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
 		});
@@ -719,14 +701,20 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 	for (const candidate of tryCandidates) {
 		try {
 			const isOpenAI = candidate.provider.type === 'openai';
-			if (isStream) {
-				return await (isOpenAI
+			const response = isStream
+				? await (isOpenAI
 					? handleGeminiDirectStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId, altSse)
-					: handleGeminiStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId, altSse));
+					: handleGeminiStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId, altSse))
+				: await (isOpenAI
+					? handleGeminiDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId)
+					: handleGeminiNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId));
+
+			if (response.status >= 400) {
+				lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
+				console.error(lastError);
+				continue;
 			}
-			return await (isOpenAI
-				? handleGeminiDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId)
-				: handleGeminiNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, modelId));
+			return response;
 		} catch (err) {
 		const errMsg = err instanceof Error
 			? err.message
@@ -734,19 +722,9 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 				? err
 				: JSON.stringify(err);
 		lastError = `Provider ${candidate.provider.id}: ${errMsg}`;
-		if (execCtx) {
-			execCtx.waitUntil(
-				recordUsage(c.env, candidate.provider.id, modelId, ip,
-					{ prompt: 0, completion: 0 }, false,
-					Date.now() - startMs, requestId, isStream,
-					{ errorType: 'provider_error', errorMessage: errMsg.slice(0, 300) },
-					0, 0, c.env.clientKeyName || '',
-				),
-			);
+			console.error(lastError);
 		}
 	}
-}
-
 // All providers failed
 if (execCtx) {
 	execCtx.waitUntil(
