@@ -217,10 +217,18 @@ export async function findProviderForModel(
 		}
 	}
 
-	// 4. Fallback: no provider explicitly lists this model — try ALL enabled providers.
+	// 4. Fallback: no provider explicitly lists this model — try relevant providers by model type.
 	if (!matches.length) {
+		const isGemini = /^(gemini|gemma)/i.test(modelId);
+		const isClaude = /^claude/i.test(modelId);
 		for (const p of enabled) {
-			addMatch(p, modelId);
+			if (isGemini && (p.type === 'google_ai_studio' || p.type === 'vertex_ai')) {
+				addMatch(p, modelId);
+			} else if (isClaude && p.type === 'anthropic') {
+				addMatch(p, modelId);
+			} else if (!isGemini && !isClaude) {
+				addMatch(p, modelId);
+			}
 		}
 	}
 
