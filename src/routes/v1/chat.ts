@@ -10,7 +10,7 @@ import { streamText, generateText } from 'ai';
 import type { Env } from '../../types';
 import type { ProviderMatch } from '../../router';
 import { findProviderForModel } from '../../router';
-import { createModelFromProvider } from '../../ai-providers';
+import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers';
 import { recordUsage, extractCacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
 
@@ -158,11 +158,12 @@ async function handleOpenAIDirectStream(
 	ip: string,
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
+	skipVersioning = false,
 ): Promise<Response> {
 	const modelId = String(body.model).trim();
 	const apiKey = provider.provider.config.apiKey;
 	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
-	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
+	if (!skipVersioning && !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
 		baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
 	}
 
@@ -406,11 +407,12 @@ async function handleOpenAIDirectNonStream(
 	ip: string,
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
+	skipVersioning = false,
 ): Promise<Response> {
 	const modelId = String(body.model).trim();
 	const apiKey = provider.provider.config.apiKey;
 	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
-	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
+	if (!skipVersioning && !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
 		baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
 	}
 
@@ -935,14 +937,38 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	let lastError = '';
 	for (const candidate of tryCandidates) {
 		try {
-			const isOpenAI = candidate.provider.type === 'openai';
+			const type = candidate.provider.type;
+			const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
+
+			let directBody = body as Record<string, unknown>;
+			let directProvider: ProviderMatch = candidate;
+			let skipVersioning = false;
+
+			if (type === 'google_ai_studio') {
+				skipVersioning = true;
+				directBody = { ...body, model: String(body.model).replace(/^(google\/|models\/)+/, '') };
+				directProvider = {
+					...candidate,
+					provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
+				};
+			} else if (type === 'vertex_ai') {
+				skipVersioning = true;
+				const cfg = candidate.provider.config;
+				const loc = cfg.location || 'us-central1';
+				const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
+				if (!isVertexApiKeyMode(cfg)) {
+					vConfig.apiKey = await getVertexAccessToken(cfg);
+				}
+				directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
+			}
+
 			const response = isStream
-				? await (isOpenAI
-					? handleOpenAIDirectStream(body, requestId, candidate, c.env, ip, execCtx, startMs)
-					: handleOpenAIStream(body, requestId, candidate, c.env, ip, execCtx, startMs))
-				: await (isOpenAI
-					? handleOpenAIDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs)
-					: handleOpenAINonStream(body, requestId, candidate, c.env, ip, execCtx, startMs));
+				? await (useDirect
+					? handleOpenAIDirectStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning)
+					: handleOpenAIStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs))
+				: await (useDirect
+					? handleOpenAIDirectNonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning)
+					: handleOpenAINonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs));
 
 			if (response.status >= 400) {
 				lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;

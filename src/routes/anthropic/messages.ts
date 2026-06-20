@@ -10,7 +10,7 @@ import { streamText, generateText } from 'ai';
 import type { Env } from '../../types';
 import type { ProviderMatch } from '../../router';
 import { findProviderForModel, getAggregatedModels } from '../../router';
-import { createModelFromProvider } from '../../ai-providers';
+import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers';
 import { recordUsage, extractCacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
 
@@ -168,10 +168,11 @@ async function handleAnthropicDirectStream(
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
 	rawModelId: string,
+	skipVersioning = false,
 ): Promise<Response> {
 	const apiKey = provider.provider.config.apiKey;
 	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
-	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+	if (!skipVersioning && !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
 
 	const upstreamBody = anthropicToOpenAI(body);
 	upstreamBody.stream = true;
@@ -363,10 +364,11 @@ async function handleAnthropicDirectNonStream(
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
 	rawModelId: string,
+	skipVersioning = false,
 ): Promise<Response> {
 	const apiKey = provider.provider.config.apiKey;
 	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
-	if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+	if (!skipVersioning && !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
 
 	const upstreamBody = anthropicToOpenAI(body);
 	(upstreamBody as any).model = rawModelId;
@@ -932,14 +934,38 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 	let lastError = '';
 	for (const candidate of tryCandidates) {
 		try {
-			const isOpenAI = candidate.provider.type === 'openai';
+			const type = candidate.provider.type;
+			const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
+
+			let normModelId = rawModelId;
+			let directProvider: ProviderMatch = candidate;
+			let skipVersioning = false;
+
+			if (type === 'google_ai_studio') {
+				skipVersioning = true;
+				normModelId = rawModelId.replace(/^(google\/|models\/)+/, '');
+				directProvider = {
+					...candidate,
+					provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
+				};
+			} else if (type === 'vertex_ai') {
+				skipVersioning = true;
+				const cfg = candidate.provider.config;
+				const loc = cfg.location || 'us-central1';
+				const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
+				if (!isVertexApiKeyMode(cfg)) {
+					vConfig.apiKey = await getVertexAccessToken(cfg);
+				}
+				directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
+			}
+
 			const response = isStream
-				? await (isOpenAI
-					? handleAnthropicDirectStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId)
-					: handleAnthropicStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId))
-				: await (isOpenAI
-					? handleAnthropicDirectNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId)
-					: handleAnthropicNonStream(body, requestId, candidate, c.env, ip, execCtx, startMs, rawModelId));
+				? await (useDirect
+					? handleAnthropicDirectStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning)
+					: handleAnthropicStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId))
+				: await (useDirect
+					? handleAnthropicDirectNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning)
+					: handleAnthropicNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId));
 
 			if (response.status >= 400) {
 				lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
