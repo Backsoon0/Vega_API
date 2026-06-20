@@ -953,6 +953,7 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 				};
 			} else if (type === 'vertex_ai') {
 				skipVersioning = true;
+				directBody = { ...body, model: String(body.model).startsWith('google/') ? body.model : 'google/' + body.model };
 				const cfg = candidate.provider.config;
 				const loc = cfg.location || 'us-central1';
 				const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };

@@ -950,6 +950,7 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 				};
 			} else if (type === 'vertex_ai') {
 				skipVersioning = true;
+				normModelId = normModelId.startsWith('google/') ? normModelId : 'google/' + normModelId;
 				const cfg = candidate.provider.config;
 				const loc = cfg.location || 'us-central1';
 				const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
