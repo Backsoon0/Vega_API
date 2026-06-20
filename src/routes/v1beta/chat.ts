@@ -743,17 +743,6 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 			console.error(lastError);
 		}
 	}
-// All providers failed
-if (execCtx) {
-	execCtx.waitUntil(
-		recordUsage(c.env, 'unknown', modelId, ip,
-			{ prompt: 0, completion: 0 }, false, 0,
-			requestId, isStream,
-			{ errorType: 'all_providers_failed', errorMessage: lastError.slice(0, 300) },
-			0, 0, c.env.clientKeyName || '',
-		),
-	);
-}
 return c.json(
 	{ error: { message: `All providers failed. Last error: ${lastError}`, code: 502 } },
 	502,

@@ -904,16 +904,6 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 		}
 	}
 
-if (execCtx) {
-	execCtx.waitUntil(
-		recordUsage(c.env, 'unknown', rawModelId, ip,
-			{ prompt: 0, completion: 0 }, false, 0,
-			requestId, isStream,
-			{ errorType: 'all_providers_failed', errorMessage: lastError.slice(0, 300) },
-			0, 0, c.env.clientKeyName || '',
-		),
-	);
-}
 return c.json(
 		{
 			type: 'error',
