@@ -67,7 +67,11 @@ export async function fetchModelList(
         'Content-Type': 'application/json',
       },
     });
-    if (!resp.ok) return [];
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.error(`AI Studio model fetch failed: ${UPSTREAM_BASE}/models → ${resp.status}: ${errText.slice(0, 200)}`);
+      return [];
+    }
 
     const data = await resp.json() as Record<string, unknown>;
     const items = Array.isArray(data.data)
@@ -83,5 +87,5 @@ export async function fetchModelList(
         owned_by: m.owned_by || 'google',
       };
     });
-  } catch { return []; }
+  } catch (err) { console.error(`AI Studio model fetch error: ${(err as Error).message}`); return []; }
 }

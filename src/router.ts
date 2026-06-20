@@ -135,8 +135,8 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 									}
 								}
 							})
-							.catch(() => {
-								/* skip unreachable provider */
+							.catch((err) => {
+								console.error(`Model fetch failed for provider ${p.id} (${p.type}):`, (err as Error).message);
 							}),
 					);
 				}
@@ -217,18 +217,10 @@ export async function findProviderForModel(
 		}
 	}
 
-	// 4. Fallback: no provider explicitly lists this model — try relevant providers by model type.
+	// 4. Fallback: no provider explicitly lists this model — try ALL enabled providers.
 	if (!matches.length) {
-		const isGemini = /^(gemini|gemma)/i.test(modelId);
-		const isClaude = /^claude/i.test(modelId);
 		for (const p of enabled) {
-			if (isGemini && (p.type === 'google_ai_studio' || p.type === 'vertex_ai')) {
-				addMatch(p, modelId);
-			} else if (isClaude && p.type === 'anthropic') {
-				addMatch(p, modelId);
-			} else if (!isGemini && !isClaude) {
-				addMatch(p, modelId);
-			}
+			addMatch(p, modelId);
 		}
 	}
 

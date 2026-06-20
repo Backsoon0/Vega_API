@@ -57,7 +57,11 @@ export async function fetchModelList(
         'Content-Type': 'application/json',
       },
     });
-    if (!resp.ok) return [];
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.error(`Model fetch failed: ${baseUrl}/models → ${resp.status}: ${errText.slice(0, 200)}`);
+      return [];
+    }
 
     const data = await resp.json() as Record<string, unknown>;
     const items = Array.isArray(data.data)
@@ -70,5 +74,5 @@ export async function fetchModelList(
       created: m.created || 0,
       owned_by: m.owned_by || 'openai',
     }));
-  } catch { return []; }
+  } catch (err) { console.error(`OpenAI model fetch error at ${baseUrl}/models: ${(err as Error).message}`); return []; }
 }
