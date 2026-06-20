@@ -517,6 +517,60 @@ async function handleOpenAIStream(
 		headers: undefined,
 	});
 
+	// Prefetch first part from AI SDK stream to detect early errors (rate limits, quota).
+	// If the first part is an error, we throw so the failover loop can try the next provider.
+	const streamIterator = result.fullStream[Symbol.asyncIterator]();
+	let firstPart: any = null;
+	let prefetchError: string | null = null;
+
+	try {
+		const { value, done } = await streamIterator.next();
+		if (!done && value) {
+			firstPart = value;
+			if (value.type === 'error') {
+				prefetchError = value.error instanceof Error
+					? value.error.message
+					: typeof value.error === 'string'
+						? value.error
+						: JSON.stringify(value.error);
+			}
+		}
+	} catch (err) {
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
+				0, 0, env.clientKeyName || ''));
+		}
+		throw err;
+	}
+
+	if (prefetchError) {
+		if (execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
+				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
+				0, 0, env.clientKeyName || ''));
+		}
+		throw new Error(`Upstream stream error: ${prefetchError}`);
+	}
+
+	// Wrap iterator to prepend the already-consumed first part seamlessly
+	const parts: AsyncIterable<any> = {
+		[Symbol.asyncIterator]() {
+			let prefetched = firstPart === null;
+			return {
+				async next() {
+					if (!prefetched) {
+						prefetched = true;
+						return { value: firstPart!, done: false };
+					}
+					return streamIterator.next();
+				}
+			};
+		}
+	};
+
 	const encoder = new TextEncoder();
 	const created = Math.floor(Date.now() / 1000);
 
@@ -534,7 +588,7 @@ async function handleOpenAIStream(
 			let lastPromptTokens = 0;
 			let lastCompletionTokens = 0;
 			try {
-				for await (const part of result.fullStream) {
+				for await (const part of parts) {
 					switch (part.type) {
 				case 'text-delta':
 					controller.enqueue(encoder.encode(chunkPfx + escJson(part.text) + chunkSfx));
