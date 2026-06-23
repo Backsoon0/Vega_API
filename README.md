@@ -2,6 +2,33 @@
 
 基于 Cloudflare Workers (Hono + TypeScript) 的**多接口 AI API 网关**，使用 Vercel AI SDK 统一后端，同时提供 OpenAI (`/v1/*`)、Google Gemini (`/v1beta/*`)、Anthropic Messages (`/anthropic/*`) 三种原生 API 接口。管理面板使用 SvelteKit + Tailwind CSS v4 构建。
 
+## 目录
+
+- [特性](#特性)
+- [技术栈](#技术栈)
+- [架构](#架构)
+- [支持的 Provider](#支持的-provider)
+- [三套 API 接口](#三套-api-接口)
+  - [OpenAI 兼容 (`/v1/*`)](#1-openai-兼容-v1)
+  - [Google Gemini 原生 (`/v1beta/*`)](#2-google-gemini-原生-v1beta)
+  - [Anthropic Messages 原生 (`/anthropic/*`)](#3-anthropic-messages-原生-anthropic)
+  - [认证方式汇总](#认证方式汇总)
+  - [参数透传 (Extra Body)](#参数透传-extra-body)
+- [客户端 SDK 示例](#客户端-sdk-示例)
+- [API 路由参考](#api-路由参考)
+  - [完整路由表](#完整路由表)
+  - [管理 API](#管理-api)
+- [管理面板页面](#管理面板页面)
+- [快速部署](#快速部署)
+  - [自动化部署 (GitHub Actions)](#自动化部署-github-actions)
+  - [手动部署](#手动部署)
+- [安全设计](#安全设计)
+- [D1 数据结构](#d1-数据结构)
+- [开发](#开发)
+  - [项目结构](#项目结构)
+- [设计系统 — Code Dark](#设计系统--code-dark)
+- [许可](#许可)
+
 ## 特性
 
 - **三接口并行** — 同一 Worker 同时提供 OpenAI、Gemini、Anthropic 三种标准 API
