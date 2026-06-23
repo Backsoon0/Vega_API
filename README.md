@@ -30,7 +30,7 @@
 | 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons (Code Dark 主题) |
 | 加密 | Web Crypto API (AES-256-GCM、SHA-256) |
 | 测试 | Vitest + @cloudflare/vitest-pool-workers |
-| 部署 | Wrangler + Workers Static Assets |
+| 部署 | Wrangler + Workers Static Assets + GitHub Actions |
 
 ## 架构
 
@@ -307,6 +307,18 @@ response = client.messages.create(
 - [Cloudflare 账号](https://dash.cloudflare.com/)
 - [Node.js](https://nodejs.org/) 18+
 
+### 自动化部署 (GitHub Actions)
+
+1. Fork 或克隆本仓库到 GitHub
+2. 在仓库 Settings → Secrets and variables → Actions 中添加：
+   - `CLOUDFLARE_API_TOKEN` — 从 [API Tokens](https://dash.cloudflare.com/profile/api-tokens) 用 "Edit Cloudflare Workers" 模板创建
+   - `CLOUDFLARE_ACCOUNT_ID` — 从 Cloudflare Dashboard 首页右侧复制
+3. 推送代码到 `master` 分支即可自动部署
+
+Workflow 文件：`.github/workflows/deploy.yml`
+
+### 手动部署
+
 ### 1. 克隆并安装
 
 ```bash
@@ -393,6 +405,8 @@ npm run deploy           # 构建 + 部署到 Cloudflare
 ### 项目结构
 
 ```
+├── .github/workflows/         # GitHub Actions 自动部署
+│   └── deploy.yml
 ├── package.json              # npm workspaces root
 ├── wrangler.jsonc            # Workers 配置 (D1 + Assets + run_worker_first)
 ├── migrations/               # D1 数据库迁移
