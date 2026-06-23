@@ -337,10 +337,14 @@ response = client.messages.create(
 ### 自动化部署 (GitHub Actions)
 
 1. Fork 或克隆本仓库到 GitHub
-2. 在仓库 Settings → Secrets and variables → Actions 中添加：
-   - `CLOUDFLARE_API_TOKEN` — 从 [API Tokens](https://dash.cloudflare.com/profile/api-tokens) 用 "Edit Cloudflare Workers" 模板创建
-   - `CLOUDFLARE_ACCOUNT_ID` — 从 Cloudflare Dashboard 首页右侧复制
-3. 推送代码到 `master` 分支即可自动部署
+2. 在 Cloudflare Dashboard 创建 D1 数据库
+3. 在仓库 Settings → Secrets and variables → Actions 中添加：
+   - **Secrets**:
+     - `CLOUDFLARE_API_TOKEN` — 从 [API Tokens](https://dash.cloudflare.com/profile/api-tokens) 用 "Edit Cloudflare Workers" 模板创建
+     - `CLOUDFLARE_ACCOUNT_ID` — 从 Cloudflare Dashboard 首页右侧复制
+   - **Variables**:
+     - `D1_DATABASE_NAME` — 你的 D1 数据库名称（默认 `vega-api-db`）
+4. 推送代码到 `master` 分支即可自动部署
 
 Workflow 文件：`.github/workflows/deploy.yml`
 

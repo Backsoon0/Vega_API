@@ -23,7 +23,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 migrations apply vega-api-db --remote
+          command: d1 migrations apply ${{ vars.D1_DATABASE_NAME || 'vega-api-db' }} --remote
 
       - name: Deploy Worker
         run: npm run deploy
