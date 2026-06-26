@@ -16,6 +16,8 @@ jobs:
           node-version: 22
           cache: npm
 
+      - run: rm -f package-lock.json
+
       - run: npm install
 
       - name: Apply D1 migrations
