@@ -227,6 +227,82 @@ export async function deleteLegacyKey() {
 	return data;
 }
 
+// Playground — fetch live models for a provider
+export async function getProviderModels(providerId: string): Promise<string[]> {
+	const headers: Record<string, string> = {};
+	if (_authToken) headers['Authorization'] = `Bearer ${_authToken}`;
+	const resp = await fetch(`/admin/playground/models/${encodeURIComponent(providerId)}`, { headers });
+	if (!resp.ok) throw new Error(`Failed to fetch models: ${resp.status}`);
+	const data = await resp.json();
+	return data.models || [];
+}
+
+// Playground — chat with a provider+model (streaming)
+export interface PlaygroundChatMessage {
+	role: string;
+	content: string;
+}
+
+export interface PlaygroundChatEvent {
+	type: 'text-delta' | 'reasoning-delta' | 'done' | 'error';
+	text?: string;
+	message?: string;
+	usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+}
+
+export interface PlaygroundChatResult {
+	content: string | null;
+	reasoning: string | null;
+	usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+}
+
+export async function* playgroundChat(
+	providerId: string,
+	model: string,
+	messages: PlaygroundChatMessage[],
+	signal?: AbortSignal,
+): AsyncGenerator<PlaygroundChatEvent> {
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	if (_authToken) headers['Authorization'] = `Bearer ${_authToken}`;
+
+	const resp = await fetch('/admin/playground/chat', {
+		method: 'POST',
+		headers,
+		body: JSON.stringify({ providerId, model, messages, stream: true }),
+		signal,
+	});
+
+	if (!resp.ok) {
+		let err: any;
+		try { err = await resp.json(); } catch { err = {}; }
+		throw new Error(err.error || `HTTP ${resp.status}`);
+	}
+
+	const reader = resp.body!.getReader();
+	const decoder = new TextDecoder();
+	let buf = '';
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buf += decoder.decode(value, { stream: true });
+
+			let nl: number;
+			while ((nl = buf.indexOf('\n')) >= 0) {
+				const line = buf.slice(0, nl);
+				buf = buf.slice(nl + 1);
+				if (!line.trim()) continue;
+				try {
+					yield JSON.parse(line) as PlaygroundChatEvent;
+				} catch { /* skip invalid lines */ }
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}
+
 // Settings
 export async function getSettings() {
 	const { ok, data } = await request('GET', '/settings');

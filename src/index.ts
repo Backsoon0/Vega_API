@@ -15,6 +15,7 @@ import { adminAuthRoutes } from './routes/admin/auth';
 import { adminProviderRoutes } from './routes/admin/providers';
 import { adminApiKeyRoutes } from './routes/admin/client-key';
 import { adminUsageRoutes } from './routes/admin/usage';
+import { adminPlaygroundRoutes } from './routes/admin/playground';
 import { v1ModelRoutes } from './routes/v1/models';
 import { v1ChatRoutes } from './routes/v1/chat';
 import { v1betaModelRoutes } from './routes/v1beta/models';
@@ -54,6 +55,7 @@ app.route('/admin', adminAuthRoutes);
 app.route('/admin', adminProviderRoutes);
 app.route('/admin', adminApiKeyRoutes);
 app.route('/admin', adminUsageRoutes);
+app.route('/admin', adminPlaygroundRoutes);
 
 // ---- /v1/* Client API routes ----
 app.use('/v1/*', clientAuthMiddleware());
