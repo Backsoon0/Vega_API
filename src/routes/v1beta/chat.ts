@@ -149,9 +149,15 @@ async function handleGeminiDirectStream(
 	upstreamBody.stream = true;
 	(upstreamBody as any).model = rawModelId;
 
+	const isGoogleStudio = baseUrl.includes('generativelanguage.googleapis.com');
+	const isVertexApiKey = baseUrl.includes('aiplatform.googleapis.com') && apiKey && apiKey.length < 200;
+	const authHeaders: Record<string, string> = (isGoogleStudio || isVertexApiKey)
+		? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
+		: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',
-		headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
 	});
 
@@ -340,9 +346,15 @@ async function handleGeminiDirectNonStream(
 	const upstreamBody = geminiToOpenAI(body);
 	(upstreamBody as any).model = rawModelId;
 
+	const isGoogleStudio = baseUrl.includes('generativelanguage.googleapis.com');
+	const isVertexApiKey = baseUrl.includes('aiplatform.googleapis.com') && apiKey && apiKey.length < 200;
+	const authHeaders: Record<string, string> = (isGoogleStudio || isVertexApiKey)
+		? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
+		: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',
-		headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
 	});
 

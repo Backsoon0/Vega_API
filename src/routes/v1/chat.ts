@@ -170,12 +170,15 @@ async function handleOpenAIDirectStream(
 	const upstreamBody = { ...body };
 	upstreamBody.stream = true;
 
+	const isGoogleStudio = baseUrl.includes('generativelanguage.googleapis.com');
+	const isVertexApiKey = baseUrl.includes('aiplatform.googleapis.com') && apiKey && apiKey.length < 200;
+	const authHeaders: Record<string, string> = (isGoogleStudio || isVertexApiKey)
+		? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
+		: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			'Authorization': `Bearer ${apiKey}`,
-		},
+		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
 	});
 
@@ -416,17 +419,20 @@ async function handleOpenAIDirectNonStream(
 		baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
 	}
 
-	const upstreamBody = { ...body };
-	delete upstreamBody.stream;
+		const upstreamBody = { ...body };
+		delete upstreamBody.stream;
 
-	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			'Authorization': `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify(upstreamBody),
-	});
+		const isGoogleStudio = baseUrl.includes('generativelanguage.googleapis.com');
+		const isVertexApiKey = baseUrl.includes('aiplatform.googleapis.com') && apiKey && apiKey.length < 200;
+		const authHeaders: Record<string, string> = (isGoogleStudio || isVertexApiKey)
+			? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
+			: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+
+		const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
+			method: 'POST',
+			headers: authHeaders,
+			body: JSON.stringify(upstreamBody),
+		});
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');

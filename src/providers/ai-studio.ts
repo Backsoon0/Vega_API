@@ -23,9 +23,9 @@ export async function proxyRequest(
   upstreamUrl.search = reqUrl.search;
 
   const headers = new Headers(request.headers);
-  // Remove incoming Authorization — it's the client key, not the provider key
-  headers.delete('Authorization');
-  headers.set('Authorization', `Bearer ${apiKey}`);
+	// Remove incoming Authorization — it's the client key, not the provider key
+	headers.delete('Authorization');
+	headers.set('x-goog-api-key', apiKey);
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
@@ -52,40 +52,75 @@ export async function proxyRequest(
 }
 
 /**
- * Fetch available models from Google AI Studio OpenAI-compatible endpoint.
+ * Fetch available models from Google AI Studio.
+ * Tries the OpenAI-compatible endpoint first, falls back to the native Gemini API.
  */
 export async function fetchModelList(
-  env: Env, config: Record<string, string>
+	env: Env, config: Record<string, string>
 ): Promise<Model[]> {
-  const apiKey = config.apiKey;
-  if (!apiKey) return [];
+	const apiKey = config.apiKey;
+	if (!apiKey) {
+		console.warn('[ai-studio] fetchModelList: no apiKey in config');
+		return [];
+	}
 
-  try {
-    const resp = await fetch(`${UPSTREAM_BASE}/models`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      console.error(`AI Studio model fetch failed: ${UPSTREAM_BASE}/models → ${resp.status}: ${errText.slice(0, 200)}`);
-      return [];
-    }
+	// Strategy 1: OpenAI-compatible endpoint (confirmed by Google docs)
+	const openaiUrl = `${UPSTREAM_BASE}/models`;
+	let resp = await fetch(openaiUrl, {
+		headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+	});
 
-    const data = await resp.json() as Record<string, unknown>;
-    const items = Array.isArray(data.data)
-      ? data.data as Array<{ id: string; created?: number; owned_by?: string }>
-      : [];
+	if (resp.ok) {
+		const data = await resp.json() as Record<string, unknown>;
+		// Try both OpenAI format ({ data: [...] }) and Google format ({ models: [...] })
+		const items = Array.isArray(data.data) ? data.data as Array<Record<string, unknown>>
+			: Array.isArray(data.models) ? data.models as Array<Record<string, unknown>>
+			: [];
+		if (items.length > 0) {
+			return items.map((m) => ({
+				id: String(m.id || m.name || '').replace(/^(google\/|models\/)+/, ''),
+				object: 'model' as const,
+				created: (m.created as number) || 0,
+				owned_by: (m.owned_by as string) || 'google',
+			}));
+		}
+		// OpenAI endpoint responded OK but returned 0 models — fall through to native API
+		console.warn(`[ai-studio] OpenAI endpoint returned 0 models (keys: ${Object.keys(data).join(', ')}), trying native API`);
+	} else {
+		const errText = await resp.text().catch(() => '');
+		console.warn(`[ai-studio] OpenAI endpoint failed (${resp.status}): ${errText.slice(0, 200)}`);
+	}
 
-    return items.map((m) => {
-      const bareId = String(m.id || '').replace(/^(google\/|models\/)+/, '');
-      return {
-        id: bareId,
-        object: 'model' as const,
-        created: m.created || 0,
-        owned_by: m.owned_by || 'google',
-      };
-    });
-  } catch (err) { console.error(`AI Studio model fetch error: ${(err as Error).message}`); return []; }
+	// Strategy 2: Native Gemini API models endpoint
+	const nativeUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+	resp = await fetch(nativeUrl, {
+		headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+	});
+
+	if (!resp.ok) {
+		const errText = await resp.text().catch(() => '');
+		console.error(`[ai-studio] Native endpoint failed (${resp.status}): ${errText.slice(0, 200)}`);
+		return [];
+	}
+
+	const data = await resp.json() as Record<string, unknown>;
+	const items = Array.isArray(data.models) ? data.models as Array<Record<string, unknown>> : [];
+	if (items.length === 0) {
+		console.warn(`[ai-studio] Native endpoint returned 0 models. Response keys: ${Object.keys(data).join(', ')}`);
+		return [];
+	}
+
+	return items
+		.filter((m) => {
+			const methods = m.supportedGenerationMethods as string[] | undefined;
+			// Keep models that support generateContent, or models without the field (backward compat)
+			if (Array.isArray(methods) && !methods.includes('generateContent')) return false;
+			return true;
+		})
+		.map((m) => ({
+			id: String(m.name || m.id || '').replace(/^(google\/|models\/)+/, ''),
+			object: 'model' as const,
+			created: 0,
+			owned_by: 'google',
+		}));
 }
