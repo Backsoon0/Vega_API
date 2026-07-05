@@ -29,10 +29,8 @@ const app = new Hono<{ Bindings: Env }>();
 
 // ---- Global CORS ----
 app.use('*', cors({
-	origin: (origin) => origin,
+	origin: (origin) => origin || '*',
 	allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-	allowHeaders: ['Content-Type', 'Authorization', 'X-Proxy-Key'],
-	exposeHeaders: ['Content-Type'],
 }));
 
 // ---- Health check ----
