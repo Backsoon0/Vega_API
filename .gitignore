@@ -173,6 +173,8 @@ dist
 .mcp.json
 .claude/
 
+.omo/
+
 # Serena project memories (session-specific)
 .serena/
 

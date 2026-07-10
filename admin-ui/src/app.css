@@ -1,35 +1,53 @@
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Code Dark — Design Tokens (Tailwind CSS v4 @theme)
+   Code Dark Pro — Design Tokens (Tailwind CSS v4 @theme)
+   Enhanced from Code Dark with glass-morphism, gradients, and refined depth.
    ═══════════════════════════════════════════════════════════════════════════ */
 @theme {
   /* ── Typography ── */
   --font-family-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
   --font-family-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
 
+  /* ── Type Scale (refined for better hierarchy) ── */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.625rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
+
   /* ── Surface Colors ── */
-  --color-background: #0F172A;
-  --color-surface: #1B2336;
-  --color-surface-elevated: #1E293B;
-  --color-surface-hover: #243044;
-  --color-input: rgba(15, 23, 42, 0.8);
+  --color-background: #090B10;
+  --color-surface: #11141D;
+  --color-surface-elevated: #161923;
+  --color-surface-hover: #1C1F2B;
+  --color-surface-glass: rgba(17, 20, 29, 0.85);
+  --color-input: rgba(9, 11, 16, 0.7);
 
   /* ── Text Hierarchy ── */
-  --color-primary: #F8FAFC;
+  --color-primary: #F1F5F9;
   --color-secondary: #CBD5E1;
   --color-muted: #64748B;
   --color-placeholder: #475569;
 
-  /* ── Accent (Green — status, success, "Run") ── */
+  /* ── Accent (Emerald — status, success, "Run") ── */
   --color-accent: #22C55E;
   --color-accent-hover: #16A34A;
   --color-accent-subtle: rgba(34, 197, 94, 0.10);
+  --color-accent-glow: rgba(34, 197, 94, 0.35);
 
   /* ── CTA (Blue — buttons, links, focus) ── */
   --color-cta: #3B82F6;
   --color-cta-hover: #2563EB;
   --color-cta-subtle: rgba(59, 130, 246, 0.10);
+  --color-cta-glow: rgba(59, 130, 246, 0.35);
 
   /* ── Semantic Actions ── */
   --color-danger: #EF4444;
@@ -50,6 +68,12 @@
   --color-anthropic: #D9776F;
   --color-anthropic-subtle: rgba(217, 119, 111, 0.12);
 
+  /* ── Border Tokens (softened — cards use shadow, not borders) ── */
+  --color-border-subtle: rgba(255, 255, 255, 0.04);
+  --color-border-default: rgba(255, 255, 255, 0.05);
+  --color-border-strong: rgba(255, 255, 255, 0.07);
+  --color-border-accent: rgba(59, 130, 246, 0.20);
+
   /* ── Radii ── */
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
@@ -57,24 +81,45 @@
   --radius-xl: 1.25rem;
   --radius-2xl: 1.5rem;
 
-  /* ── Shadows ── */
+  /* ── Shadow Scale ── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 4px rgba(0, 0, 0, 0.4);
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
   --shadow-modal: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
-  --shadow-glow-cta: 0 0 20px rgba(59, 130, 246, 0.25), 0 0 40px rgba(59, 130, 246, 0.10);
-  --shadow-glow-accent: 0 0 20px rgba(34, 197, 94, 0.25), 0 0 40px rgba(34, 197, 94, 0.10);
+  --shadow-glow-cta: 0 0 24px rgba(59, 130, 246, 0.25), 0 0 48px rgba(59, 130, 246, 0.08);
+  --shadow-glow-accent: 0 0 24px rgba(34, 197, 94, 0.25), 0 0 48px rgba(34, 197, 94, 0.08);
+  --shadow-glow-cta-subtle: 0 0 12px rgba(59, 130, 246, 0.15);
+
+  /* ── Gradient Tokens ── */
+  --gradient-cta: linear-gradient(135deg, #3B82F6, #2563EB);
+  --gradient-accent: linear-gradient(135deg, #22C55E, #16A34A);
+  --gradient-surface: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+  --gradient-card-cta: linear-gradient(135deg, rgba(59,130,246,0.08), rgba(59,130,246,0.02));
+  --gradient-card-accent: linear-gradient(135deg, rgba(34,197,94,0.08), rgba(34,197,94,0.02));
+  --gradient-card-warning: linear-gradient(135deg, rgba(245,158,11,0.08), rgba(245,158,11,0.02));
+  --gradient-card-danger: linear-gradient(135deg, rgba(239,68,68,0.08), rgba(239,68,68,0.02));
 
   /* ── Animation Tokens ── */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --duration-fast: 150ms;
   --duration-normal: 200ms;
   --duration-slow: 300ms;
+  --duration-modal: 350ms;
 
-  /* ── Keyframe Animations (registered utilities) ── */
+  /* ── Keyframe Animations ── */
   --animate-toast-in: slideIn 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
   --animate-toast-out: slideOut 200ms cubic-bezier(0.4, 0, 1, 1) both;
   --animate-fade-in: fadeIn 200ms ease-out both;
+  --animate-scale-in: scaleIn 250ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-slide-up: slideUp 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-pulse-glow: pulseGlow 2s ease-in-out infinite;
+  --animate-stagger-1: staggerFade 400ms ease-out both;
+  --animate-stagger-2: staggerFade 400ms 50ms ease-out both;
+  --animate-stagger-3: staggerFade 400ms 100ms ease-out both;
+  --animate-stagger-4: staggerFade 400ms 150ms ease-out both;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -94,11 +139,12 @@ body {
   min-height: 100dvh;
 }
 
-/* ── Focus ring (visible, elegant) ── */
+/* ── Focus ring (visible, elegant, animated) ── */
 *:focus-visible {
   outline: 2px solid var(--color-cta);
   outline-offset: 2px;
   border-radius: 4px;
+  transition: outline-color 150ms ease-out;
 }
 
 /* ── Custom scrollbar (WebKit) ── */
@@ -110,11 +156,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.10);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.20);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 /* ── Selection ── */
@@ -123,7 +169,9 @@ body {
   color: #F8FAFC;
 }
 
-/* ── Keyframe Animations ── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   Keyframe Animations
+   ═══════════════════════════════════════════════════════════════════════════ */
 @keyframes slideIn {
   from {
     opacity: 0;
@@ -151,10 +199,61 @@ body {
   to { opacity: 1; }
 }
 
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 24px rgba(59, 130, 246, 0.30);
+  }
+}
+
+@keyframes staggerFade {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+
+@keyframes bgPulse {
+  0%, 100% { opacity: 0.03; }
+  50% { opacity: 0.06; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Utility Classes
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Shimmer skeleton loading ── */
 .shimmer-skeleton {
@@ -165,6 +264,85 @@ body {
   );
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ── Glass surface (backdrop-blur cards) ── */
+.glass-surface {
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+}
+
+/* ── Glass surface with stronger blur for modals ── */
+.glass-heavy {
+  background: rgba(17, 20, 29, 0.92);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+}
+
+/* ── Borderless elevated card (shadow-only depth, no border) ── */
+.card-elevated {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  border: none;
+}
+.card-elevated:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* ── Gradient card accent tops ── */
+.card-gradient-cta {
+  background:
+    var(--gradient-card-cta),
+    var(--color-surface);
+}
+
+.card-gradient-accent {
+  background:
+    var(--gradient-card-accent),
+    var(--color-surface);
+}
+
+/* ── Stat card icon container ── */
+.stat-icon-cta {
+  background: linear-gradient(135deg, rgba(59,130,246,0.15), rgba(59,130,246,0.05));
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.12);
+}
+
+.stat-icon-accent {
+  background: linear-gradient(135deg, rgba(34,197,94,0.15), rgba(34,197,94,0.05));
+  box-shadow: 0 0 16px rgba(34, 197, 94, 0.12);
+}
+
+.stat-icon-warning {
+  background: linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.05));
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.12);
+}
+
+/* ── CTA button with gradient ── */
+.btn-cta-gradient {
+  background: var(--gradient-cta);
+  box-shadow: var(--shadow-glow-cta);
+}
+.btn-cta-gradient:hover {
+  box-shadow: 0 0 28px rgba(59, 130, 246, 0.35), 0 0 56px rgba(59, 130, 246, 0.10);
+}
+
+/* ── Accent button with gradient ── */
+.btn-accent-gradient {
+  background: var(--gradient-accent);
+  box-shadow: var(--shadow-glow-accent);
+}
+
+/* ── Divider with subtle gradient ── */
+.divider-gradient {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+}
+
+/* ── Active nav indicator glow ── */
+.nav-active-glow {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15), inset 0 0 0 1px rgba(59, 130, 246, 0.15);
 }
 
 /* ── Reduced motion ── */

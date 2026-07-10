@@ -126,7 +126,7 @@
 
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 		<!-- Failover toggle -->
-		<div class="bg-surface border border-white/[0.08] rounded-2xl p-6 shadow-card">
+		<div class="card-gradient-cta rounded-2xl p-6 shadow-card">
 			<h2 class="text-sm font-semibold text-primary mb-4 flex items-center gap-2">
 				<ToggleLeft class="w-4 h-4 text-cta" stroke-width={1.5} />
 				故障转移模式
@@ -166,20 +166,20 @@
 		</div>
 
 		<!-- Call log columns -->
-		<div class="bg-surface border border-white/[0.08] rounded-2xl p-6 shadow-card">
+		<div class="card-gradient-accent rounded-2xl p-6 shadow-card">
 			<h2 class="text-sm font-semibold text-primary mb-4 flex items-center gap-2">
-				<Columns class="w-4 h-4 text-cta" stroke-width={1.5} />
+				<Columns class="w-4 h-4 text-accent" stroke-width={1.5} />
 				调用记录显示栏位
 			</h2>
 			<p class="text-xs text-muted mb-4">选择在调用记录页面中显示的列</p>
 			<div class="space-y-2">
 				{#each ALL_COLUMNS as col}
-					<label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/[0.03] cursor-pointer transition-colors">
+					<label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/[0.04] cursor-pointer transition-colors">
 						<input
 							type="checkbox"
 							checked={visibleColumns.includes(col.key)}
 							onchange={() => toggleColumn(col.key)}
-							class="rounded bg-input border-white/[0.15] text-cta focus:ring-cta/40 w-4 h-4"
+							class="rounded bg-input border-default text-cta focus:ring-cta/40 w-4 h-4"
 						/>
 						<span class="text-sm text-secondary">{col.label}</span>
 					</label>
@@ -187,7 +187,7 @@
 			</div>
 			<button
 				onclick={saveColumnPrefs}
-				class="mt-4 px-4 py-2 text-xs font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all active:scale-[0.97]"
+				class="mt-4 px-4 py-2 text-xs font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all active:scale-[0.97] shadow-glow-cta-subtle"
 			>
 				保存栏位设置
 			</button>
@@ -195,11 +195,12 @@
 
 		<!-- Password change (full width on 2-col layout) -->
 		<div class="lg:col-span-2">
-			<div class="bg-surface border border-white/[0.06] rounded-xl p-6">
-				<h2 class="text-sm font-semibold text-primary mb-6 flex items-center gap-2">
+			<div class="bg-surface rounded-xl p-6 shadow-card">
+				<h2 class="text-sm font-semibold text-primary mb-4 flex items-center gap-2">
 					<Lock class="w-4 h-4" stroke-width={1.5} />
 					修改管理密码
 				</h2>
+				<div class="divider-gradient mb-6"></div>
 
 				<form onsubmit={handleChangePassword} class="space-y-4 max-w-md">
 					<!-- Current Password -->
@@ -209,7 +210,7 @@
 							<input
 								id="current-password"
 								type={showCurrent ? 'text' : 'password'}
-								class="w-full px-3 py-2.5 bg-input border border-white/[0.08] rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/50"
+								class="w-full px-3 py-2.5 bg-input border border-default rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/30"
 								bind:value={currentPassword}
 								placeholder="输入当前密码"
 							/>
@@ -234,7 +235,7 @@
 							<input
 								id="new-password"
 								type={showNew ? 'text' : 'password'}
-								class="w-full px-3 py-2.5 bg-input border border-white/[0.08] rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/50"
+								class="w-full px-3 py-2.5 bg-input border border-default rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/30"
 								bind:value={newPassword}
 								placeholder="至少 6 个字符"
 							/>
@@ -259,7 +260,7 @@
 							<input
 								id="confirm-password"
 								type={showConfirm ? 'text' : 'password'}
-								class="w-full px-3 py-2.5 bg-input border border-white/[0.08] rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/50"
+								class="w-full px-3 py-2.5 bg-input border border-default rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/30"
 								bind:value={confirmPassword}
 								placeholder="再次输入新密码"
 							/>
@@ -287,7 +288,7 @@
 					<button
 						type="submit"
 						disabled={saving}
-						class="w-full py-2.5 text-sm font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+						class="w-full py-2.5 text-sm font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-glow-cta-subtle"
 					>
 						{#if saving}
 							<Spinner size="sm" />

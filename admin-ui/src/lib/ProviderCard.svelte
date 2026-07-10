@@ -25,14 +25,22 @@
     anthropic: { text: "text-anthropic", bg: "bg-anthropic-subtle", dot: "bg-anthropic" },
   };
 
+  const typeBadgeGradients: Record<string, string> = {
+    vertex_ai: "bg-gradient-to-br from-vertex-subtle to-vertex-subtle/50 ring-1 ring-vertex/20",
+    google_ai_studio: "bg-gradient-to-br from-studio-subtle to-studio-subtle/50 ring-1 ring-studio/20",
+    openai: "bg-gradient-to-br from-openai-subtle to-openai-subtle/50 ring-1 ring-openai/20",
+    anthropic: "bg-gradient-to-br from-anthropic-subtle to-anthropic-subtle/50 ring-1 ring-anthropic/20",
+  };
+
   let colors = $derived(typeColorSets[provider.type] || { text: "text-muted", bg: "bg-surface-elevated", dot: "bg-muted" });
+  let badgeGradient = $derived(typeBadgeGradients[provider.type] || "bg-surface-elevated ring-1 ring-white/[0.06]");
 </script>
 
 <div
-  class="group bg-surface border border-white/[0.08] rounded-2xl p-4 sm:p-5
+class="group bg-surface rounded-2xl p-4 sm:p-5
          flex items-center gap-3 sm:gap-4
-         transition-all duration-200
-         hover:border-white/[0.14] hover:bg-surface-elevated hover:shadow-card-hover
+         transition-all duration-200 shadow-card
+         hover:bg-surface-elevated hover:shadow-card-hover
          active:scale-[0.995]"
   class:opacity-50={!provider.enabled}
   role="article"
@@ -47,7 +55,7 @@
   <span
     class="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
            text-[11px] font-bold uppercase tracking-wider
-           border {colors.text} {colors.bg} border-current/20"
+           {colors.text} {badgeGradient}"
   >
     <span class="w-1.5 h-1.5 rounded-full {colors.dot}" aria-hidden="true"></span>
     {typeLabels[provider.type] || provider.type}
@@ -59,7 +67,7 @@
       <span class="font-semibold text-sm text-primary truncate">{provider.name}</span>
       <!-- Status dot -->
       <span
-        class="shrink-0 w-1.5 h-1.5 rounded-full {provider.enabled ? 'bg-accent shadow-[0_0_6px_var(--color-accent)]' : 'bg-muted'}"
+        class="shrink-0 w-1.5 h-1.5 rounded-full {provider.enabled ? 'bg-accent shadow-[0_0_8px_var(--color-accent-glow)]' : 'bg-muted'}"
         aria-hidden="true"
       ></span>
     </div>
@@ -76,7 +84,7 @@
   >
     <!-- Edit -->
     <button
-      class="p-2 rounded-lg hover:bg-surface-hover text-muted hover:text-secondary transition-all duration-150
+      class="p-2 rounded-lg hover:bg-surface-elevated text-muted hover:text-secondary transition-all duration-150 hover:scale-110
              min-w-[36px] min-h-[36px] sm:min-w-0 sm:min-h-0
              inline-flex items-center justify-center"
       onclick={() => onedit(provider.id)}
@@ -88,7 +96,7 @@
 
     <!-- Toggle -->
     <button
-      class="p-2 rounded-lg hover:bg-surface-hover transition-all duration-150
+      class="p-2 rounded-lg hover:bg-surface-elevated transition-all duration-150 hover:scale-110
              min-w-[36px] min-h-[36px] sm:min-w-0 sm:min-h-0
              inline-flex items-center justify-center"
       class:text-warning={provider.enabled}
@@ -106,7 +114,7 @@
 
     <!-- Delete -->
     <button
-      class="p-2 rounded-lg hover:bg-danger-subtle text-muted hover:text-danger transition-all duration-150
+      class="p-2 rounded-lg hover:bg-danger-subtle text-muted hover:text-danger transition-all duration-150 hover:scale-110
              min-w-[36px] min-h-[36px] sm:min-w-0 sm:min-h-0
              inline-flex items-center justify-center"
       onclick={() => ondelete(provider.id)}

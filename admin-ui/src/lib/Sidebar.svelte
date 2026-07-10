@@ -56,7 +56,7 @@
 
 <!-- Mobile toggle button -->
 <button
-  class="lg:hidden fixed bottom-6 left-5 z-50 w-11 h-11 rounded-xl bg-cta text-white shadow-lg flex items-center justify-center"
+  class="lg:hidden fixed bottom-6 left-5 z-50 w-11 h-11 rounded-xl bg-cta text-white shadow-lg flex items-center justify-center transition-all duration-200"
   onclick={() => (mobileOpen = !mobileOpen)}
   aria-label="菜单"
 >
@@ -65,15 +65,15 @@
 
 <!-- Sidebar -->
 <aside
-  class="fixed left-0 top-0 z-50 h-dvh bg-surface border-r border-white/[0.06] flex flex-col
+  class="fixed left-0 top-0 z-50 h-dvh bg-surface flex flex-col
          transition-all duration-300 ease-in-out
          lg:translate-x-0
          {mobileOpen ? 'translate-x-0' : '-translate-x-full'}
          {collapsed ? 'w-[64px]' : 'w-[240px]'}"
 >
   <!-- Logo -->
-  <div class="p-3 border-b border-white/[0.06] flex items-center gap-3 overflow-hidden" class:justify-center={collapsed}>
-    <div class="flex items-center justify-center w-9 h-9 shrink-0 rounded-xl bg-cta-subtle ring-1 ring-white/[0.06]">
+  <div class="p-3 flex items-center gap-3 overflow-hidden" class:justify-center={collapsed}>
+    <div class="flex items-center justify-center w-9 h-9 shrink-0 rounded-xl stat-icon-cta">
       <Key class="w-[18px] h-[18px] text-cta" stroke-width={1.75} />
     </div>
     {#if !collapsed}
@@ -90,10 +90,10 @@
   <nav class="flex-1 p-2 flex flex-col gap-1 overflow-y-auto">
     {#each navItems as item}
       <button
-        class="flex items-center gap-3 rounded-lg text-sm transition-all duration-150 overflow-hidden
+class="flex items-center gap-3 rounded-lg text-sm transition-all duration-200 overflow-hidden
                {isActive(item.href)
-                 ? 'bg-cta-subtle text-cta font-semibold'
-                 : 'text-secondary hover:bg-surface-hover hover:text-primary'}
+                  ? 'bg-cta-subtle text-cta font-semibold nav-active-glow'
+                  : 'text-secondary hover:bg-surface-hover hover:text-primary'}
                {collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'}"
         onclick={() => {
           closeMobile();
@@ -110,10 +110,11 @@
   </nav>
 
   <!-- Footer -->
-  <div class="p-2 border-t border-white/[0.06] space-y-1">
+  <div class="p-2 space-y-1">
+    <div class="divider-gradient mb-1"></div>
     <!-- Collapse toggle (desktop only) -->
     <button
-      class="hidden lg:flex items-center gap-3 rounded-lg text-sm text-muted hover:text-secondary hover:bg-surface-hover transition-all duration-150 w-full overflow-hidden
+      class="hidden lg:flex items-center gap-3 rounded-lg text-sm text-muted hover:text-secondary hover:bg-surface-hover transition-all duration-200 animate-pulse-glow w-full overflow-hidden
              {collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'}"
       onclick={toggleCollapse}
       title={collapsed ? '展开侧边栏' : '收起侧边栏'}
@@ -127,7 +128,7 @@
     </button>
 
     <button
-      class="flex items-center gap-3 rounded-lg text-sm text-muted hover:text-danger hover:bg-danger-subtle transition-all duration-150 w-full overflow-hidden
+      class="flex items-center gap-3 rounded-lg text-sm text-muted hover:text-danger hover:bg-danger-subtle transition-all duration-200 w-full overflow-hidden
              {collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'}"
       onclick={handleLogout}
       title={collapsed ? '退出登录' : ''}

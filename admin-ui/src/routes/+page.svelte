@@ -46,12 +46,23 @@
   <title>登录 — Vega API</title>
 </svelte:head>
 
-<div class="min-h-dvh flex items-center justify-center bg-background px-4 py-8 sm:px-6">
-  <div class="w-full max-w-sm">
+<div class="min-h-dvh flex items-center justify-center bg-background px-4 py-8 sm:px-6 relative overflow-hidden">
+  <!-- Subtle radial gradient background glow -->
+  <div
+    class="absolute inset-0 pointer-events-none"
+    style="background: radial-gradient(ellipse 70% 50% at 50% 35%, rgba(59,130,246,0.08) 0%, transparent 65%);"
+  ></div>
+  <!-- Subtle dot pattern overlay -->
+  <div
+    class="absolute inset-0 pointer-events-none opacity-[0.015]"
+    style="background-image: radial-gradient(circle, #ffffff 1px, transparent 1px); background-size: 24px 24px;"
+  ></div>
+
+  <div class="w-full max-w-sm relative z-10">
     <!-- Logo & Brand -->
     <div class="text-center mb-10">
       <div
-        class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-cta-subtle ring-1 ring-white/[0.06] mb-5"
+        class="stat-icon-cta inline-flex items-center justify-center w-16 h-16 rounded-2xl ring-1 ring-border-strong mb-5"
       >
         <Key class="w-7 h-7 text-cta" stroke-width={1.75} />
       </div>
@@ -64,7 +75,7 @@
     <!-- Login Card -->
     <form
       onsubmit={handleSubmit}
-      class="bg-surface border border-white/[0.08] rounded-2xl p-6 sm:p-8 space-y-5 shadow-card"
+      class="card-gradient-cta glass-surface rounded-2xl p-6 sm:p-8 space-y-5 shadow-elevated animate-scale-in"
     >
       <!-- Password Field -->
       <div class="space-y-2">
@@ -84,9 +95,9 @@
             placeholder="请输入管理密码"
             autofocus
             autocomplete="current-password"
-            class="w-full px-4 py-3 rounded-xl bg-input border border-white/[0.10] text-primary text-sm
+            class="w-full px-4 py-3 rounded-xl bg-input border border-default text-primary text-sm
                    placeholder:text-placeholder
-                   focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
+                   focus:outline-none focus:ring-2 focus:ring-cta/30 focus:border-cta/40
                    transition-all duration-200 font-mono tracking-wide"
           />
           <button
@@ -114,10 +125,10 @@
       <button
         type="submit"
         disabled={loading}
-        class="w-full py-3 rounded-xl bg-cta hover:bg-cta-hover disabled:opacity-40
+        class="btn-cta-gradient w-full py-3 rounded-xl disabled:opacity-40
                text-white text-sm font-semibold tracking-wide
                transition-all duration-200
-               shadow-glow-cta
+               hover:brightness-110
                active:scale-[0.98]
                flex items-center justify-center gap-2"
       >

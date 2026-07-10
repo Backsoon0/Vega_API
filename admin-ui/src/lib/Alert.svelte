@@ -21,10 +21,10 @@
 </script>
 
 <div
-  class="flex items-start gap-2.5 text-sm {s.bg} {s.border} rounded-xl px-4 py-3 border {extraClass}"
-  role="alert"
->
-  <s.icon class="w-4 h-4 shrink-0 mt-0.5 {s.text}" stroke-width={1.5} />
+    class="flex items-start gap-2.5 text-sm {s.bg} rounded-xl px-4 py-3 border-l-2 border-l-current/30 {extraClass}"
+    role="alert"
+  >
+    <s.icon class="w-4.5 h-4.5 shrink-0 mt-0.5 {s.text}" stroke-width={1.5} />
   {#if children}
     <span class="flex-1">{@render children()}</span>
   {:else if message}

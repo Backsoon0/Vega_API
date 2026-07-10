@@ -90,7 +90,7 @@
       <p class="text-xs text-muted mt-1">管理 AI 提供商和客户端 API 密钥</p>
     </div>
     <button
-      class="px-4 py-2.5 text-sm font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all shadow-glow-cta active:scale-[0.97] inline-flex items-center gap-2"
+      class="btn-cta-gradient px-4 py-2.5 text-sm font-semibold rounded-xl hover:opacity-90 text-white transition-all active:scale-[0.97] inline-flex items-center gap-2"
       onclick={handleAdd}
     >
       <Plus class="w-4 h-4" stroke-width={2.5} /> 添加提供商
@@ -98,7 +98,7 @@
   </div>
 
   <!-- API Endpoint -->
-  <div class="mb-8 bg-surface border border-white/[0.08] rounded-2xl p-6 shadow-card">
+  <div class="mb-8 card-gradient-cta rounded-2xl p-6 shadow-card">
     <h2 class="text-sm font-semibold text-primary font-mono flex items-center gap-2 mb-4">
       <Server class="w-4 h-4 text-cta" stroke-width={1.5} />
       API 调用地址
@@ -108,7 +108,7 @@
     </p>
     <div class="flex items-center gap-2">
       <code
-        class="flex-1 bg-input border border-white/[0.10] rounded-xl px-4 py-3 text-sm text-primary font-mono break-all select-all"
+        class="flex-1 bg-input border border-strong rounded-xl px-4 py-3 text-sm text-primary font-mono break-all select-all"
       >{apiBase}</code>
       <button
         onclick={copyApiUrl}
@@ -142,8 +142,8 @@
       </div>
     </div>
   {:else if providers.length === 0}
-    <div class="bg-surface border border-white/[0.06] border-dashed rounded-2xl p-12 text-center">
-      <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-cta-subtle mb-4">
+    <div class="glass-surface border border-subtle border-dashed rounded-2xl p-12 text-center shadow-card">
+      <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl stat-icon-cta mb-4">
         <Server class="w-6 h-6 text-cta" stroke-width={1.5} />
       </div>
       <h3 class="text-sm font-semibold text-primary mb-1">暂无 AI 提供商</h3>
