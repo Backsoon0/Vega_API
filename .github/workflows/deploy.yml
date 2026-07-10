@@ -15,7 +15,12 @@ jobs:
         with:
           node-version: 22
 
-      - run: npm install --no-optional && npm install
+      # Regenerate lockfile on Linux to resolve platform-specific native deps
+      # (tailwindcss/oxide, etc.) that Windows-generated lockfile cannot include.
+      # Version ranges in package.json are tight enough to prevent drift.
+      - run: rm -f package-lock.json
+
+      - run: npm install
 
       - name: Apply D1 migrations
         uses: cloudflare/wrangler-action@v3
