@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './types';
 import { initSchema } from './db';
+import { ensureConfigLoaded } from './circuit-breaker';
 
 // Middleware
 import { clientAuthMiddleware, adminAuthMiddleware } from './middleware/auth';
@@ -94,6 +95,7 @@ app.get('/*', async (c) => {
 
 // ---- Export ----
 let schemaInitialized = false;
+let cbConfigInitialized = false;
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -104,6 +106,15 @@ export default {
 				schemaInitialized = true;
 			} catch (err) {
 				console.error('Schema init error:', (err as Error).message);
+			}
+		}
+		// Load circuit breaker config from D1 once per isolate (zero per-request D1 overhead)
+		if (!cbConfigInitialized) {
+			try {
+				await ensureConfigLoaded(env);
+				cbConfigInitialized = true;
+			} catch (err) {
+				console.error('Circuit breaker config load error:', (err as Error).message);
 			}
 		}
 		try {

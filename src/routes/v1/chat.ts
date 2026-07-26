@@ -13,6 +13,7 @@ import { findProviderForModel } from '../../router';
 import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers';
 import { recordUsage, extractCacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
+import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
 
 export const v1ChatRoutes = new Hono<{ Bindings: Env }>();
 
@@ -176,11 +177,16 @@ async function handleOpenAIDirectStream(
 		? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 		: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
+	// Connect timeout: 30s for TCP + TLS + headers. Cancelled once connected so
+	// streaming body reads are NOT affected. Prevents hanging on unresponsive upstream.
+	const connectController = new AbortController();
+	const connectTimer = setTimeout(() => connectController.abort(), 30_000);
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-	});
+		signal: connectController.signal,
+	}).finally(() => clearTimeout(connectTimer));
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
@@ -269,12 +275,29 @@ async function handleOpenAIDirectStream(
 			let lastPromptTokens = 0;
 			let lastCompletionTokens = 0;
 
+			// SSE heartbeat: send comment every 15s to keep connection alive
+			const HEARTBEAT_MS = 15_000;
+			let lastActivity = Date.now();
+			const heartbeatTimer = setInterval(() => {
+				if (Date.now() - lastActivity >= HEARTBEAT_MS) {
+					controller.enqueue(encoder.encode(': heartbeat\n\n'));
+					lastActivity = Date.now();
+				}
+			}, HEARTBEAT_MS);
+
 			let buf = prefetchBuf;
 
 			try {
 				while (true) {
-					const { done, value } = await reader.read();
+					// Idle timeout: if no data for 60s, upstream likely dead — abort
+					const { done, value } = await Promise.race([
+						reader.read(),
+						new Promise<never>((_, reject) =>
+							setTimeout(() => reject(new Error('Stream idle timeout: no data for 60s')), 60_000)
+						),
+					]);
 					if (done) break;
+					lastActivity = Date.now();
 					buf += decoder.decode(value, { stream: true });
 
 					let nl: number;
@@ -379,6 +402,7 @@ async function handleOpenAIDirectStream(
 				controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message: streamErrorMsg, type: 'server_error' } })}\n\n`));
 				controller.enqueue(encoder.encode('data: [DONE]\n\n'));
 			} finally {
+				clearInterval(heartbeatTimer);
 				reader.releaseLock();
 				if (execCtx) {
 					execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
@@ -432,6 +456,7 @@ async function handleOpenAIDirectNonStream(
 			method: 'POST',
 			headers: authHeaders,
 			body: JSON.stringify(upstreamBody),
+			signal: AbortSignal.timeout(60_000),
 		});
 
 	if (!upstreamResponse.ok) {
@@ -513,6 +538,11 @@ async function handleOpenAIStream(
 	);
 	const system = extractSystem(messages);
 
+	// Connect timeout: 30s for initial upstream connection. Cancelled on first chunk
+	// so streaming body reads are NOT affected.
+	const connectController = new AbortController();
+	const connectTimer = setTimeout(() => connectController.abort(), 30_000);
+
 	const result = streamText({
 		model,
 		messages: messages as any,
@@ -523,6 +553,7 @@ async function handleOpenAIStream(
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
+		abortSignal: connectController.signal,
 	});
 
 	// Prefetch first part from AI SDK stream to detect early errors (rate limits, quota).
@@ -533,6 +564,7 @@ async function handleOpenAIStream(
 
 	try {
 		const { value, done } = await streamIterator.next();
+		clearTimeout(connectTimer); // Connected successfully — cancel timeout
 		if (!done && value) {
 			firstPart = value;
 			if (value.type === 'error') {
@@ -544,6 +576,7 @@ async function handleOpenAIStream(
 			}
 		}
 	} catch (err) {
+		clearTimeout(connectTimer); // Timeout fired or connection error
 		if (execCtx) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
@@ -595,8 +628,20 @@ async function handleOpenAIStream(
 			let streamErrorMsg = '';
 			let lastPromptTokens = 0;
 			let lastCompletionTokens = 0;
+
+			// SSE heartbeat: send comment every 15s to keep connection alive
+			const HEARTBEAT_MS = 15_000;
+			let lastActivity = Date.now();
+			const heartbeatTimer = setInterval(() => {
+				if (Date.now() - lastActivity >= HEARTBEAT_MS) {
+					controller.enqueue(encoder.encode(': heartbeat\n\n'));
+					lastActivity = Date.now();
+				}
+			}, HEARTBEAT_MS);
+
 			try {
 				for await (const part of parts) {
+					lastActivity = Date.now();
 					switch (part.type) {
 				case 'text-delta':
 					controller.enqueue(encoder.encode(chunkPfx + escJson(part.text) + chunkSfx));
@@ -743,6 +788,7 @@ async function handleOpenAIStream(
 					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
 				}
 			} finally {
+				clearInterval(heartbeatTimer);
 				controller.close();
 			}
 		},
@@ -788,6 +834,7 @@ async function handleOpenAINonStream(
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
+		abortSignal: AbortSignal.timeout(60_000),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {
@@ -939,59 +986,99 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	const failoverEnabled = await getFailoverEnabled(c.env);
 	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
 
-	// Try each candidate in weight order; fall back on failure (if failover enabled)
+	// Try each candidate in weight order; fall back on failure (if failover enabled).
+	// Each candidate gets up to MAX_RETRIES attempts (with exponential backoff) for transient errors.
+	const MAX_RETRIES = 2;
+	const BASE_RETRY_DELAY_MS = 100;
+	// 4xx codes that indicate a client-side problem — switching providers won't help
+	const FATAL_4XX = new Set([400, 401, 403]);
+
 	let lastError = '';
+	let fatalResponse: Response | null = null;
 	for (const candidate of tryCandidates) {
-		try {
-			const type = candidate.provider.type;
-			const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
-
-			let directBody = body as Record<string, unknown>;
-			let directProvider: ProviderMatch = candidate;
-			let skipVersioning = false;
-
-			if (type === 'google_ai_studio') {
-				skipVersioning = true;
-				directBody = { ...body, model: String(body.model).replace(/^(google\/|models\/)+/, '') };
-				directProvider = {
-					...candidate,
-					provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
-				};
-			} else if (type === 'vertex_ai') {
-				skipVersioning = true;
-				directBody = { ...body, model: String(body.model).startsWith('google/') ? body.model : 'google/' + body.model };
-				const cfg = candidate.provider.config;
-				const loc = cfg.location || 'us-central1';
-				const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
-				if (!isVertexApiKeyMode(cfg)) {
-					vConfig.apiKey = await getVertexAccessToken(cfg);
-				}
-				directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
-			}
-
-			const response = isStream
-				? await (useDirect
-					? handleOpenAIDirectStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning)
-					: handleOpenAIStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs))
-				: await (useDirect
-					? handleOpenAIDirectNonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning)
-					: handleOpenAINonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs));
-
-			if (response.status >= 400) {
-				lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
-				console.error(lastError);
-				continue;
-			}
-			return response;
-		} catch (err) {
-		const errMessage = err instanceof Error
-			? err.message
-			: typeof err === 'string'
-				? err
-				: JSON.stringify(err);
-		lastError = `Provider ${candidate.provider.id}: ${errMessage}`;
-			console.error(lastError);
+		// Circuit breaker: skip providers that have failed repeatedly
+		if (!isProviderAllowed(candidate.provider.id)) {
+			console.warn(`Circuit breaker: skipping provider ${candidate.provider.id} (circuit open)`);
+			continue;
 		}
+
+		for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+			try {
+				const type = candidate.provider.type;
+				const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
+
+				let directBody = body as Record<string, unknown>;
+				let directProvider: ProviderMatch = candidate;
+				let skipVersioning = false;
+
+				if (type === 'google_ai_studio') {
+					skipVersioning = true;
+					directBody = { ...body, model: String(body.model).replace(/^(google\/|models\/)+/, '') };
+					directProvider = {
+						...candidate,
+						provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
+					};
+				} else if (type === 'vertex_ai') {
+					skipVersioning = true;
+					directBody = { ...body, model: String(body.model).startsWith('google/') ? body.model : 'google/' + body.model };
+					const cfg = candidate.provider.config;
+					const loc = cfg.location || 'us-central1';
+					const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
+					if (!isVertexApiKeyMode(cfg)) {
+						vConfig.apiKey = await getVertexAccessToken(cfg);
+					}
+					directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
+				}
+
+				const response = isStream
+					? await (useDirect
+						? handleOpenAIDirectStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning)
+						: handleOpenAIStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs))
+					: await (useDirect
+						? handleOpenAIDirectNonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning)
+						: handleOpenAINonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs));
+
+				if (response.status >= 400) {
+					lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
+					// 400/401/403: client error — won't be fixed by switching providers, return immediately
+					if (FATAL_4XX.has(response.status)) {
+						recordCBFailure(candidate.provider.id);
+						fatalResponse = response;
+						break;
+					}
+					// 5xx or 429 (rate limit): server error — retry with backoff
+					recordCBFailure(candidate.provider.id);
+					if (attempt < MAX_RETRIES) {
+						const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt) + Math.random() * 100;
+						console.error(`${lastError} — retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+						await new Promise((r) => setTimeout(r, delay));
+						continue;
+					}
+					console.error(lastError);
+					break;
+				}
+				recordCBSuccess(candidate.provider.id);
+				return response;
+			} catch (err) {
+				const errMessage = err instanceof Error
+					? err.message
+					: typeof err === 'string'
+						? err
+						: JSON.stringify(err);
+				lastError = `Provider ${candidate.provider.id}: ${errMessage}`;
+				recordCBFailure(candidate.provider.id);
+				// Retry on transient network errors / stream prefetch failures
+				if (attempt < MAX_RETRIES) {
+					const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt) + Math.random() * 100;
+					console.error(`${lastError} — retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+					await new Promise((r) => setTimeout(r, delay));
+					continue;
+				}
+				console.error(lastError);
+				break;
+			}
+		}
+		if (fatalResponse) return fatalResponse;
 	}
 
 	return c.json(

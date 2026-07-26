@@ -13,6 +13,7 @@ import { findProviderForModel, getAggregatedModels } from '../../router';
 import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers';
 import { recordUsage, extractCacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
+import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
 
 export const anthropicMessagesRoutes = new Hono<{ Bindings: Env }>();
 
@@ -184,11 +185,16 @@ async function handleAnthropicDirectStream(
 		? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 		: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
+	// Connect timeout: 30s for TCP + TLS + headers. Cancelled once connected so
+	// streaming body reads are NOT affected. Prevents hanging on unresponsive upstream.
+	const connectController = new AbortController();
+	const connectTimer = setTimeout(() => connectController.abort(), 30_000);
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-	});
+		signal: connectController.signal,
+	}).finally(() => clearTimeout(connectTimer));
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
@@ -273,6 +279,16 @@ async function handleAnthropicDirectStream(
 			let lastInputTokens = 0;
 			let lastOutputTokens = 0;
 
+			// SSE heartbeat: send comment every 15s to keep connection alive
+			const HEARTBEAT_MS = 15_000;
+			let lastActivity = Date.now();
+			const heartbeatTimer = setInterval(() => {
+				if (Date.now() - lastActivity >= HEARTBEAT_MS) {
+					controller.enqueue(encoder.encode(': heartbeat\n\n'));
+					lastActivity = Date.now();
+				}
+			}, HEARTBEAT_MS);
+
 			let buf = prefetchBuf;
 
 			// Emit message_start
@@ -282,8 +298,15 @@ async function handleAnthropicDirectStream(
 
 			try {
 				while (true) {
-					const { done, value } = await reader.read();
+					// Idle timeout: if no data for 60s, upstream likely dead — abort
+					const { done, value } = await Promise.race([
+						reader.read(),
+						new Promise<never>((_, reject) =>
+							setTimeout(() => reject(new Error('Stream idle timeout: no data for 60s')), 60_000)
+						),
+					]);
 					if (done) break;
+					lastActivity = Date.now();
 					buf += decoder.decode(value, { stream: true });
 
 					let nl: number;
@@ -346,6 +369,7 @@ async function handleAnthropicDirectStream(
 				streamError = true;
 				streamErrorMsg = err instanceof Error ? err.message : String(err);
 			} finally {
+				clearInterval(heartbeatTimer);
 				reader.releaseLock();
 				if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 					{ prompt: lastInputTokens, completion: lastOutputTokens }, !streamError, Date.now() - startMs, requestId, true,
@@ -389,6 +413,7 @@ async function handleAnthropicDirectNonStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
+		signal: AbortSignal.timeout(60_000),
 	});
 
 	if (!upstreamResponse.ok) {
@@ -435,6 +460,11 @@ async function handleAnthropicStream(
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
 	const { messages, system } = anthropicToAISDK(body);
 
+	// Connect timeout: 30s for initial upstream connection. Cancelled on first chunk
+	// so streaming body reads are NOT affected.
+	const connectController = new AbortController();
+	const connectTimer = setTimeout(() => connectController.abort(), 30_000);
+
 	const result = streamText({
 		model,
 		messages: messages as any,
@@ -444,6 +474,7 @@ async function handleAnthropicStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
 		headers: buildExtraBodyHeaders(body),
+		abortSignal: connectController.signal,
 	});
 
 	// Prefetch first part from AI SDK stream to detect early errors (rate limits, quota).
@@ -454,6 +485,7 @@ async function handleAnthropicStream(
 
 	try {
 		const { value, done } = await streamIterator.next();
+		clearTimeout(connectTimer); // Connected successfully — cancel timeout
 		if (!done && value) {
 			firstPart = value;
 			if (value.type === 'error') {
@@ -465,6 +497,7 @@ async function handleAnthropicStream(
 			}
 		}
 	} catch (err) {
+		clearTimeout(connectTimer); // Timeout fired or connection error
 		if (execCtx) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
@@ -517,6 +550,16 @@ async function handleAnthropicStream(
 
 	const stream = new ReadableStream({
 		async start(controller) {
+			// SSE heartbeat: send comment every 15s to keep connection alive
+			const HEARTBEAT_MS = 15_000;
+			let lastActivity = Date.now();
+			const heartbeatTimer = setInterval(() => {
+				if (Date.now() - lastActivity >= HEARTBEAT_MS) {
+					controller.enqueue(encoder.encode(': heartbeat\n\n'));
+					lastActivity = Date.now();
+				}
+			}, HEARTBEAT_MS);
+
 			try {
 				// Send message_start
 				controller.enqueue(
@@ -538,6 +581,7 @@ async function handleAnthropicStream(
 				);
 
 				for await (const part of parts) {
+					lastActivity = Date.now();
 					switch (part.type) {
 					case 'text-start':
 						hasStartedBlock = true;
@@ -740,6 +784,7 @@ async function handleAnthropicStream(
 					),
 				);
 			} finally {
+				clearInterval(heartbeatTimer);
 				controller.close();
 			}
 		},
@@ -781,6 +826,7 @@ async function handleAnthropicNonStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
 		headers: buildExtraBodyHeaders(body),
+		abortSignal: AbortSignal.timeout(60_000),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {
@@ -940,64 +986,104 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
 
-	// Try each candidate in weight order (if failover enabled)
+	// Try each candidate in weight order; fall back on failure (if failover enabled).
+	// Each candidate gets up to MAX_RETRIES attempts (with exponential backoff) for transient errors.
+	const MAX_RETRIES = 2;
+	const BASE_RETRY_DELAY_MS = 100;
+	// 4xx codes that indicate a client-side problem — switching providers won't help
+	const FATAL_4XX = new Set([400, 401, 403]);
+
 	const failoverEnabled = await getFailoverEnabled(c.env);
 	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
 	let lastError = '';
+	let fatalResponse: Response | null = null;
 	for (const candidate of tryCandidates) {
-		try {
-			const type = candidate.provider.type;
-			const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
-
-			let normModelId = rawModelId;
-			let directProvider: ProviderMatch = candidate;
-			let skipVersioning = false;
-
-			if (type === 'google_ai_studio') {
-				skipVersioning = true;
-				normModelId = rawModelId.replace(/^(google\/|models\/)+/, '');
-				directProvider = {
-					...candidate,
-					provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
-				};
-			} else if (type === 'vertex_ai') {
-				skipVersioning = true;
-				normModelId = normModelId.startsWith('google/') ? normModelId : 'google/' + normModelId;
-				const cfg = candidate.provider.config;
-				const loc = cfg.location || 'us-central1';
-				const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
-				if (!isVertexApiKeyMode(cfg)) {
-					vConfig.apiKey = await getVertexAccessToken(cfg);
-				}
-				directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
-			}
-
-			const response = isStream
-				? await (useDirect
-					? handleAnthropicDirectStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning)
-					: handleAnthropicStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId))
-				: await (useDirect
-					? handleAnthropicDirectNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning)
-					: handleAnthropicNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId));
-
-			if (response.status >= 400) {
-				lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
-				console.error(lastError);
-				continue;
-			}
-			return response;
-		} catch (err) {
-		const errMsg = err instanceof Error
-			? err.message
-			: typeof err === 'string'
-				? err
-				: JSON.stringify(err);
-		lastError = `Provider ${candidate.provider.id}: ${errMsg}`;
-		console.error(lastError);
+		// Circuit breaker: skip providers that have failed repeatedly
+		if (!isProviderAllowed(candidate.provider.id)) {
+			console.warn(`Circuit breaker: skipping provider ${candidate.provider.id} (circuit open)`);
+			continue;
 		}
+
+		for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+			try {
+				const type = candidate.provider.type;
+				const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
+
+				let normModelId = rawModelId;
+				let directProvider: ProviderMatch = candidate;
+				let skipVersioning = false;
+
+				if (type === 'google_ai_studio') {
+					skipVersioning = true;
+					normModelId = rawModelId.replace(/^(google\/|models\/)+/, '');
+					directProvider = {
+						...candidate,
+						provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
+					};
+				} else if (type === 'vertex_ai') {
+					skipVersioning = true;
+					normModelId = normModelId.startsWith('google/') ? normModelId : 'google/' + normModelId;
+					const cfg = candidate.provider.config;
+					const loc = cfg.location || 'us-central1';
+					const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
+					if (!isVertexApiKeyMode(cfg)) {
+						vConfig.apiKey = await getVertexAccessToken(cfg);
+					}
+					directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
+				}
+
+				const response = isStream
+					? await (useDirect
+						? handleAnthropicDirectStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning)
+						: handleAnthropicStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId))
+					: await (useDirect
+						? handleAnthropicDirectNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning)
+						: handleAnthropicNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId));
+
+				if (response.status >= 400) {
+					lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
+					// 400/401/403: client error — won't be fixed by switching providers, return immediately
+					if (FATAL_4XX.has(response.status)) {
+						recordCBFailure(candidate.provider.id);
+						fatalResponse = response;
+						break;
+					}
+					// 5xx or 429 (rate limit): server error — retry with backoff
+					recordCBFailure(candidate.provider.id);
+					if (attempt < MAX_RETRIES) {
+						const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt) + Math.random() * 100;
+						console.error(`${lastError} — retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+						await new Promise((r) => setTimeout(r, delay));
+						continue;
+					}
+					console.error(lastError);
+					break;
+				}
+				recordCBSuccess(candidate.provider.id);
+				return response;
+			} catch (err) {
+				const errMsg = err instanceof Error
+					? err.message
+					: typeof err === 'string'
+						? err
+						: JSON.stringify(err);
+				lastError = `Provider ${candidate.provider.id}: ${errMsg}`;
+				recordCBFailure(candidate.provider.id);
+				// Retry on transient network errors / stream prefetch failures
+				if (attempt < MAX_RETRIES) {
+					const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt) + Math.random() * 100;
+					console.error(`${lastError} — retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+					await new Promise((r) => setTimeout(r, delay));
+					continue;
+				}
+				console.error(lastError);
+				break;
+			}
+		}
+		if (fatalResponse) return fatalResponse;
 	}
 
-return c.json(
+	return c.json(
 		{
 			type: 'error',
 			error: {

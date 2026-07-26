@@ -307,10 +307,10 @@ export async function* playgroundChat(
 export async function getSettings() {
 	const { ok, data } = await request('GET', '/settings');
 	if (!ok) throw new Error(data.error || '获取设置失败');
-	return data as { failoverEnabled: boolean };
+	return data as { failoverEnabled: boolean; circuitBreakerThreshold: number; circuitBreakerCooldownSeconds: number };
 }
 
-export async function updateSettings(settings: { failoverEnabled?: boolean }) {
+export async function updateSettings(settings: { failoverEnabled?: boolean; circuitBreakerThreshold?: number; circuitBreakerCooldownSeconds?: number }) {
 	const { ok, data } = await request('PUT', '/settings', settings);
 	if (!ok) throw new Error(data.error || '保存设置失败');
 	return data;

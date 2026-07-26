@@ -6,7 +6,7 @@ import { encrypt, decrypt, hashKey } from './crypto';
 
 // ---- Config table helpers ----
 
-async function getConfig(env: Env, key: string): Promise<string | null> {
+export async function getConfig(env: Env, key: string): Promise<string | null> {
   const row = await env.DB
     .prepare('SELECT value FROM config WHERE key = ?')
     .bind(key)
@@ -369,10 +369,26 @@ export async function findApiKeyNameByHash(env: Env, keyHash: string): Promise<{
 
 export async function getFailoverEnabled(env: Env): Promise<boolean> {
 	const raw = await getConfig(env, 'failover_enabled');
-	if (raw === null) return false;
-	return raw === '1';
+	if (raw === null) return true; // enabled by default
+	return raw !== '0';
 }
 
 export async function setFailoverEnabled(env: Env, enabled: boolean): Promise<void> {
 	await setConfig(env, 'failover_enabled', enabled ? '1' : '0');
+}
+
+// ---- Circuit breaker config ----
+
+export async function getCircuitBreakerConfig(env: Env): Promise<{ threshold: number; cooldownMs: number }> {
+	const thresholdRaw = await getConfig(env, 'circuit_breaker_threshold');
+	const cooldownRaw = await getConfig(env, 'circuit_breaker_cooldown_seconds');
+	return {
+		threshold: thresholdRaw ? Math.max(1, parseInt(thresholdRaw, 10) || 5) : 5,
+		cooldownMs: cooldownRaw ? Math.max(5000, (parseInt(cooldownRaw, 10) || 30) * 1000) : 30_000,
+	};
+}
+
+export async function setCircuitBreakerConfig(env: Env, threshold: number, cooldownSeconds: number): Promise<void> {
+	await setConfig(env, 'circuit_breaker_threshold', String(Math.max(1, threshold)));
+	await setConfig(env, 'circuit_breaker_cooldown_seconds', String(Math.max(5, cooldownSeconds)));
 }

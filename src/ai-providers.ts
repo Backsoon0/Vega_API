@@ -102,6 +102,7 @@ export async function getVertexAccessToken(config: Record<string, string>): Prom
 				grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
 				assertion: jwt,
 			}),
+			signal: AbortSignal.timeout(30_000),
 		});
 		const data = (await tokenResp.json()) as Record<string, unknown>;
 		if (!tokenResp.ok)

@@ -5,7 +5,8 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { sha256 } from '../../crypto';
-import { getAdminPasswordHash, setAdminPassword, getFailoverEnabled, setFailoverEnabled } from '../../config';
+import { getAdminPasswordHash, setAdminPassword, getFailoverEnabled, setFailoverEnabled, getCircuitBreakerConfig, setCircuitBreakerConfig } from '../../config';
+import { updateConfig as updateCBConfig } from '../../circuit-breaker';
 import { rateLimitLogin, recordLoginFailure, resetLoginRate, getRateLimitConfig } from '../../rate-limit';
 import { requireAdminAuth } from '../../middleware/auth';
 
@@ -85,8 +86,11 @@ adminAuthRoutes.post('/change-password', async (c: Context<{ Bindings: Env }>) =
 // GET /admin/settings — Get all settings
 adminAuthRoutes.get('/settings', async (c: Context<{ Bindings: Env }>) => {
 	const failoverEnabled = await getFailoverEnabled(c.env);
+	const cbConfig = await getCircuitBreakerConfig(c.env);
 	return c.json({
 		failoverEnabled,
+		circuitBreakerThreshold: cbConfig.threshold,
+		circuitBreakerCooldownSeconds: Math.round(cbConfig.cooldownMs / 1000),
 	});
 });
 
@@ -95,6 +99,18 @@ adminAuthRoutes.put('/settings', async (c: Context<{ Bindings: Env }>) => {
 	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
 	if (typeof body.failoverEnabled === 'boolean') {
 		await setFailoverEnabled(c.env, body.failoverEnabled);
+	}
+	if (typeof body.circuitBreakerThreshold === 'number' || typeof body.circuitBreakerCooldownSeconds === 'number') {
+		const current = await getCircuitBreakerConfig(c.env);
+		const threshold = typeof body.circuitBreakerThreshold === 'number'
+			? body.circuitBreakerThreshold
+			: current.threshold;
+		const cooldown = typeof body.circuitBreakerCooldownSeconds === 'number'
+			? body.circuitBreakerCooldownSeconds
+			: Math.round(current.cooldownMs / 1000);
+		await setCircuitBreakerConfig(c.env, threshold, cooldown);
+		// Sync in-memory copy immediately so it takes effect without restart
+		updateCBConfig({ threshold, cooldownMs: cooldown * 1000 });
 	}
 	return c.json({ ok: true, message: '设置已保存' });
 });
