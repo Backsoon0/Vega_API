@@ -6,6 +6,59 @@ import type { Env } from '../types';
 import { getClientApiKey, getAdminPasswordHash, findApiKeyNameByHash, hasAnyApiKeys } from '../config';
 import { hashKey } from '../crypto';
 
+// ---- In-memory cache for hot-path auth lookups ----
+// Avoids D1 reads on every request. TTL balances freshness vs latency.
+
+const AUTH_CACHE_TTL_MS = 60_000;
+const authCache = new Map<string, { name: string; expiresAt: number }>();
+let anyKeysCached: boolean | null = null;
+let anyKeysExpiresAt = 0;
+
+function getCachedKeyName(hash: string): string | null {
+	const entry = authCache.get(hash);
+	if (!entry) return null;
+	if (Date.now() > entry.expiresAt) {
+		authCache.delete(hash);
+		return null;
+	}
+	return entry.name;
+}
+
+function setCachedKeyName(hash: string, name: string) {
+	// Probabilistic eviction: ~5% chance of cleaning expired entries on write
+	if (Math.random() < 0.05) {
+		const now = Date.now();
+		for (const [k, v] of authCache) {
+			if (now > v.expiresAt) authCache.delete(k);
+		}
+	}
+	authCache.set(hash, { name, expiresAt: Date.now() + AUTH_CACHE_TTL_MS });
+	// Keep cache from growing unbounded (max 5000 entries ~= ~500KB)
+	if (authCache.size > 5000) {
+		const oldest = [...authCache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+		for (let i = 0; i < 1000; i++) {
+			if (oldest[i]) authCache.delete(oldest[i][0]);
+		}
+	}
+}
+
+async function cachedFindApiKeyNameByHash(env: Env, keyHash: string): Promise<{ id: number; name: string } | null> {
+	const cached = getCachedKeyName(keyHash);
+	if (cached !== null) return { id: 0, name: cached };
+
+	const result = await findApiKeyNameByHash(env, keyHash);
+	if (result) setCachedKeyName(keyHash, result.name);
+	return result;
+}
+
+async function cachedHasAnyApiKeys(env: Env): Promise<boolean> {
+	if (anyKeysCached !== null && Date.now() < anyKeysExpiresAt) return anyKeysCached;
+	const result = await hasAnyApiKeys(env);
+	anyKeysCached = result;
+	anyKeysExpiresAt = Date.now() + AUTH_CACHE_TTL_MS;
+	return result;
+}
+
 /** Validate client API key for all API routes.
  * Checks Authorization: Bearer, x-api-key (Anthropic), x-goog-api-key (Google), and ?key= query parameter.
  * Falls back to env.OPENAI_API_KEY. If neither is set, all requests pass.
@@ -37,7 +90,7 @@ export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<bo
 	// 2. Check multi-key table (api_keys) — hash-based lookup
 	if (providedKey) {
 		const keyHash = await hashKey(providedKey);
-		const match = await findApiKeyNameByHash(env, keyHash);
+		const match = await cachedFindApiKeyNameByHash(env, keyHash);
 		if (match) {
 			env.clientKeyName = match.name;
 			return true;
@@ -49,7 +102,7 @@ export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<bo
 
 	// 3b. If the multi-key table has any rows, deny access — auth is configured,
 	//     the provided key didn't match any of them, so this is NOT public mode.
-	if (await hasAnyApiKeys(env)) return false;
+	if (await cachedHasAnyApiKeys(env)) return false;
 
 	// 4. Fall back to env.OPENAI_API_KEY
 	if (env.OPENAI_API_KEY) {

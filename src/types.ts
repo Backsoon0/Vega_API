@@ -76,6 +76,8 @@ export interface Env {
 	ENCRYPTION_KEY?: string;
 	OPENAI_API_KEY?: string;
 	clientKeyName?: string;
+	/** Client's AbortSignal — set by route handler from c.req.raw.signal for disconnect detection */
+	clientSignal?: AbortSignal;
 }
 
 export interface ProviderHandler {

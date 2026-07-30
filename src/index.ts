@@ -32,6 +32,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', cors({
 	origin: (origin) => origin || '*',
 	allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+	maxAge: 86400,
 }));
 
 // ---- Health check ----
@@ -90,7 +91,7 @@ app.get('/*', async (c) => {
 			/* fall through */
 		}
 	}
-	return c.json({ error: { message: 'Not Found' } }, 404);
+	return c.json({ error: { message: 'Not Found' } }, 404, { 'Connection': 'keep-alive' });
 });
 
 // ---- Export ----

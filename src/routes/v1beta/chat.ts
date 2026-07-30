@@ -20,6 +20,34 @@ export const v1betaChatRoutes = new Hono<{ Bindings: Env }>();
 
 const MAX_BODY_SIZE = 5_242_880; // 5 MB
 
+/**
+ * Build error response headers with retry guidance for the client.
+ * Passes through Retry-After from upstream, sets x-should-retry based on status.
+ */
+function buildErrorHeaders(
+	baseHeaders: Record<string, string>,
+	upstreamStatus: number,
+	upstreamHeaders?: Headers,
+): Record<string, string> {
+	const headers: Record<string, string> = { ...baseHeaders };
+	if (upstreamHeaders) {
+		const retryAfter = upstreamHeaders.get('Retry-After') || upstreamHeaders.get('retry-after');
+		if (retryAfter) headers['Retry-After'] = retryAfter;
+	}
+	if (upstreamStatus === 429 || upstreamStatus >= 500) {
+		headers['x-should-retry'] = 'true';
+	} else {
+		headers['x-should-retry'] = 'false';
+	}
+	return headers;
+}
+
+/** Combine two AbortSignals — cancels when either fires. */
+function anySignal(a: AbortSignal, b?: AbortSignal): AbortSignal {
+	if (!b) return a;
+	return AbortSignal.any([a, b]);
+}
+
 // ---- Helpers ----
 
 /** JSON-escape a string for inline embedding (faster than full object stringify) */
@@ -164,7 +192,7 @@ async function handleGeminiDirectStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: connectController.signal,
+		signal: anySignal(connectController.signal, env.clientSignal),
 	}).finally(() => clearTimeout(connectTimer));
 
 	if (!upstreamResponse.ok) {
@@ -174,7 +202,7 @@ async function handleGeminiDirectStream(
 			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, code: 500 } }), {
 			status: upstreamResponse.status,
-			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
 		});
 	}
 
@@ -377,7 +405,7 @@ async function handleGeminiDirectNonStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: AbortSignal.timeout(60_000),
+		signal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
 	});
 
 	if (!upstreamResponse.ok) {
@@ -386,7 +414,7 @@ async function handleGeminiDirectNonStream(
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
 			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
-			status: upstreamResponse.status, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+			status: upstreamResponse.status, headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
 		});
 	}
 
@@ -439,7 +467,7 @@ async function handleGeminiStream(
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
 		headers: undefined,
-		abortSignal: connectController.signal,
+		abortSignal: anySignal(connectController.signal, env.clientSignal),
 	});
 
 	// Prefetch first part from AI SDK stream to detect early errors (rate limits, quota).
@@ -671,7 +699,7 @@ async function handleGeminiNonStream(
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
 		headers: undefined,
-		abortSignal: AbortSignal.timeout(60_000),
+		abortSignal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {
@@ -820,6 +848,8 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
+	// Pass client's AbortSignal so upstream work is cancelled when the client disconnects
+	c.env.clientSignal = c.req.raw.signal;
 
 	// Try each candidate in weight order (if failover enabled).
 	// Each candidate gets up to MAX_RETRIES attempts (with exponential backoff) for transient errors.
@@ -914,5 +944,6 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 	return c.json(
 		{ error: { message: `All providers failed. Last error: ${lastError}`, code: 502 } },
 		502,
+		{ 'x-should-retry': 'true' },
 	);
 });

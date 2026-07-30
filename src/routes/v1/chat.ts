@@ -22,6 +22,37 @@ const MAX_BODY_SIZE = 5_242_880;
 
 // ---- Helpers ----
 
+/**
+ * Build error response headers with retry guidance for the client.
+ * Passes through Retry-After from upstream, sets x-should-retry based on status.
+ */
+function buildErrorHeaders(
+	baseHeaders: Record<string, string>,
+	upstreamStatus: number,
+	upstreamHeaders?: Headers,
+): Record<string, string> {
+	const headers: Record<string, string> = { ...baseHeaders };
+	// Passthrough Retry-After from upstream (rate limit, maintenance)
+	if (upstreamHeaders) {
+		const retryAfter = upstreamHeaders.get('Retry-After') || upstreamHeaders.get('retry-after');
+		if (retryAfter) headers['Retry-After'] = retryAfter;
+	}
+	// Signal client SDKs whether to retry
+	if (upstreamStatus === 429 || upstreamStatus >= 500) {
+		headers['x-should-retry'] = 'true';
+	} else {
+		headers['x-should-retry'] = 'false';
+	}
+	return headers;
+}
+
+/** Combine two AbortSignals — cancels when either fires. Uses AbortSignal.any when available. */
+function anySignal(a: AbortSignal, b?: AbortSignal): AbortSignal {
+	if (!b) return a;
+	// AbortSignal.any is available on Workers (compat date ≥ 2024)
+	return AbortSignal.any([a, b]);
+}
+
 /** JSON-escape a string for inline embedding (faster than full object stringify) */
 function escJson(s: string): string {
 	return JSON.stringify(s).slice(1, -1);
@@ -185,7 +216,7 @@ async function handleOpenAIDirectStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: connectController.signal,
+		signal: anySignal(connectController.signal, env.clientSignal),
 	}).finally(() => clearTimeout(connectTimer));
 
 	if (!upstreamResponse.ok) {
@@ -199,7 +230,7 @@ async function handleOpenAIDirectStream(
 		}
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, type: 'server_error' } }), {
 			status: upstreamResponse.status,
-			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
 		});
 	}
 
@@ -456,7 +487,7 @@ async function handleOpenAIDirectNonStream(
 			method: 'POST',
 			headers: authHeaders,
 			body: JSON.stringify(upstreamBody),
-			signal: AbortSignal.timeout(60_000),
+			signal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
 		});
 
 	if (!upstreamResponse.ok) {
@@ -470,7 +501,7 @@ async function handleOpenAIDirectNonStream(
 		}
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status,
-			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
 		});
 	}
 
@@ -553,7 +584,7 @@ async function handleOpenAIStream(
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
-		abortSignal: connectController.signal,
+		abortSignal: anySignal(connectController.signal, env.clientSignal),
 	});
 
 	// Prefetch first part from AI SDK stream to detect early errors (rate limits, quota).
@@ -834,7 +865,7 @@ async function handleOpenAINonStream(
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
-		abortSignal: AbortSignal.timeout(60_000),
+		abortSignal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {
@@ -981,6 +1012,8 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
+	// Pass client's AbortSignal so upstream work is cancelled when the client disconnects
+	c.env.clientSignal = c.req.raw.signal;
 
 	// Check failover config — if disabled, only try the first candidate
 	const failoverEnabled = await getFailoverEnabled(c.env);
@@ -1089,5 +1122,6 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 			},
 		},
 		502,
+		{ 'x-should-retry': 'true' },
 	);
 });

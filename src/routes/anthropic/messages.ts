@@ -19,6 +19,34 @@ export const anthropicMessagesRoutes = new Hono<{ Bindings: Env }>();
 
 const MAX_BODY_SIZE = 5_242_880; // 5 MB
 
+/**
+ * Build error response headers with retry guidance for the client.
+ * Passes through Retry-After from upstream, sets x-should-retry based on status.
+ */
+function buildErrorHeaders(
+	baseHeaders: Record<string, string>,
+	upstreamStatus: number,
+	upstreamHeaders?: Headers,
+): Record<string, string> {
+	const headers: Record<string, string> = { ...baseHeaders };
+	if (upstreamHeaders) {
+		const retryAfter = upstreamHeaders.get('Retry-After') || upstreamHeaders.get('retry-after');
+		if (retryAfter) headers['Retry-After'] = retryAfter;
+	}
+	if (upstreamStatus === 429 || upstreamStatus >= 500) {
+		headers['x-should-retry'] = 'true';
+	} else {
+		headers['x-should-retry'] = 'false';
+	}
+	return headers;
+}
+
+/** Combine two AbortSignals — cancels when either fires. */
+function anySignal(a: AbortSignal, b?: AbortSignal): AbortSignal {
+	if (!b) return a;
+	return AbortSignal.any([a, b]);
+}
+
 // ---- Helpers ----
 
 /** JSON-escape a string for inline embedding (faster than full object stringify) */
@@ -193,7 +221,7 @@ async function handleAnthropicDirectStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: connectController.signal,
+		signal: anySignal(connectController.signal, env.clientSignal),
 	}).finally(() => clearTimeout(connectTimer));
 
 	if (!upstreamResponse.ok) {
@@ -203,7 +231,7 @@ async function handleAnthropicDirectStream(
 			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status,
-			headers: { 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' },
+			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' }, upstreamResponse.status, upstreamResponse.headers),
 		});
 	}
 
@@ -413,7 +441,7 @@ async function handleAnthropicDirectNonStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: AbortSignal.timeout(60_000),
+		signal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
 	});
 
 	if (!upstreamResponse.ok) {
@@ -422,7 +450,7 @@ async function handleAnthropicDirectNonStream(
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
 			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
-			status: upstreamResponse.status, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' },
+			status: upstreamResponse.status, headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' }, upstreamResponse.status, upstreamResponse.headers),
 		});
 	}
 
@@ -474,7 +502,7 @@ async function handleAnthropicStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
 		headers: buildExtraBodyHeaders(body),
-		abortSignal: connectController.signal,
+		abortSignal: anySignal(connectController.signal, env.clientSignal),
 	});
 
 	// Prefetch first part from AI SDK stream to detect early errors (rate limits, quota).
@@ -826,7 +854,7 @@ async function handleAnthropicNonStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
 		headers: buildExtraBodyHeaders(body),
-		abortSignal: AbortSignal.timeout(60_000),
+		abortSignal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {
@@ -985,6 +1013,8 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
+	// Pass client's AbortSignal so upstream work is cancelled when the client disconnects
+	c.env.clientSignal = c.req.raw.signal;
 
 	// Try each candidate in weight order; fall back on failure (if failover enabled).
 	// Each candidate gets up to MAX_RETRIES attempts (with exponential backoff) for transient errors.
@@ -1092,5 +1122,6 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 			},
 		},
 		502,
+		{ 'x-should-retry': 'true' },
 	);
 });
