@@ -392,3 +392,27 @@ export async function setCircuitBreakerConfig(env: Env, threshold: number, coold
 	await setConfig(env, 'circuit_breaker_threshold', String(Math.max(1, threshold)));
 	await setConfig(env, 'circuit_breaker_cooldown_seconds', String(Math.max(5, cooldownSeconds)));
 }
+
+// ---- Call log retention ----
+
+const LOG_RETENTION_DEFAULT = 10_000;
+const LOG_RETENTION_MIN = 100;
+const LOG_RETENTION_MAX = 1_000_000;
+
+export async function getLogRetentionLimit(env: Env): Promise<number> {
+	const raw = await getConfig(env, 'log_retention_limit');
+	if (raw === null) return LOG_RETENTION_DEFAULT;
+	const parsed = parseInt(raw, 10);
+	if (!Number.isFinite(parsed)) return LOG_RETENTION_DEFAULT;
+	return Math.min(LOG_RETENTION_MAX, Math.max(LOG_RETENTION_MIN, parsed));
+}
+
+/** Persist the retention limit (clamped to [LOG_RETENTION_MIN, LOG_RETENTION_MAX]).
+ *  Returns the clamped value actually stored — callers should prune with this. */
+export async function setLogRetentionLimit(env: Env, limit: number): Promise<number> {
+	const clamped = Number.isFinite(limit)
+		? Math.min(LOG_RETENTION_MAX, Math.max(LOG_RETENTION_MIN, Math.floor(limit)))
+		: LOG_RETENTION_DEFAULT;
+	await setConfig(env, 'log_retention_limit', String(clamped));
+	return clamped;
+}

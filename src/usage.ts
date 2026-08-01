@@ -1,19 +1,34 @@
 // src/usage.ts
 // D1-based usage tracking with model-level granularity
-// Call logs persisted in D1 with retention limit (10000 rows)
+// Call logs persisted in D1 with configurable retention limit (default 10000 rows,
+// editable in the admin panel via config key `log_retention_limit`)
 
 import type { Env, UsageRecord } from './types';
-
-const MAX_LOG_ROWS = 10000;
+import { getLogRetentionLimit } from './config';
 
 function isoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 /**
+ * Prune call_logs to the most recent `maxRows` rows (by timestamp), deleting all
+ * older rows in a single statement. Used by recordUsage's probabilistic cleanup
+ * and by the admin settings endpoint when the retention limit changes.
+ */
+export async function pruneCallLogs(env: Env, maxRows: number): Promise<void> {
+  if (!Number.isFinite(maxRows) || maxRows < 0) return;
+  await env.DB
+    .prepare(
+      `DELETE FROM call_logs WHERE id NOT IN (SELECT id FROM call_logs ORDER BY timestamp DESC LIMIT ?)`
+    )
+    .bind(maxRows)
+    .run();
+}
+
+/**
  * Record usage after each API call. Fire-and-forget.
  * Inserts into usage_daily (aggregated) and call_logs (detail).
- * Probabilistic cleanup (~1% of calls) prunes old log rows when exceeding MAX_LOG_ROWS.
+ * Probabilistic cleanup (~1% of calls) prunes old log rows beyond the configured retention limit.
  */
 export async function recordUsage(
   env: Env,
@@ -64,14 +79,11 @@ export async function recordUsage(
       )
       .run();
 
-    // Probabilistic cleanup: ~1% of calls
+    // Probabilistic cleanup: ~1% of calls. Retention limit is read from D1 config
+    // (configurable in the admin panel), defaulting to 10000 rows.
     if (Math.random() < 0.01) {
-      await env.DB
-        .prepare(
-          `DELETE FROM call_logs WHERE id NOT IN (SELECT id FROM call_logs ORDER BY timestamp DESC LIMIT ?)`
-        )
-        .bind(MAX_LOG_ROWS)
-        .run();
+      const maxRows = await getLogRetentionLimit(env);
+      await pruneCallLogs(env, maxRows);
     }
   } catch (err) {
     console.error('Usage tracking error:', (err as Error).message);

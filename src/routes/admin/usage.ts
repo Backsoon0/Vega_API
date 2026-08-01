@@ -31,3 +31,14 @@ adminUsageRoutes.get('/logs', async (c: Context<{ Bindings: Env }>) => {
 	const data = await getCallLogs(c.env, { search, providerId, isStream, success, limit, offset });
 	return c.json(data);
 });
+
+// DELETE /admin/logs — Clear all call logs (one-click wipe from the admin panel).
+// Only the detail records (call_logs) are deleted; aggregated usage stats (usage_daily) are kept.
+adminUsageRoutes.delete('/logs', async (c: Context<{ Bindings: Env }>) => {
+	const result = await c.env.DB.prepare('DELETE FROM call_logs').run();
+	return c.json({
+		ok: true,
+		deleted: result.meta.changes,
+		message: '调用记录已清空',
+	});
+});

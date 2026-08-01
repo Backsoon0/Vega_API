@@ -183,6 +183,14 @@ export async function getCallLogs(params: URLSearchParams, signal?: AbortSignal)
   return data as { logs: LogEntry[]; total: number; hasMore: boolean };
 }
 
+// Clear all call logs (one-click wipe). Only detail records are removed;
+// aggregated usage statistics (usage_daily) are kept.
+export async function clearCallLogs() {
+  const { ok, data } = await request('DELETE', '/logs');
+  if (!ok) throw new Error(data.error || '清空记录失败');
+  return data as { ok: boolean; deleted: number; message: string };
+}
+
 export interface UsageData {
   totals?: Record<string, { calls: number; promptTokens: number; completionTokens: number }>;
   total?: { calls: number; promptTokens: number; completionTokens: number };
@@ -307,10 +315,10 @@ export async function* playgroundChat(
 export async function getSettings() {
 	const { ok, data } = await request('GET', '/settings');
 	if (!ok) throw new Error(data.error || '获取设置失败');
-	return data as { failoverEnabled: boolean; circuitBreakerThreshold: number; circuitBreakerCooldownSeconds: number };
+	return data as { failoverEnabled: boolean; circuitBreakerThreshold: number; circuitBreakerCooldownSeconds: number; logRetentionLimit: number };
 }
 
-export async function updateSettings(settings: { failoverEnabled?: boolean; circuitBreakerThreshold?: number; circuitBreakerCooldownSeconds?: number }) {
+export async function updateSettings(settings: { failoverEnabled?: boolean; circuitBreakerThreshold?: number; circuitBreakerCooldownSeconds?: number; logRetentionLimit?: number }) {
 	const { ok, data } = await request('PUT', '/settings', settings);
 	if (!ok) throw new Error(data.error || '保存设置失败');
 	return data;

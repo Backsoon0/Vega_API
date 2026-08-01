@@ -306,19 +306,20 @@ response = client.messages.create(
 | `/admin/api-keys/{id}` | PUT/DELETE | Bearer | 重命名/删除密钥 |
 | `/admin/api-keys/legacy` | DELETE | Bearer | 删除旧版密钥 |
 | `/admin/api-keys/legacy/migrate` | POST | Bearer | 旧版密钥迁移为命名密钥 |
-| `/admin/settings` | GET/PUT | Bearer | 获取/更新设置 (故障转移等) |
+| `/admin/settings` | GET/PUT | Bearer | 获取/更新设置 (故障转移、熔断器、调用记录保留上限等) |
 | `/admin/change-password` | POST | Bearer | 修改管理密码 |
 | `/admin/usage` | GET | Bearer | 用量统计 |
 | `/admin/logs` | GET | Bearer | 调用记录 |
+| `/admin/logs` | DELETE | Bearer | 一键清空全部调用记录 |
 
 ## 管理面板页面
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
 | **概览** | `/dashboard` | 统计卡片（总调用、Token、活跃提供商）+ 提供商状态列表 |
-| **调用记录** | `/dashboard/logs` | 调用记录表格，可配置栏位，支持搜索和筛选，单击查看详情（含缓存命中、密钥追踪） |
+| **调用记录** | `/dashboard/logs` | 调用记录表格，可配置栏位，支持搜索和筛选，单击查看详情（含缓存命中、密钥追踪），一键清空记录 |
 | **API 设置** | `/dashboard/api-settings` | API 调用地址一键复制 + 多密钥管理（创建/命名/重命名/删除）+ 提供商 CRUD |
-| **设置** | `/dashboard/settings` | 故障转移开关 + 修改管理密码 + 调用记录栏位配置 |
+| **设置** | `/dashboard/settings` | 故障转移开关 + 熔断器配置 + 调用记录保留上限 + 修改管理密码 + 调用记录栏位配置 |
 
 ### 调用记录新增功能
 
@@ -326,6 +327,8 @@ response = client.messages.create(
 - **缓存追踪** — 自动记录上游 API 缓存的命中/未命中 token 数
 - **栏位配置** — 在设置页面自定义显示哪些列
 - **详情弹窗** — 单击记录查看完整信息（Token 明细、缓存统计、错误信息、Request ID）
+- **保留上限** — 在设置页配置调用记录最多保留多少条（默认 10000，100–1,000,000 可调），修改后立即生效
+- **一键清空** — 调用记录页一键删除全部记录（仅清空明细，不影响用量统计）
 
 ## 快速部署
 
@@ -417,7 +420,7 @@ vega-api-db
 ├── providers      — AI 提供商配置（敏感字段 AES-GCM 加密，支持 4 种类型）
 ├── api_keys       — 客户端 API 密钥（名称、SHA-256 哈希、加密存储、使用时间）
 ├── usage_daily    — 每日聚合用量（date, provider_id, model 三维度）
-├── call_logs      — 详细调用记录（模型、Token、耗时、缓存命中、密钥追踪，最多 10000 条）
+├── call_logs      — 详细调用记录（模型、Token、耗时、缓存命中、密钥追踪，保留上限可在设置页配置，默认 10000 条）
 └── rate_limits    — 登录限流数据
 ```
 

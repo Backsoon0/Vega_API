@@ -5,8 +5,9 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { sha256 } from '../../crypto';
-import { getAdminPasswordHash, setAdminPassword, getFailoverEnabled, setFailoverEnabled, getCircuitBreakerConfig, setCircuitBreakerConfig } from '../../config';
+import { getAdminPasswordHash, setAdminPassword, getFailoverEnabled, setFailoverEnabled, getCircuitBreakerConfig, setCircuitBreakerConfig, getLogRetentionLimit, setLogRetentionLimit } from '../../config';
 import { updateConfig as updateCBConfig } from '../../circuit-breaker';
+import { pruneCallLogs } from '../../usage';
 import { rateLimitLogin, recordLoginFailure, resetLoginRate, getRateLimitConfig } from '../../rate-limit';
 import { requireAdminAuth } from '../../middleware/auth';
 
@@ -90,10 +91,12 @@ adminAuthRoutes.post('/change-password', async (c: Context<{ Bindings: Env }>) =
 adminAuthRoutes.get('/settings', async (c: Context<{ Bindings: Env }>) => {
 	const failoverEnabled = await getFailoverEnabled(c.env);
 	const cbConfig = await getCircuitBreakerConfig(c.env);
+	const logRetentionLimit = await getLogRetentionLimit(c.env);
 	return c.json({
 		failoverEnabled,
 		circuitBreakerThreshold: cbConfig.threshold,
 		circuitBreakerCooldownSeconds: Math.round(cbConfig.cooldownMs / 1000),
+		logRetentionLimit,
 	});
 });
 
@@ -114,6 +117,11 @@ adminAuthRoutes.put('/settings', async (c: Context<{ Bindings: Env }>) => {
 		await setCircuitBreakerConfig(c.env, threshold, cooldown);
 		// Sync in-memory copy immediately so it takes effect without restart
 		updateCBConfig({ threshold, cooldownMs: cooldown * 1000 });
+	}
+	if (typeof body.logRetentionLimit === 'number') {
+		const limit = await setLogRetentionLimit(c.env, body.logRetentionLimit);
+		// Apply the new limit immediately instead of waiting for the probabilistic cleanup
+		await pruneCallLogs(c.env, limit);
 	}
 	return c.json({ ok: true, message: '设置已保存' });
 });

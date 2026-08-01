@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { changePassword, getSettings, updateSettings } from "$lib/api";
-	import { Wrench, Lock, Eye, EyeOff, ToggleLeft, ToggleRight, Columns, Shield } from "lucide-svelte";
+	import { Wrench, Lock, Eye, EyeOff, ToggleLeft, ToggleRight, Columns, Shield, Database } from "lucide-svelte";
 	import Alert from "$lib/Alert.svelte";
 	import Spinner from "$lib/Spinner.svelte";
 	import { toasts } from "$lib/toast-store";
@@ -25,6 +25,10 @@
 	let cbThreshold = $state(5);
 	let cbCooldown = $state(30);
 	let cbSaving = $state(false);
+
+	// ---- Call log retention state ----
+	let logRetention = $state(10000);
+	let retentionSaving = $state(false);
 
 	// ---- Column visibility ----
 	const ALL_COLUMNS = [
@@ -72,6 +76,7 @@
 			failoverEnabled = s.failoverEnabled;
 			cbThreshold = s.circuitBreakerThreshold || 5;
 			cbCooldown = s.circuitBreakerCooldownSeconds || 30;
+			logRetention = s.logRetentionLimit || 10000;
 		}).catch(() => {}).finally(() => {
 			settingsLoading = false;
 		});
@@ -104,6 +109,21 @@
 			toasts.show(err.message || '保存失败', 'error');
 		} finally {
 			cbSaving = false;
+		}
+	}
+
+	// ---- Call log retention save ----
+	async function saveRetentionLimit() {
+		if (logRetention < 100) logRetention = 100;
+		if (logRetention > 1000000) logRetention = 1000000;
+		retentionSaving = true;
+		try {
+			await updateSettings({ logRetentionLimit: Math.floor(logRetention) });
+			toasts.show('调用记录保留上限已保存');
+		} catch (err: any) {
+			toasts.show(err.message || '保存失败', 'error');
+		} finally {
+			retentionSaving = false;
 		}
 	}
 
@@ -224,6 +244,37 @@
 					class="px-4 py-2 text-xs font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all active:scale-[0.97] shadow-glow-cta-subtle disabled:opacity-50"
 				>
 					{cbSaving ? '保存中...' : '保存'}
+				</button>
+			</div>
+		</div>
+
+		<!-- Call log retention -->
+		<div class="bg-surface rounded-xl p-5 shadow-card">
+			<h2 class="text-sm font-semibold text-primary mb-3 flex items-center gap-2">
+				<Database class="w-4 h-4 text-cta" stroke-width={1.5} />
+				调用记录保留上限
+			</h2>
+			<p class="text-xs text-muted mb-4">系统最多保留的调用记录条数，超出后自动清理最旧的记录。修改后立即生效，无需重启。</p>
+			<div class="flex flex-wrap items-end gap-4">
+				<div>
+					<label for="log-retention" class="block text-xs text-muted mb-1">最大保留条数</label>
+					<div class="flex items-center gap-2">
+						<input
+							id="log-retention"
+							type="number"
+							min="100" max="1000000" step="100"
+							class="w-28 px-3 py-2 bg-input rounded-lg text-sm text-primary text-center focus:outline-none"
+							bind:value={logRetention}
+						/>
+						<span class="text-xs text-muted">条</span>
+					</div>
+				</div>
+				<button
+					onclick={saveRetentionLimit}
+					disabled={retentionSaving}
+					class="px-4 py-2 text-xs font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all active:scale-[0.97] shadow-glow-cta-subtle disabled:opacity-50"
+				>
+					{retentionSaving ? '保存中...' : '保存'}
 				</button>
 			</div>
 		</div>

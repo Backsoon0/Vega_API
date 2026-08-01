@@ -1,14 +1,16 @@
 <script lang="ts">
-	import { getCallLogs, getProviders, type LogEntry } from "$lib/api";
+	import { getCallLogs, getProviders, getSettings, clearCallLogs, type LogEntry } from "$lib/api";
 	import { toasts } from "$lib/toast-store";
 	import CallLogTable from "$lib/CallLogTable.svelte";
 	import LogDetailModal from "$lib/LogDetailModal.svelte";
-	import { ListTodo, RefreshCw, ChevronLeft, ChevronRight, Search } from "lucide-svelte";
+	import { ListTodo, RefreshCw, ChevronLeft, ChevronRight, Search, Trash2 } from "lucide-svelte";
 
 	let entries = $state<LogEntry[]>([]);
 	let total = $state(0);
 	let hasMore = $state(false);
 	let loading = $state(true);
+	let clearing = $state(false);
+	let retentionLimit = $state(10000);
 	let search = $state('');
 	let debouncedSearch = $state('');
 	let providerFilter = $state('');
@@ -104,6 +106,27 @@
 
 	function handleRefresh() { fetchLogs(); }
 
+	// Load the configured retention limit (for the subtitle) from admin settings
+	getSettings().then(s => {
+		retentionLimit = s.logRetentionLimit || 10000;
+	}).catch(() => {});
+
+	// One-click clear all call logs
+	async function handleClearLogs() {
+		if (!confirm('确定要清空全部调用记录吗？此操作不可恢复。\n（仅删除调用记录明细，不影响用量统计）')) return;
+		clearing = true;
+		try {
+			const res = await clearCallLogs();
+			toasts.show(`已清空 ${res.deleted} 条调用记录`);
+			page = 0;
+			await fetchLogs();
+		} catch (err: any) {
+			toasts.show(err.message || '清空失败', 'error');
+		} finally {
+			clearing = false;
+		}
+	}
+
 	function changeFilter(filterSetter: (() => void)) {
 		page = 0;
 		filterSetter();
@@ -128,16 +151,26 @@
 				<ListTodo class="w-5 h-5" stroke-width={1.5} />
 				调用记录
 			</h1>
-			<p class="text-xs text-muted mt-1">最近 {total} 条 API 调用记录（最多保留 10000 条）</p>
+			<p class="text-xs text-muted mt-1">最近 {total} 条 API 调用记录（最多保留 {retentionLimit.toLocaleString()} 条，可在设置页调整）</p>
 		</div>
-		<button
-			class="px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]"
-			onclick={handleRefresh}
-			disabled={loading}
-		>
-			<RefreshCw class={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} stroke-width={1.5} />
-			刷新
-		</button>
+		<div class="flex items-center gap-2">
+			<button
+				class="px-3 py-2 rounded-xl text-sm text-danger hover:bg-danger-subtle transition-all flex items-center gap-2 border border-white/[0.06] disabled:opacity-50"
+				onclick={handleClearLogs}
+				disabled={clearing || (loading && entries.length === 0)}
+			>
+				<Trash2 class={`w-4 h-4 ${clearing ? 'animate-pulse' : ''}`} stroke-width={1.5} />
+				{clearing ? '清空中...' : '清空记录'}
+			</button>
+			<button
+				class="px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]"
+				onclick={handleRefresh}
+				disabled={loading}
+			>
+				<RefreshCw class={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} stroke-width={1.5} />
+				刷新
+			</button>
+		</div>
 	</div>
 
 	<!-- Search & filter bar -->
