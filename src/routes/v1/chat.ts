@@ -13,12 +13,17 @@ import { findProviderForModel } from '../../router';
 import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers';
 import { recordUsage, extractCacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
+import { getClientKeyName } from '../../middleware/auth';
 import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
 
 export const v1ChatRoutes = new Hono<{ Bindings: Env }>();
 
 /** Maximum request body size: 5 MB */
 const MAX_BODY_SIZE = 5_242_880;
+
+// 4xx codes that indicate a client-side problem — switching providers won't help.
+// Module-scope so both the route loop and the handler functions can reference it.
+const FATAL_4XX = new Set([400, 401, 403]);
 
 // ---- Helpers ----
 
@@ -191,6 +196,9 @@ async function handleOpenAIDirectStream(
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
 	skipVersioning = false,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const modelId = String(body.model).trim();
 	const apiKey = provider.provider.config.apiKey;
@@ -216,16 +224,18 @@ async function handleOpenAIDirectStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: anySignal(connectController.signal, env.clientSignal),
+		signal: anySignal(connectController.signal, clientSignal),
 	}).finally(() => clearTimeout(connectTimer));
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) {
+		// Record usage only on the final attempt or for definitive client errors —
+		// otherwise a retried/failover request would be double-counted.
+		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) },
-				0, 0, env.clientKeyName || '',
+				0, 0, clientKeyName,
 			));
 		}
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, type: 'server_error' } }), {
@@ -270,22 +280,22 @@ async function handleOpenAIDirectStream(
 		}
 	} catch (err) {
 		reader.releaseLock();
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw err;
 	}
 
 	if (prefetchError) {
 		reader.releaseLock();
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
@@ -440,9 +450,13 @@ async function handleOpenAIDirectStream(
 						{ prompt: lastPromptTokens, completion: lastCompletionTokens },
 						!streamError, Date.now() - startMs, requestId, true,
 						streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
-						0, 0, env.clientKeyName || '',
+						0, 0, clientKeyName,
 					));
 				}
+				// Circuit breaker: only count as success when the stream actually
+				// completed without an internal error (mid-stream failures must not
+				// reset the breaker).
+				if (!streamError) recordCBSuccess(provider.provider.id);
 				controller.close();
 			}
 		},
@@ -466,6 +480,9 @@ async function handleOpenAIDirectNonStream(
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
 	skipVersioning = false,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const modelId = String(body.model).trim();
 	const apiKey = provider.provider.config.apiKey;
@@ -487,16 +504,16 @@ async function handleOpenAIDirectNonStream(
 			method: 'POST',
 			headers: authHeaders,
 			body: JSON.stringify(upstreamBody),
-			signal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
+			signal: anySignal(AbortSignal.timeout(60_000), clientSignal),
 		});
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) {
+		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
 				{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) },
-				0, 0, env.clientKeyName || '',
+				0, 0, clientKeyName,
 			));
 		}
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
@@ -514,7 +531,7 @@ async function handleOpenAIDirectNonStream(
 		execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
 			{ prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0 },
 			true, Date.now() - startMs, requestId, false, {},
-			0, 0, env.clientKeyName || '',
+			0, 0, clientKeyName,
 		));
 	}
 
@@ -560,6 +577,9 @@ async function handleOpenAIStream(
 	ip: string,
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const modelId = String(body.model).trim();
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
@@ -584,7 +604,7 @@ async function handleOpenAIStream(
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
-		abortSignal: anySignal(connectController.signal, env.clientSignal),
+		abortSignal: anySignal(connectController.signal, clientSignal),
 	});
 
 	// Prefetch first part from AI SDK stream to detect early errors (rate limits, quota).
@@ -608,21 +628,21 @@ async function handleOpenAIStream(
 		}
 	} catch (err) {
 		clearTimeout(connectTimer); // Timeout fired or connection error
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw err;
 	}
 
 	if (prefetchError) {
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
@@ -788,7 +808,7 @@ async function handleOpenAIStream(
 						streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
 						cacheRead,
 						cacheCreation,
-						env.clientKeyName || '',
+						clientKeyName,
 					),
 				);
 			}
@@ -805,7 +825,7 @@ async function handleOpenAIStream(
 							{ prompt: 0, completion: 0 }, false,
 							Date.now() - startMs, requestId, true,
 							{ errorType: 'stream_error', errorMessage: errMsg.slice(0, 300) },
-							0, 0, env.clientKeyName || '',
+							0, 0, clientKeyName,
 						),
 					);
 				}
@@ -820,6 +840,8 @@ async function handleOpenAIStream(
 				}
 			} finally {
 				clearInterval(heartbeatTimer);
+				// Circuit breaker: only count as success when the stream completed cleanly.
+				if (!streamError) recordCBSuccess(provider.provider.id);
 				controller.close();
 			}
 		},
@@ -846,6 +868,9 @@ async function handleOpenAINonStream(
 	ip: string,
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const modelId = String(body.model).trim();
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
@@ -865,11 +890,18 @@ async function handleOpenAINonStream(
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
-		abortSignal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
+		abortSignal: anySignal(AbortSignal.timeout(60_000), clientSignal),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {
 			return null;
+		}
+		// Record usage only on the final attempt to avoid double-counting on retry/failover.
+		if (isLastAttempt && execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
+				{ errorType: 'upstream_error', errorMessage: msg.slice(0, 300) },
+				0, 0, clientKeyName));
 		}
 		throw err;
 	});
@@ -917,7 +949,7 @@ async function handleOpenAINonStream(
 				{},
 				cacheRead,
 				cacheCreation,
-				env.clientKeyName || '',
+				clientKeyName,
 			),
 		);
 	}
@@ -1012,8 +1044,9 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
-	// Pass client's AbortSignal so upstream work is cancelled when the client disconnects
-	c.env.clientSignal = c.req.raw.signal;
+	// Request-scoped values (set by clientAuthMiddleware — never the shared env)
+	const clientKeyName = getClientKeyName(c.req.raw);
+	const clientSignal = c.req.raw.signal;
 
 	// Check failover config — if disabled, only try the first candidate
 	const failoverEnabled = await getFailoverEnabled(c.env);
@@ -1023,8 +1056,6 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 	// Each candidate gets up to MAX_RETRIES attempts (with exponential backoff) for transient errors.
 	const MAX_RETRIES = 2;
 	const BASE_RETRY_DELAY_MS = 100;
-	// 4xx codes that indicate a client-side problem — switching providers won't help
-	const FATAL_4XX = new Set([400, 401, 403]);
 
 	let lastError = '';
 	let fatalResponse: Response | null = null;
@@ -1036,6 +1067,9 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 		}
 
 		for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+			// Usage is only recorded for the final attempt of the final candidate
+			// (retried/failover failures must not inflate usage counts).
+			const isLastAttempt = attempt === MAX_RETRIES && candidate === tryCandidates[tryCandidates.length - 1];
 			try {
 				const type = candidate.provider.type;
 				const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
@@ -1056,7 +1090,7 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 					directBody = { ...body, model: String(body.model).startsWith('google/') ? body.model : 'google/' + body.model };
 					const cfg = candidate.provider.config;
 					const loc = cfg.location || 'us-central1';
-					const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
+					const vConfig: Record<string, string> = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
 					if (!isVertexApiKeyMode(cfg)) {
 						vConfig.apiKey = await getVertexAccessToken(cfg);
 					}
@@ -1065,11 +1099,11 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 
 				const response = isStream
 					? await (useDirect
-						? handleOpenAIDirectStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning)
-						: handleOpenAIStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs))
+						? handleOpenAIDirectStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning, clientSignal, clientKeyName, isLastAttempt)
+						: handleOpenAIStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, clientSignal, clientKeyName, isLastAttempt))
 					: await (useDirect
-						? handleOpenAIDirectNonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning)
-						: handleOpenAINonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs));
+						? handleOpenAIDirectNonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, skipVersioning, clientSignal, clientKeyName, isLastAttempt)
+						: handleOpenAINonStream(directBody, requestId, directProvider, c.env, ip, execCtx, startMs, clientSignal, clientKeyName, isLastAttempt));
 
 				if (response.status >= 400) {
 					lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
@@ -1090,7 +1124,9 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 					console.error(lastError);
 					break;
 				}
-				recordCBSuccess(candidate.provider.id);
+				// Streaming success is recorded inside the stream's finally (so mid-stream
+				// failures don't reset the breaker); non-stream success is final here.
+				if (!isStream) recordCBSuccess(candidate.provider.id);
 				return response;
 			} catch (err) {
 				const errMessage = err instanceof Error

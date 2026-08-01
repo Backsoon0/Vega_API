@@ -22,7 +22,7 @@ adminProviderRoutes.get('/providers', async (c: Context<{ Bindings: Env }>) => {
 // POST /admin/providers — Create provider
 adminProviderRoutes.post('/providers', async (c: Context<{ Bindings: Env }>) => {
 	const body = await c.req.json().catch(() => null);
-	if (!body) return c.json({ error: 'Invalid JSON' }, 400);
+	if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'Invalid JSON' }, 400);
 	try {
 		const record = await saveProvider(c.env, body);
 		return c.json(record, 201);
@@ -43,7 +43,9 @@ adminProviderRoutes.get('/providers/:id', async (c: Context<{ Bindings: Env }>) 
 // PUT /admin/providers/:id — Update provider
 adminProviderRoutes.put('/providers/:id', async (c: Context<{ Bindings: Env }>) => {
 	const body = await c.req.json().catch(() => null);
-	if (!body) return c.json({ error: 'Invalid JSON' }, 400);
+	// Reject non-object bodies BEFORE mutating them (assignment on a JSON string
+	// primitive would throw a TypeError in strict mode → 500).
+	if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'Invalid JSON' }, 400);
 	body.id = c.req.param('id');
 	try {
 		const record = await saveProvider(c.env, body);

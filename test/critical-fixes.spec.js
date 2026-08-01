@@ -8,11 +8,15 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import worker from "../src";
 import { findProviderForModel, invalidateCaches } from "../src/router";
 import { saveProvider, getProvider, deleteProvider } from "../src/config";
+import { invalidateAuthCache } from "../src/middleware/auth";
 
 // Helper: clear all auth-related state
+// invalidateAuthCache() mirrors production behavior (admin key mutations clear the
+// in-memory auth cache) — otherwise the module-level cache leaks across tests.
 async function clearAuthState() {
 	await env.DB.exec("DELETE FROM api_keys");
 	await env.DB.exec("DELETE FROM config WHERE key IN ('client_api_key', 'admin_password')");
+	invalidateAuthCache();
 }
 
 // Helper: insert a fake api_keys row (no real encryption needed for auth-denial tests)

@@ -14,11 +14,16 @@ import { findProviderForModel } from '../../router';
 import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers';
 import { recordUsage, extractCacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
+import { getClientKeyName } from '../../middleware/auth';
 import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
 
 export const v1betaChatRoutes = new Hono<{ Bindings: Env }>();
 
 const MAX_BODY_SIZE = 5_242_880; // 5 MB
+
+// 4xx codes that indicate a client-side problem — switching providers won't help.
+// Module-scope so both the route loop and the handler functions can reference it.
+const FATAL_4XX = new Set([400, 401, 403]);
 
 /**
  * Build error response headers with retry guidance for the client.
@@ -53,6 +58,28 @@ function anySignal(a: AbortSignal, b?: AbortSignal): AbortSignal {
 /** JSON-escape a string for inline embedding (faster than full object stringify) */
 function escJson(s: string): string {
 	return JSON.stringify(s).slice(1, -1);
+}
+
+/** Safely decode a URI component (malformed % sequences must not throw → 500). */
+function safeDecodeURIComponent(s: string): string {
+	try {
+		return decodeURIComponent(s);
+	} catch {
+		return s;
+	}
+}
+
+/**
+ * OpenAI tool-call arguments arrive as a JSON *string*; Gemini's functionCall.args
+ * must be an *object*. Parse when possible, keep the raw value as a fallback.
+ */
+function parseFunctionArgs(args: unknown): unknown {
+	if (typeof args !== 'string') return args;
+	try {
+		return JSON.parse(args);
+	} catch {
+		return args;
+	}
 }
 
 /** Convert Gemini generateContent request body to OpenAI-compatible format. */
@@ -167,6 +194,9 @@ async function handleGeminiDirectStream(
 	rawModelId: string,
 	altSse: boolean,
 	skipVersioning = false,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const apiKey = provider.provider.config.apiKey;
 	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
@@ -192,14 +222,14 @@ async function handleGeminiDirectStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: anySignal(connectController.signal, env.clientSignal),
+		signal: anySignal(connectController.signal, clientSignal),
 	}).finally(() => clearTimeout(connectTimer));
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, clientKeyName));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, code: 500 } }), {
 			status: upstreamResponse.status,
 			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
@@ -242,22 +272,22 @@ async function handleGeminiDirectStream(
 		}
 	} catch (err) {
 		reader.releaseLock();
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw err;
 	}
 
 	if (prefetchError) {
 		reader.releaseLock();
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
@@ -278,12 +308,13 @@ async function handleGeminiDirectStream(
 			let lastInputTokens = 0;
 			let lastOutputTokens = 0;
 
-			// SSE heartbeat: send comment every 15s to keep connection alive
+			// SSE heartbeat: send comment every 15s to keep connection alive.
+			// Only in SSE mode — a bare comment line would corrupt NDJSON output.
 			const HEARTBEAT_MS = 15_000;
 			let lastActivity = Date.now();
 			const heartbeatTimer = setInterval(() => {
-				if (Date.now() - lastActivity >= HEARTBEAT_MS) {
-					controller.enqueue(encoder.encode(ssePfx + ': heartbeat' + sseSfx));
+				if (altSse && Date.now() - lastActivity >= HEARTBEAT_MS) {
+					controller.enqueue(encoder.encode(': heartbeat\n\n'));
 					lastActivity = Date.now();
 				}
 			}, HEARTBEAT_MS);
@@ -344,14 +375,15 @@ async function handleGeminiDirectStream(
 							const ct = delta?.content;
 							if (ct != null && ct !== '') { fullText += ct; controller.enqueue(encoder.encode(ssePfx + JSON.stringify(buildGeminiChunk(fullText)) + sseSfx)); }
 
-							const rc = delta?.reasoning_content;
-							if (rc != null && rc !== '' && fullText.length === 0) { fullText += rc; controller.enqueue(encoder.encode(ssePfx + JSON.stringify(buildGeminiChunk(fullText)) + sseSfx)); }
+							// reasoning_content must NOT be merged into the visible text output —
+							// accumulating it corrupts the final answer. Drop thinking deltas
+							// entirely (consistent with the AI SDK path, which also ignores them).
 
 							if (delta?.tool_calls?.length) {
 								for (const tc of delta.tool_calls) {
 									const fc = tc.function || tc;
 									controller.enqueue(encoder.encode(ssePfx + JSON.stringify({
-										candidates: [{ content: { role: 'model', parts: [{ functionCall: { name: fc.name, args: fc.arguments } }] }, index: 0, safetyRatings: [] }],
+										candidates: [{ content: { role: 'model', parts: [{ functionCall: { name: fc.name, args: parseFunctionArgs(fc.arguments) } }] }, index: 0, safetyRatings: [] }],
 									}) + sseSfx));
 								}
 							}
@@ -368,7 +400,9 @@ async function handleGeminiDirectStream(
 				if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 					{ prompt: lastInputTokens, completion: lastOutputTokens }, !streamError, Date.now() - startMs, requestId, true,
 					streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
-					0, 0, env.clientKeyName || ''));
+					0, 0, clientKeyName));
+				// Circuit breaker: only count as success when the stream completed cleanly.
+				if (!streamError) recordCBSuccess(provider.provider.id);
 				controller.close();
 			}
 		},
@@ -387,6 +421,9 @@ async function handleGeminiDirectNonStream(
 	startMs: number,
 	rawModelId: string,
 	skipVersioning = false,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const apiKey = provider.provider.config.apiKey;
 	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
@@ -405,14 +442,14 @@ async function handleGeminiDirectNonStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
+		signal: anySignal(AbortSignal.timeout(60_000), clientSignal),
 	});
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
-			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, clientKeyName));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status, headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
 		});
@@ -425,14 +462,14 @@ async function handleGeminiDirectNonStream(
 
 	if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 		{ prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0 },
-		true, Date.now() - startMs, requestId, false, {}, 0, 0, env.clientKeyName || ''));
+		true, Date.now() - startMs, requestId, false, {}, 0, 0, clientKeyName));
 
 	const fr = choice?.finish_reason || 'stop';
 	const finishReason = fr === 'stop' ? 'STOP' : fr === 'length' ? 'MAX_TOKENS'
 		: fr === 'tool_calls' ? 'STOP' : fr === 'content_filter' ? 'SAFETY' : 'STOP';
 
 	const parts: Array<Record<string, unknown>> = [{ text: msg.content || '' }];
-	if (msg.tool_calls?.length) for (const tc of msg.tool_calls) parts.push({ functionCall: { name: (tc.function || tc).name, args: (tc.function || tc).arguments } });
+	if (msg.tool_calls?.length) for (const tc of msg.tool_calls) parts.push({ functionCall: { name: (tc.function || tc).name, args: parseFunctionArgs((tc.function || tc).arguments) } });
 
 	return new Response(JSON.stringify({
 		candidates: [{ content: { role: 'model', parts }, finishReason, index: 0, safetyRatings: [] }],
@@ -451,6 +488,9 @@ async function handleGeminiStream(
 	startMs: number,
 	rawModelId: string,
 	altSse: boolean,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
 	const { messages } = geminiToAISDK(body);
@@ -467,7 +507,7 @@ async function handleGeminiStream(
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
 		headers: undefined,
-		abortSignal: anySignal(connectController.signal, env.clientSignal),
+		abortSignal: anySignal(connectController.signal, clientSignal),
 	});
 
 	// Prefetch first part from AI SDK stream to detect early errors (rate limits, quota).
@@ -491,21 +531,21 @@ async function handleGeminiStream(
 		}
 	} catch (err) {
 		clearTimeout(connectTimer);
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw err;
 	}
 
 	if (prefetchError) {
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
@@ -541,12 +581,13 @@ async function handleGeminiStream(
 
 	const stream = new ReadableStream({
 		async start(controller) {
-			// SSE heartbeat: send comment every 15s to keep connection alive
+			// SSE heartbeat: send comment every 15s to keep connection alive.
+			// Only in SSE mode — a bare comment line would corrupt NDJSON output.
 			const HEARTBEAT_MS = 15_000;
 			let lastActivity = Date.now();
 			const heartbeatTimer = setInterval(() => {
-				if (Date.now() - lastActivity >= HEARTBEAT_MS) {
-					controller.enqueue(encoder.encode(ssePfx + ': heartbeat' + sseSfx));
+				if (altSse && Date.now() - lastActivity >= HEARTBEAT_MS) {
+					controller.enqueue(encoder.encode(': heartbeat\n\n'));
 					lastActivity = Date.now();
 				}
 			}, HEARTBEAT_MS);
@@ -632,7 +673,7 @@ async function handleGeminiStream(
 						!streamError, Date.now() - startMs, requestId, true,
 						streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
 						cacheRead, cacheCreation,
-						env.clientKeyName || '',
+						clientKeyName,
 					),
 				);
 			}
@@ -648,7 +689,7 @@ async function handleGeminiStream(
 						{ prompt: 0, completion: 0 }, false,
 						Date.now() - startMs, requestId, true,
 						{ errorType: 'stream_error', errorMessage: errMsg.slice(0, 300) },
-						0, 0, env.clientKeyName || '',
+						0, 0, clientKeyName,
 					),
 				);
 			}
@@ -658,6 +699,8 @@ async function handleGeminiStream(
 				);
 			} finally {
 				clearInterval(heartbeatTimer);
+				// Circuit breaker: only count as success when the stream completed cleanly.
+				if (!streamError) recordCBSuccess(provider.provider.id);
 				controller.close();
 			}
 		},
@@ -686,6 +729,9 @@ async function handleGeminiNonStream(
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
 	rawModelId: string,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
 	const { messages } = geminiToAISDK(body);
@@ -699,11 +745,18 @@ async function handleGeminiNonStream(
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
 		headers: undefined,
-		abortSignal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
+		abortSignal: anySignal(AbortSignal.timeout(60_000), clientSignal),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {
 			return null;
+		}
+		// Record usage only on the final attempt to avoid double-counting on retry/failover.
+		if (isLastAttempt && execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
+				{ errorType: 'upstream_error', errorMessage: msg.slice(0, 300) },
+				0, 0, clientKeyName));
 		}
 		throw err;
 	});
@@ -746,7 +799,7 @@ async function handleGeminiNonStream(
 				{},
 				cacheRead,
 				cacheCreation,
-				env.clientKeyName || '',
+				clientKeyName,
 			),
 		);
 	}
@@ -805,10 +858,10 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 	let modelId: string;
 	let action: string;
 	if (colonIdx >= 0) {
-		modelId = decodeURIComponent(rawParam.slice(0, colonIdx)).replace(/^models\//, '');
+		modelId = safeDecodeURIComponent(rawParam.slice(0, colonIdx)).replace(/^models\//, '');
 		action = rawParam.slice(colonIdx + 1);
 	} else {
-		modelId = decodeURIComponent(rawParam).replace(/^models\//, '');
+		modelId = safeDecodeURIComponent(rawParam).replace(/^models\//, '');
 		action = 'generateContent';
 	}
 
@@ -848,14 +901,14 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
-	// Pass client's AbortSignal so upstream work is cancelled when the client disconnects
-	c.env.clientSignal = c.req.raw.signal;
+	// Request-scoped values (set by clientAuthMiddleware — never the shared env)
+	const clientKeyName = getClientKeyName(c.req.raw);
+	const clientSignal = c.req.raw.signal;
 
 	// Try each candidate in weight order (if failover enabled).
 	// Each candidate gets up to MAX_RETRIES attempts (with exponential backoff) for transient errors.
 	const MAX_RETRIES = 2;
 	const BASE_RETRY_DELAY_MS = 100;
-	const FATAL_4XX = new Set([400, 401, 403]);
 
 	const failoverEnabled = await getFailoverEnabled(c.env);
 	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
@@ -867,6 +920,9 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 			continue;
 		}
 		for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+			// Usage is only recorded for the final attempt of the final candidate
+			// (retried/failover failures must not inflate usage counts).
+			const isLastAttempt = attempt === MAX_RETRIES && candidate === tryCandidates[tryCandidates.length - 1];
 			try {
 				const type = candidate.provider.type;
 				const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
@@ -887,7 +943,7 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 					normModelId = normModelId.startsWith('google/') ? normModelId : 'google/' + normModelId;
 					const cfg = candidate.provider.config;
 					const loc = cfg.location || 'us-central1';
-					const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
+					const vConfig: Record<string, string> = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
 					if (!isVertexApiKeyMode(cfg)) {
 						vConfig.apiKey = await getVertexAccessToken(cfg);
 					}
@@ -896,11 +952,11 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 
 				const response = isStream
 					? await (useDirect
-						? handleGeminiDirectStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, altSse, skipVersioning)
-						: handleGeminiStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, altSse))
+						? handleGeminiDirectStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, altSse, skipVersioning, clientSignal, clientKeyName, isLastAttempt)
+						: handleGeminiStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, altSse, clientSignal, clientKeyName, isLastAttempt))
 					: await (useDirect
-						? handleGeminiDirectNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning)
-						: handleGeminiNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId));
+						? handleGeminiDirectNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning, clientSignal, clientKeyName, isLastAttempt)
+						: handleGeminiNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, clientSignal, clientKeyName, isLastAttempt));
 
 				if (response.status >= 400) {
 					lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
@@ -919,7 +975,9 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 					console.error(lastError);
 					break;
 				}
-				recordCBSuccess(candidate.provider.id);
+				// Streaming success is recorded inside the stream's finally (so mid-stream
+				// failures don't reset the breaker); non-stream success is final here.
+				if (!isStream) recordCBSuccess(candidate.provider.id);
 				return response;
 			} catch (err) {
 				const errMsg = err instanceof Error

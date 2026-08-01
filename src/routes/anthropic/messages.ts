@@ -13,6 +13,7 @@ import { findProviderForModel, getAggregatedModels } from '../../router';
 import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers';
 import { recordUsage, extractCacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
+import { getClientKeyName } from '../../middleware/auth';
 import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
 
 export const anthropicMessagesRoutes = new Hono<{ Bindings: Env }>();
@@ -53,6 +54,10 @@ function anySignal(a: AbortSignal, b?: AbortSignal): AbortSignal {
 function escJson(s: string): string {
 	return JSON.stringify(s).slice(1, -1);
 }
+
+// 4xx codes that indicate a client-side problem — switching providers won't help.
+// Module-scope so both the route loop and the handler functions can reference it.
+const FATAL_4XX = new Set([400, 401, 403]);
 
 /** Convert Anthropic Messages request to OpenAI-compatible format. */
 function anthropicToOpenAI(body: Record<string, unknown>): Record<string, unknown> {
@@ -166,6 +171,8 @@ function mapStopReason(reason: string): string {
 			return 'max_tokens';
 		case 'content-filter':
 			return 'content_filter';
+		case 'tool-calls':
+			return 'tool_use';
 		default:
 			return 'end_turn';
 	}
@@ -198,6 +205,9 @@ async function handleAnthropicDirectStream(
 	startMs: number,
 	rawModelId: string,
 	skipVersioning = false,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const apiKey = provider.provider.config.apiKey;
 	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
@@ -221,14 +231,14 @@ async function handleAnthropicDirectStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: anySignal(connectController.signal, env.clientSignal),
+		signal: anySignal(connectController.signal, clientSignal),
 	}).finally(() => clearTimeout(connectTimer));
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
-			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, clientKeyName));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status,
 			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' }, upstreamResponse.status, upstreamResponse.headers),
@@ -271,22 +281,22 @@ async function handleAnthropicDirectStream(
 		}
 	} catch (err) {
 		reader.releaseLock();
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw err;
 	}
 
 	if (prefetchError) {
 		reader.releaseLock();
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
@@ -298,7 +308,30 @@ async function handleAnthropicDirectStream(
 	const encoder = new TextEncoder();
 	const msgId = generateMessageId();
 	let contentIndex = 0;
-	let hasStartedBlock = false;
+	let openBlockType: 'none' | 'thinking' | 'text' = 'none';
+	// OpenAI tool calls stream as fragments keyed by index: { id, name, arguments(partial) }
+	const toolCallAcc = new Map<number, { id: string; name: string; args: string }>();
+
+	/** Close the currently open content block, if any. */
+	function closeBlock(controller: ReadableStreamDefaultController<Uint8Array>) {
+		if (openBlockType !== 'none') {
+			controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: contentIndex - 1 })}\n\n`));
+			openBlockType = 'none';
+		}
+	}
+
+	/** Open a new content block of the given type at the next index (closing the current one). */
+	function openBlock(controller: ReadableStreamDefaultController<Uint8Array>, type: 'thinking' | 'text') {
+		closeBlock(controller);
+		const contentBlock = type === 'thinking'
+			? { type: 'thinking', thinking: '' }
+			: { type: 'text', text: '' };
+		controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({
+			type: 'content_block_start', index: contentIndex, content_block: contentBlock,
+		})}\n\n`));
+		openBlockType = type;
+		contentIndex++;
+	}
 
 	const stream = new ReadableStream({
 		async start(controller) {
@@ -364,12 +397,40 @@ async function handleAnthropicDirectStream(
 							lastOutputTokens = parsed.usage.completion_tokens || 0;
 						}
 
+						// Accumulate OpenAI tool-call fragments → Anthropic tool_use blocks (emitted on finish)
+						if (Array.isArray(delta?.tool_calls)) {
+							for (const tcc of delta.tool_calls) {
+								const idx = typeof tcc.index === 'number' ? tcc.index : 0;
+								let acc = toolCallAcc.get(idx);
+								if (!acc) {
+									acc = { id: '', name: '', args: '' };
+									toolCallAcc.set(idx, acc);
+								}
+								if (tcc.id) acc.id = tcc.id;
+								const fn = tcc.function;
+								if (fn?.name) acc.name = fn.name;
+								if (typeof fn?.arguments === 'string') acc.args += fn.arguments;
+							}
+						}
+
 						// Finish event
 						if (choice?.finish_reason && choice.finish_reason !== 'null' && choice.finish_reason !== null) {
 								if (usage) { lastInputTokens = usage.prompt_tokens || 0; lastOutputTokens = usage.completion_tokens || 0; }
-								if (hasStartedBlock) {
-									controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: contentIndex - 1 })}\n\n`));
+								closeBlock(controller);
+								// Emit accumulated tool calls as tool_use blocks
+								for (const [, tc] of toolCallAcc) {
+									controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({
+										type: 'content_block_start', index: contentIndex,
+										content_block: { type: 'tool_use', id: tc.id || `toolu_${generateMessageId()}`, name: tc.name || '', input: {} },
+									})}\n\n`));
+									controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({
+										type: 'content_block_delta', index: contentIndex,
+										delta: { type: 'input_json_delta', partial_json: tc.args || '{}' },
+									})}\n\n`));
+									controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: contentIndex })}\n\n`));
+									contentIndex++;
 								}
+								toolCallAcc.clear();
 								const sr = mapStopReasonOpenAI(choice.finish_reason);
 								controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({
 									type: 'message_delta', delta: { stop_reason: sr, stop_sequence: null }, usage: { output_tokens: lastOutputTokens },
@@ -378,16 +439,21 @@ async function handleAnthropicDirectStream(
 								continue;
 							}
 
+							// Reasoning deltas → Anthropic thinking block (never merged into text)
+							const rc = delta?.reasoning_content;
+							if (rc != null && rc !== '') {
+								if (openBlockType !== 'thinking') openBlock(controller, 'thinking');
+								controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({
+									type: 'content_block_delta', index: contentIndex - 1, delta: { type: 'thinking_delta', thinking: rc },
+								})}\n\n`));
+							}
+
+							// Content deltas → text block
 							const ct = delta?.content;
 							if (ct != null && ct !== '') {
-								if (!hasStartedBlock) {
-									hasStartedBlock = true;
-									controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({
-										type: 'content_block_start', index: contentIndex, content_block: { type: 'text', text: '' },
-									})}\n\n`));
-								}
+								if (openBlockType !== 'text') openBlock(controller, 'text');
 								controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({
-									type: 'content_block_delta', index: contentIndex, delta: { type: 'text_delta', text: ct },
+									type: 'content_block_delta', index: contentIndex - 1, delta: { type: 'text_delta', text: ct },
 								})}\n\n`));
 							}
 						} catch { /* skip */ }
@@ -402,7 +468,9 @@ async function handleAnthropicDirectStream(
 				if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 					{ prompt: lastInputTokens, completion: lastOutputTokens }, !streamError, Date.now() - startMs, requestId, true,
 					streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
-					0, 0, env.clientKeyName || ''));
+					0, 0, clientKeyName));
+				// Circuit breaker: only count as success when the stream completed cleanly.
+				if (!streamError) recordCBSuccess(provider.provider.id);
 				controller.close();
 			}
 		},
@@ -423,6 +491,9 @@ async function handleAnthropicDirectNonStream(
 	startMs: number,
 	rawModelId: string,
 	skipVersioning = false,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const apiKey = provider.provider.config.apiKey;
 	let baseUrl = provider.provider.config.baseUrl || 'https://api.openai.com/v1';
@@ -441,14 +512,14 @@ async function handleAnthropicDirectNonStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
+		signal: anySignal(AbortSignal.timeout(60_000), clientSignal),
 	});
 
 	if (!upstreamResponse.ok) {
 		const errText = await upstreamResponse.text().catch(() => '');
-		if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
-			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, env.clientKeyName || ''));
+			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, clientKeyName));
 		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
 			status: upstreamResponse.status, headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' }, upstreamResponse.status, upstreamResponse.headers),
 		});
@@ -461,7 +532,7 @@ async function handleAnthropicDirectNonStream(
 
 	if (execCtx) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 		{ prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0 },
-		true, Date.now() - startMs, requestId, false, {}, 0, 0, env.clientKeyName || ''));
+		true, Date.now() - startMs, requestId, false, {}, 0, 0, clientKeyName));
 
 	const sr = mapStopReasonOpenAI(choice?.finish_reason || 'stop');
 
@@ -484,6 +555,9 @@ async function handleAnthropicStream(
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
 	rawModelId: string,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
 	const { messages, system } = anthropicToAISDK(body);
@@ -502,7 +576,7 @@ async function handleAnthropicStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
 		headers: buildExtraBodyHeaders(body),
-		abortSignal: anySignal(connectController.signal, env.clientSignal),
+		abortSignal: anySignal(connectController.signal, clientSignal),
 	});
 
 	// Prefetch first part from AI SDK stream to detect early errors (rate limits, quota).
@@ -526,21 +600,21 @@ async function handleAnthropicStream(
 		}
 	} catch (err) {
 		clearTimeout(connectTimer); // Timeout fired or connection error
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw err;
 	}
 
 	if (prefetchError) {
-		if (execCtx) {
+		if (execCtx && isLastAttempt) {
 			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 				{ errorType: 'stream_error', errorMessage: prefetchError.slice(0, 300) },
-				0, 0, env.clientKeyName || ''));
+				0, 0, clientKeyName));
 		}
 		throw new Error(`Upstream stream error: ${prefetchError}`);
 	}
@@ -564,7 +638,6 @@ async function handleAnthropicStream(
 	const encoder = new TextEncoder();
 	const msgId = generateMessageId();
 	let contentIndex = 0;
-	let hasStartedBlock = false;
 	let streamError = false;
 	let streamErrorMsg = '';
 	let lastInputTokens = 0;
@@ -612,7 +685,6 @@ async function handleAnthropicStream(
 					lastActivity = Date.now();
 					switch (part.type) {
 					case 'text-start':
-						hasStartedBlock = true;
 						textDeltaPfx = `event: content_block_delta\ndata: {"type":"content_block_delta","index":${contentIndex},"delta":{"type":"text_delta","text":"`;
 						textDeltaSfx = `"}}\n\n`;
 						controller.enqueue(
@@ -783,7 +855,7 @@ async function handleAnthropicStream(
 						streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
 						cacheRead,
 						cacheCreation,
-						env.clientKeyName || '',
+						clientKeyName,
 					),
 				);
 			}
@@ -799,7 +871,7 @@ async function handleAnthropicStream(
 						{ prompt: 0, completion: 0 }, false,
 						Date.now() - startMs, requestId, true,
 						{ errorType: 'stream_error', errorMessage: errMsg.slice(0, 300) },
-						0, 0, env.clientKeyName || '',
+						0, 0, clientKeyName,
 					),
 				);
 			}
@@ -813,6 +885,8 @@ async function handleAnthropicStream(
 				);
 			} finally {
 				clearInterval(heartbeatTimer);
+				// Circuit breaker: only count as success when the stream completed cleanly.
+				if (!streamError) recordCBSuccess(provider.provider.id);
 				controller.close();
 			}
 		},
@@ -841,6 +915,9 @@ async function handleAnthropicNonStream(
 	execCtx: ExecutionContext | undefined,
 	startMs: number,
 	rawModelId: string,
+	clientSignal: AbortSignal,
+	clientKeyName: string,
+	isLastAttempt: boolean,
 ): Promise<Response> {
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
 	const { messages, system } = anthropicToAISDK(body);
@@ -854,11 +931,18 @@ async function handleAnthropicNonStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
 		headers: buildExtraBodyHeaders(body),
-		abortSignal: anySignal(AbortSignal.timeout(60_000), env.clientSignal),
+		abortSignal: anySignal(AbortSignal.timeout(60_000), clientSignal),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {
 			return null;
+		}
+		// Record usage only on the final attempt to avoid double-counting on retry/failover.
+		if (isLastAttempt && execCtx) {
+			execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
+				{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
+				{ errorType: 'upstream_error', errorMessage: msg.slice(0, 300) },
+				0, 0, clientKeyName));
 		}
 		throw err;
 	});
@@ -908,7 +992,7 @@ async function handleAnthropicNonStream(
 				{},
 				cacheRead,
 				cacheCreation,
-				env.clientKeyName || '',
+				clientKeyName,
 			),
 		);
 	}
@@ -1013,15 +1097,14 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
-	// Pass client's AbortSignal so upstream work is cancelled when the client disconnects
-	c.env.clientSignal = c.req.raw.signal;
+	// Request-scoped values (set by clientAuthMiddleware — never the shared env)
+	const clientKeyName = getClientKeyName(c.req.raw);
+	const clientSignal = c.req.raw.signal;
 
 	// Try each candidate in weight order; fall back on failure (if failover enabled).
 	// Each candidate gets up to MAX_RETRIES attempts (with exponential backoff) for transient errors.
 	const MAX_RETRIES = 2;
 	const BASE_RETRY_DELAY_MS = 100;
-	// 4xx codes that indicate a client-side problem — switching providers won't help
-	const FATAL_4XX = new Set([400, 401, 403]);
 
 	const failoverEnabled = await getFailoverEnabled(c.env);
 	const tryCandidates = failoverEnabled ? candidates : [candidates[0]];
@@ -1035,6 +1118,9 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 		}
 
 		for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+			// Usage is only recorded for the final attempt of the final candidate
+			// (retried/failover failures must not inflate usage counts).
+			const isLastAttempt = attempt === MAX_RETRIES && candidate === tryCandidates[tryCandidates.length - 1];
 			try {
 				const type = candidate.provider.type;
 				const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
@@ -1055,7 +1141,7 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 					normModelId = normModelId.startsWith('google/') ? normModelId : 'google/' + normModelId;
 					const cfg = candidate.provider.config;
 					const loc = cfg.location || 'us-central1';
-					const vConfig = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
+					const vConfig: Record<string, string> = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
 					if (!isVertexApiKeyMode(cfg)) {
 						vConfig.apiKey = await getVertexAccessToken(cfg);
 					}
@@ -1064,11 +1150,11 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 
 				const response = isStream
 					? await (useDirect
-						? handleAnthropicDirectStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning)
-						: handleAnthropicStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId))
+						? handleAnthropicDirectStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning, clientSignal, clientKeyName, isLastAttempt)
+						: handleAnthropicStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, clientSignal, clientKeyName, isLastAttempt))
 					: await (useDirect
-						? handleAnthropicDirectNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning)
-						: handleAnthropicNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId));
+						? handleAnthropicDirectNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, skipVersioning, clientSignal, clientKeyName, isLastAttempt)
+						: handleAnthropicNonStream(body, requestId, directProvider, c.env, ip, execCtx, startMs, normModelId, clientSignal, clientKeyName, isLastAttempt));
 
 				if (response.status >= 400) {
 					lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
@@ -1089,7 +1175,9 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 					console.error(lastError);
 					break;
 				}
-				recordCBSuccess(candidate.provider.id);
+				// Streaming success is recorded inside the stream's finally (so mid-stream
+				// failures don't reset the breaker); non-stream success is final here.
+				if (!isStream) recordCBSuccess(candidate.provider.id);
 				return response;
 			} catch (err) {
 				const errMsg = err instanceof Error

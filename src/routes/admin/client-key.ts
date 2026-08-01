@@ -5,6 +5,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { listApiKeys, createApiKey, deleteApiKey, renameApiKey, migrateLegacyApiKey, getClientApiKey, setClientApiKey } from '../../config';
+import { invalidateAuthCache } from '../../middleware/auth';
 
 export const adminApiKeyRoutes = new Hono<{ Bindings: Env }>();
 
@@ -33,6 +34,7 @@ adminApiKeyRoutes.post('/api-keys', async (c: Context<{ Bindings: Env }>) => {
 	if (key.length < 8) return c.json({ error: 'API key 至少需要 8 个字符' }, 400);
 
 	const info = await createApiKey(c.env, name, key);
+	invalidateAuthCache(); // new key must be enforceable immediately
 	return c.json({
 		ok: true,
 		message: `密钥 "${name}" 已创建`,
@@ -50,6 +52,7 @@ adminApiKeyRoutes.put('/api-keys/:id', async (c: Context<{ Bindings: Env }>) => 
 	if (!name) return c.json({ error: '密钥名称不能为空' }, 400);
 	const updated = await renameApiKey(c.env, id, name);
 	if (!updated) return c.json({ error: '密钥不存在' }, 404);
+	invalidateAuthCache(); // cached key→name mapping is now stale
 	return c.json({ ok: true, message: `密钥已重命名为 "${name}"` });
 });
 
@@ -60,6 +63,7 @@ adminApiKeyRoutes.post('/api-keys/legacy/migrate', async (c: Context<{ Bindings:
 	if (!name) return c.json({ error: '密钥名称不能为空' }, 400);
 	const info = await migrateLegacyApiKey(c.env, name);
 	if (!info) return c.json({ error: '没有旧版密钥可迁移' }, 404);
+	invalidateAuthCache();
 	return c.json({ ok: true, message: `旧版密钥已迁移为 "${name}"`, key: info });
 });
 
@@ -69,11 +73,13 @@ adminApiKeyRoutes.delete('/api-keys/:id', async (c: Context<{ Bindings: Env }>) 
 	if (!id) return c.json({ error: '无效的密钥 ID' }, 400);
 	const deleted = await deleteApiKey(c.env, id);
 	if (!deleted) return c.json({ error: '密钥不存在' }, 404);
+	invalidateAuthCache(); // deleted key must stop authenticating immediately
 	return c.json({ ok: true, message: '密钥已删除' });
 });
 
 // DELETE /admin/api-keys/legacy — Delete the legacy key
 adminApiKeyRoutes.delete('/api-keys/legacy', async (c: Context<{ Bindings: Env }>) => {
 	await setClientApiKey(c.env, null);
+	invalidateAuthCache();
 	return c.json({ ok: true, message: '旧版密钥已删除' });
 });

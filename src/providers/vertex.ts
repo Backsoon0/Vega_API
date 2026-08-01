@@ -58,7 +58,9 @@ async function getAccessToken(env: Env, config: Record<string, string>): Promise
   if (!serviceAccountEmail) throw new Error('Vertex AI: Missing serviceAccountEmail');
   if (!privateKey) throw new Error('Vertex AI: Missing privateKey');
 
-  const cacheKey = serviceAccountEmail;
+  // Cache key includes a fingerprint of the private key so a rotated key
+  // (same service account email) does not reuse the old token until expiry.
+  const cacheKey = `${serviceAccountEmail}:${normalizePem(privateKey).slice(-64)}`;
 
   // Periodic eviction of expired entries (prevents unbounded Map growth)
   if (Math.random() < 0.05) {

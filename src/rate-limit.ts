@@ -71,12 +71,13 @@ export async function recordLoginFailure(c: Context<{ Bindings: Env }>) {
     .run();
 
   if (entry.banned_until) {
-    const remaining = Math.ceil(BAN_DURATION_SECONDS / 60);
+    const remainingSeconds = Math.max(0, entry.banned_until - now);
+    const remainingMinutes = Math.max(1, Math.ceil(remainingSeconds / 60));
     return c.json(
       {
-        error: `Too many attempts. Try again in ${remaining} minute(s).`,
+        error: `Too many attempts. Try again in ${remainingMinutes} minute(s).`,
         banned: true,
-        remainingSeconds: BAN_DURATION_SECONDS,
+        remainingSeconds,
       },
       429
     );

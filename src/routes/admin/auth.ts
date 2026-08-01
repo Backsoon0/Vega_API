@@ -22,6 +22,9 @@ adminAuthRoutes.post('/auth', rateLimitLogin, async (c: Context<{ Bindings: Env 
 
 	// First login sets the password
 	if (!storedHash) {
+		if (!password || password.length < 6) {
+			return c.json({ error: 'Password must be at least 6 characters' }, 400);
+		}
 		const hash = await sha256(password);
 		await setAdminPassword(c.env, hash);
 		return c.json({ ok: true, token: hash, message: 'Password set successfully' });

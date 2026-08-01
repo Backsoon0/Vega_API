@@ -108,8 +108,11 @@ export async function getCallLogs(
     cacheCreationInputTokens: number;
     apiKeyName: string;
   }>; total: number; hasMore: boolean }> {
-  const limit = opts.limit || 200;
-  const offset = opts.offset || 0;
+  const MAX_PAGE_SIZE = 200;
+  // Clamp client-supplied pagination: NaN/absent → defaults, negatives → 1/0,
+  // oversized → MAX_PAGE_SIZE (prevents LIMIT -N (= unlimited in SQLite) and huge scans).
+  const limit = Number.isFinite(opts.limit) ? Math.min(Math.max(opts.limit!, 1), MAX_PAGE_SIZE) : 200;
+  const offset = Number.isFinite(opts.offset) ? Math.max(opts.offset!, 0) : 0;
 
   try {
     let whereClauses = 'WHERE 1=1';
