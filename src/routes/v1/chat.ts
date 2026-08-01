@@ -11,7 +11,7 @@ import type { Env } from '../../types';
 import type { ProviderMatch } from '../../router';
 import { findProviderForModel } from '../../router';
 import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers';
-import { recordUsage, extractCacheTokens } from '../../usage';
+import { recordUsage, extractCacheTokens, extractOpenAICacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
 import { getClientKeyName } from '../../middleware/auth';
 import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
@@ -315,6 +315,8 @@ async function handleOpenAIDirectStream(
 			let streamErrorMsg = '';
 			let lastPromptTokens = 0;
 			let lastCompletionTokens = 0;
+			let lastCacheRead = 0;
+			let lastCacheCreation = 0;
 
 			// SSE heartbeat: send comment every 15s to keep connection alive
 			const HEARTBEAT_MS = 15_000;
@@ -378,6 +380,10 @@ async function handleOpenAIDirectStream(
 							if (parsed?.usage) {
 								lastPromptTokens = parsed.usage.prompt_tokens || 0;
 								lastCompletionTokens = parsed.usage.completion_tokens || 0;
+								// Capture cache hit tokens from the usage chunk (DeepSeek etc.)
+								const cache = extractOpenAICacheTokens(parsed.usage);
+								if (cache.cacheReadInputTokens > 0) lastCacheRead = cache.cacheReadInputTokens;
+								if (cache.cacheCreationInputTokens > 0) lastCacheCreation = cache.cacheCreationInputTokens;
 							}
 						} catch { /* ignore parse errors */ }
 					}
@@ -390,6 +396,10 @@ async function handleOpenAIDirectStream(
 								if (usage) {
 									lastPromptTokens = usage.prompt_tokens || 0;
 									lastCompletionTokens = usage.completion_tokens || 0;
+									// Capture cache hit tokens from the finish chunk (DeepSeek etc.)
+									const cache = extractOpenAICacheTokens(usage);
+									if (cache.cacheReadInputTokens > 0) lastCacheRead = cache.cacheReadInputTokens;
+									if (cache.cacheCreationInputTokens > 0) lastCacheCreation = cache.cacheCreationInputTokens;
 								}
 								const fr = parsed?.choices?.[0]?.finish_reason || 'stop';
 								const finishReason = fr === 'stop' ? 'stop' : fr === 'length' ? 'length'
@@ -450,7 +460,7 @@ async function handleOpenAIDirectStream(
 						{ prompt: lastPromptTokens, completion: lastCompletionTokens },
 						!streamError, Date.now() - startMs, requestId, true,
 						streamError ? { errorType: 'stream_error', errorMessage: streamErrorMsg.slice(0, 300) } : {},
-						0, 0, clientKeyName,
+						lastCacheRead, lastCacheCreation, clientKeyName,
 					));
 				}
 				// Circuit breaker: only count as success when the stream actually
@@ -526,12 +536,16 @@ async function handleOpenAIDirectNonStream(
 	const choice = data.choices?.[0];
 	const msg = choice?.message || {};
 	const usage = data.usage || {};
+	// Extract cache hits from upstream usage — supports DeepSeek's
+	// prompt_cache_hit_tokens, OpenAI-standard prompt_tokens_details.cached_tokens,
+	// and other third-party shapes (see extractOpenAICacheTokens).
+	const cache = extractOpenAICacheTokens(usage);
 
 	if (execCtx) {
 		execCtx.waitUntil(recordUsage(env, provider.provider.id, modelId, ip,
 			{ prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0 },
 			true, Date.now() - startMs, requestId, false, {},
-			0, 0, clientKeyName,
+			cache.cacheReadInputTokens, cache.cacheCreationInputTokens, clientKeyName,
 		));
 	}
 
@@ -560,6 +574,14 @@ async function handleOpenAIDirectNonStream(
 			prompt_tokens: usage.prompt_tokens || 0,
 			completion_tokens: usage.completion_tokens || 0,
 			total_tokens: usage.total_tokens || 0,
+			// Surface cache hits to clients in the standard OpenAI shape. If the
+			// upstream already sent prompt_tokens_details, pass it through verbatim;
+			// otherwise synthesize it from the extracted cache tokens.
+			...(usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
+				? { prompt_tokens_details: usage.prompt_tokens_details }
+				: cache.cacheReadInputTokens > 0
+					? { prompt_tokens_details: { cached_tokens: cache.cacheReadInputTokens } }
+					: {}),
 		},
 	}), {
 		status: 200,

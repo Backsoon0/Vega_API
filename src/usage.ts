@@ -318,6 +318,60 @@ export async function getUsageTotals(env: Env): Promise<Record<string, UsageReco
   return result;
 }
 
+/** Coerce a token count from number/string/undefined — returns 0 for invalid values. */
+function toTokenNum(v: unknown): number {
+	const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : 0;
+	return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * Extract cache hit tokens from a raw OpenAI-compatible `usage` object
+ * (as returned by upstream /chat/completions responses).
+ *
+ * Different third-party OpenAI-compatible providers expose cache info in
+ * different shapes, so several are probed and the maximum is taken:
+ * - OpenAI / OpenRouter / Groq / Moonshot: usage.prompt_tokens_details.cached_tokens
+ * - DeepSeek / GLM / Kimi-style:           usage.prompt_cache_hit_tokens
+ * - Some services:                         usage.cached_tokens (top-level)
+ * - Anthropic-style compat endpoints:      usage.cache_read_input_tokens
+ *
+ * Returns { cacheReadInputTokens, cacheCreationInputTokens }.
+ */
+export function extractOpenAICacheTokens(
+	usage: Record<string, unknown> | undefined | null,
+): { cacheReadInputTokens: number; cacheCreationInputTokens: number } {
+	if (!usage || typeof usage !== 'object') {
+		return { cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+	}
+
+	let cacheRead = 0;
+
+	// 1. OpenAI standard: usage.prompt_tokens_details.cached_tokens
+	const details = usage.prompt_tokens_details;
+	if (details && typeof details === 'object') {
+		cacheRead = Math.max(
+			cacheRead,
+			toTokenNum((details as Record<string, unknown>).cached_tokens),
+		);
+	}
+
+	// 2. DeepSeek / GLM / Kimi-style: usage.prompt_cache_hit_tokens
+	cacheRead = Math.max(cacheRead, toTokenNum(usage.prompt_cache_hit_tokens));
+
+	// 3. Top-level cached_tokens (rare)
+	cacheRead = Math.max(cacheRead, toTokenNum(usage.cached_tokens));
+
+	// 4. Anthropic-style on a compatible endpoint
+	cacheRead = Math.max(cacheRead, toTokenNum(usage.cache_read_input_tokens));
+
+	const cacheCreation = toTokenNum(usage.cache_creation_input_tokens);
+
+	return {
+		cacheReadInputTokens: cacheRead,
+		cacheCreationInputTokens: cacheCreation,
+	};
+}
+
 /**
  * Extract cache hit tokens from AI SDK provider metadata.
  * Different providers expose cache info in different shapes.
@@ -341,16 +395,14 @@ export function extractCacheTokens(providerMetadata: Record<string, Record<strin
 		}
 	}
 
-	// OpenAI: may appear as metadata.openai.usage.prompt_tokens_details.cached_tokens
+	// OpenAI: metadata.openai.usage may carry cache info in several shapes
+	// (prompt_tokens_details.cached_tokens, prompt_cache_hit_tokens, ...) — probe
+	// all common third-party shapes via extractOpenAICacheTokens.
 	const openai = providerMetadata.openai;
 	if (openai?.usage && typeof openai.usage === 'object') {
-		const usage = openai.usage as Record<string, unknown>;
-		const details = usage.prompt_tokens_details as Record<string, number> | undefined;
-		if (details?.cached_tokens) {
-			return {
-				cacheReadInputTokens: details.cached_tokens || 0,
-				cacheCreationInputTokens: 0, // OpenAI only reports cached, not creation
-			};
+		const cache = extractOpenAICacheTokens(openai.usage as Record<string, unknown>);
+		if (cache.cacheReadInputTokens > 0 || cache.cacheCreationInputTokens > 0) {
+			return cache;
 		}
 	}
 
