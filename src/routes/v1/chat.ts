@@ -216,10 +216,10 @@ async function handleOpenAIDirectStream(
 		? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 		: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
-	// Connect timeout: 30s for TCP + TLS + headers. Cancelled once connected so
+	// Connect timeout: 15s for TCP + TLS + headers. Cancelled once connected so
 	// streaming body reads are NOT affected. Prevents hanging on unresponsive upstream.
 	const connectController = new AbortController();
-	const connectTimer = setTimeout(() => connectController.abort(), 30_000);
+	const connectTimer = setTimeout(() => connectController.abort(), 15_000);
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',
 		headers: authHeaders,
@@ -514,7 +514,7 @@ async function handleOpenAIDirectNonStream(
 			method: 'POST',
 			headers: authHeaders,
 			body: JSON.stringify(upstreamBody),
-			signal: anySignal(AbortSignal.timeout(60_000), clientSignal),
+			signal: anySignal(AbortSignal.timeout(120_000), clientSignal),
 		});
 
 	if (!upstreamResponse.ok) {
@@ -611,10 +611,10 @@ async function handleOpenAIStream(
 	);
 	const system = extractSystem(messages);
 
-	// Connect timeout: 30s for initial upstream connection. Cancelled on first chunk
+		// Connect timeout: 15s for initial upstream connection. Cancelled on first chunk
 	// so streaming body reads are NOT affected.
 	const connectController = new AbortController();
-	const connectTimer = setTimeout(() => connectController.abort(), 30_000);
+	const connectTimer = setTimeout(() => connectController.abort(), 15_000);
 
 	const result = streamText({
 		model,
@@ -912,7 +912,7 @@ async function handleOpenAINonStream(
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
-		abortSignal: anySignal(AbortSignal.timeout(60_000), clientSignal),
+		abortSignal: anySignal(AbortSignal.timeout(120_000), clientSignal),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {

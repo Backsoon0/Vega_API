@@ -223,10 +223,10 @@ async function handleAnthropicDirectStream(
 		? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 		: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
-	// Connect timeout: 30s for TCP + TLS + headers. Cancelled once connected so
+	// Connect timeout: 15s for TCP + TLS + headers. Cancelled once connected so
 	// streaming body reads are NOT affected. Prevents hanging on unresponsive upstream.
 	const connectController = new AbortController();
-	const connectTimer = setTimeout(() => connectController.abort(), 30_000);
+	const connectTimer = setTimeout(() => connectController.abort(), 15_000);
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',
 		headers: authHeaders,
@@ -512,7 +512,7 @@ async function handleAnthropicDirectNonStream(
 		method: 'POST',
 		headers: authHeaders,
 		body: JSON.stringify(upstreamBody),
-		signal: anySignal(AbortSignal.timeout(60_000), clientSignal),
+		signal: anySignal(AbortSignal.timeout(120_000), clientSignal),
 	});
 
 	if (!upstreamResponse.ok) {
@@ -562,10 +562,10 @@ async function handleAnthropicStream(
 	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
 	const { messages, system } = anthropicToAISDK(body);
 
-	// Connect timeout: 30s for initial upstream connection. Cancelled on first chunk
+	// Connect timeout: 15s for initial upstream connection. Cancelled on first chunk
 	// so streaming body reads are NOT affected.
 	const connectController = new AbortController();
-	const connectTimer = setTimeout(() => connectController.abort(), 30_000);
+	const connectTimer = setTimeout(() => connectController.abort(), 15_000);
 
 	const result = streamText({
 		model,
@@ -931,7 +931,7 @@ async function handleAnthropicNonStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: body.stop_sequences as string[] | undefined,
 		headers: buildExtraBodyHeaders(body),
-		abortSignal: anySignal(AbortSignal.timeout(60_000), clientSignal),
+		abortSignal: anySignal(AbortSignal.timeout(120_000), clientSignal),
 	}).catch((err) => {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (/empty assistant|no content generated/i.test(msg)) {

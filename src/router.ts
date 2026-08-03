@@ -14,6 +14,28 @@ export const PROVIDER_HANDLERS: Record<string, ProviderHandler> = {
 	openai: OpenAIProvider,
 };
 
+/**
+ * Bound a promise with a wall-clock timeout. Used so a slow or unreachable
+ * provider model-list API can't hang /v1/models (or the models cache) for the
+ * full platform timeout. The underlying fetch is left to settle on its own and
+ * its result is discarded — providers already swallow their own errors.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(err) => {
+				clearTimeout(timer);
+				reject(err);
+			},
+		);
+	});
+}
+
 // ---- Cache state ----
 let cachedProviders: Provider[] | null = null;
 let cachedProvidersAt = 0;
@@ -120,12 +142,17 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 					}
 				}
 
-				// Live model list — fire and forget-style with per-provider isolation
+				// Live model list — fire and forget-style with per-provider isolation.
+				// Wrapped in a 10s timeout so one unreachable provider API can't
+				// stall /v1/models for everyone else.
 				const handler = PROVIDER_HANDLERS[p.type];
 				if (handler?.fetchModelList) {
 					livePromises.push(
-						handler
-							.fetchModelList(env, p.config)
+						withTimeout(
+							handler.fetchModelList(env, p.config),
+							10_000,
+							`Model fetch for provider ${p.id} (${p.type})`,
+						)
 							.then((live) => {
 								for (const m of live) {
 									trackProvider(m.id, p.id);

@@ -21,7 +21,7 @@ import {
 	getVertexAccessToken,
 	isVertexApiKeyMode,
 } from '../../ai-providers';
-import { PROVIDER_HANDLERS } from '../../router';
+import { PROVIDER_HANDLERS, withTimeout } from '../../router';
 
 export const adminPlaygroundRoutes = new Hono<{ Bindings: Env }>();
 
@@ -73,7 +73,11 @@ adminPlaygroundRoutes.get('/playground/models/:providerId', async (c: Context<{ 
 	if (!handler?.fetchModelList) return c.json({ models: provider.models || [] });
 
 	try {
-		const live = await handler.fetchModelList(c.env, provider.config);
+		const live = await withTimeout(
+			handler.fetchModelList(c.env, provider.config),
+			10_000,
+			`Live model fetch for provider ${providerId}`,
+		);
 		const merged = new Set(provider.models || []);
 		for (const m of live) merged.add(m.id);
 		return c.json({ models: [...merged] });
