@@ -2,8 +2,9 @@
 // Model routing: cache management, provider lookup, model aggregation
 
 import type { Env, Provider, Model, ProviderHandler } from './types';
-import { listProviders } from './config';
+import { listProviders, getFailoverEnabled } from './config';
 import { getConfigVersion } from './config';
+import { getCircuitState } from './circuit-breaker';
 import * as VertexProvider from './providers/vertex';
 import * as AiStudioProvider from './providers/ai-studio';
 import * as OpenAIProvider from './providers/openai';
@@ -265,4 +266,196 @@ export function invalidateCaches(): void {
 	cachedModelsAt = 0;
 	cachedModelsVersion = -1;
 	modelsPromise = null;
+}
+
+// ---- Route topology (admin visualization DTO) ----
+//
+// Built exclusively from the SAME primitives the real request path uses
+// (loadProviders / getAggregatedModels / getModelProviders), so what the
+// admin panel sees is exactly what /v1/*, /v1beta/* and /anthropic/* requests
+// see. This function NEVER reads the runtime routing algorithm — it replicates
+// findProviderForModel()'s candidate selection (map → exact → prefix → fallback)
+// and tags each provider with the stage that matched it.
+
+export type RouteMatchedBy = 'live' | 'configured' | 'prefix' | 'fallback';
+export type RoutingMode = 'priority' | 'failover' | 'weighted';
+
+export interface RouteTopologyProvider {
+	id: string;
+	name: string;
+	type: string;
+	enabled: boolean;
+	weight: number;
+	/** Which routing stage matched this provider to the model. */
+	matchedBy: RouteMatchedBy;
+	/** The model id that was matched (always the requested/displayed model). */
+	matchedModel: string;
+	/** For prefix matches: the configured prefix pattern that matched. */
+	matchedPattern?: string;
+	/** Whether the model is explicitly listed in the provider's models array. */
+	modelConfigured: boolean;
+	/** Circuit breaker snapshot: closed | open | half-open. */
+	circuitState: 'closed' | 'open' | 'half-open';
+}
+
+export interface RouteTopologyModel {
+	id: string;
+	/**
+	 * Accurate representation of the CURRENT request behaviour:
+	 *  - "priority": only the first (highest-weight) candidate is attempted
+	 *    (failover disabled, or a single candidate).
+	 *  - "failover": candidates are tried in weight order, next on failure.
+	 *  - "weighted": reserved for a future true weighted load balancer — the
+	 *    current backend never emits it. Weights alone do NOT mean weighted LB.
+	 */
+	routingMode: RoutingMode;
+	failoverEnabled: boolean;
+	/** Enabled candidates in request (weight desc) order, then disabled extras. */
+	providers: RouteTopologyProvider[];
+}
+
+export interface RouteTopologyData {
+	models: RouteTopologyModel[];
+	failoverEnabled: boolean;
+}
+
+/**
+ * Build the route-topology row for a single model id.
+ *
+ * Pure function over raw inputs (no D1/cache access) so the exact matching
+ * stages can be unit-tested, including the fallback stage that only fires for
+ * models no provider explicitly lists. `getRouteTopology()` feeds it the real
+ * cached provider/data sources, so the admin view equals the request path.
+ */
+export function buildModelTopology(
+	modelId: string,
+	enabledProviders: Provider[],
+	disabledProviders: Provider[],
+	modelProviderIds: string[],
+	failoverEnabled: boolean,
+): RouteTopologyModel {
+	// Work on weight-desc copies so the function is order-independent.
+	const enabled = [...enabledProviders].sort((a, b) => (b.weight || 1) - (a.weight || 1));
+	const disabled = [...disabledProviders].sort((a, b) => (b.weight || 1) - (a.weight || 1));
+
+	// Stage order mirrors findProviderForModel(): aggregated map → configured
+	// exact → configured prefix → fallback to all enabled providers.
+	const enabledMatches: RouteTopologyProvider[] = [];
+	const seen = new Set<string>();
+	const add = (p: Provider, matchedBy: RouteMatchedBy, matchedPattern?: string) => {
+		if (seen.has(p.id)) return;
+		seen.add(p.id);
+		enabledMatches.push({
+			id: p.id,
+			name: p.name,
+			type: p.type,
+			enabled: true,
+			weight: p.weight || 1,
+			matchedBy,
+			matchedModel: modelId,
+			matchedPattern,
+			modelConfigured: (p.models || []).includes(modelId),
+			circuitState: getCircuitState(p.id),
+		});
+	};
+
+	// A provider is tagged with the FIRST stage that matched it:
+	// configured exact > configured prefix > aggregated (live) map.
+	const hasExplicitMatch = enabled.some(
+		(p) =>
+			(p.models || []).includes(modelId) ||
+			(p.models || []).some((m) => modelId.startsWith(m + '/')) ||
+			modelProviderIds.includes(p.id),
+	);
+
+	if (hasExplicitMatch) {
+		for (const p of enabled) {
+			if ((p.models || []).includes(modelId)) add(p, 'configured');
+		}
+		for (const p of enabled) {
+			const pattern = (p.models || []).find((m) => modelId.startsWith(m + '/'));
+			if (pattern) add(p, 'prefix', pattern);
+		}
+		for (const pid of modelProviderIds) {
+			const p = enabled.find((x) => x.id === pid);
+			if (p) add(p, 'live');
+		}
+	} else {
+		// Fallback: no provider explicitly lists this model — every enabled
+		// provider is a candidate, exactly like findProviderForModel().
+		for (const p of enabled) add(p, 'fallback');
+	}
+
+	// Disabled providers never serve requests, but when they explicitly match
+	// the model (configured/prefix/live) the admin should see them marked as
+	// Disabled instead of them silently vanishing from the tree.
+	const disabledMatches: RouteTopologyProvider[] = [];
+	const seenDisabled = new Set<string>();
+	const addDisabled = (p: Provider, matchedBy: RouteMatchedBy, matchedPattern?: string) => {
+		if (seenDisabled.has(p.id)) return;
+		seenDisabled.add(p.id);
+		disabledMatches.push({
+			id: p.id,
+			name: p.name,
+			type: p.type,
+			enabled: false,
+			weight: p.weight || 1,
+			matchedBy,
+			matchedModel: modelId,
+			matchedPattern,
+			modelConfigured: (p.models || []).includes(modelId),
+			circuitState: 'closed',
+		});
+	};
+	for (const p of disabled) {
+		const pattern = (p.models || []).find((m) => modelId.startsWith(m + '/'));
+		if ((p.models || []).includes(modelId)) addDisabled(p, 'configured');
+		else if (pattern) addDisabled(p, 'prefix', pattern);
+		else if (modelProviderIds.includes(p.id)) addDisabled(p, 'live');
+	}
+
+	let routingMode: RoutingMode = 'priority';
+	if (enabledMatches.length > 1 && failoverEnabled) routingMode = 'failover';
+
+	return {
+		id: modelId,
+		routingMode,
+		failoverEnabled,
+		providers: [...enabledMatches, ...disabledMatches],
+	};
+}
+
+/**
+ * Build the full model → provider routing topology for the admin panel.
+ * Covers EVERY model the platform can currently serve (aggregated model list).
+ */
+export async function getRouteTopology(env: Env): Promise<RouteTopologyData> {
+	const providers = await loadProviders(env);
+	const enabled = providers
+		.filter((p) => p.enabled)
+		.sort((a, b) => (b.weight || 1) - (a.weight || 1));
+	const disabled = providers
+		.filter((p) => !p.enabled)
+		.sort((a, b) => (b.weight || 1) - (a.weight || 1));
+	const aggregated = await getAggregatedModels(env);
+	const modelProviders = await getModelProviders(env);
+	const failoverEnabled = await getFailoverEnabled(env);
+
+	const models: RouteTopologyModel[] = [];
+	for (const model of aggregated) {
+		models.push(
+			buildModelTopology(
+				model.id,
+				enabled,
+				disabled,
+				modelProviders.get(model.id) || [],
+				failoverEnabled,
+			),
+		);
+	}
+
+	// Stable display order — aggregated order follows provider iteration.
+	models.sort((a, b) => a.id.localeCompare(b.id));
+
+	return { models, failoverEnabled };
 }

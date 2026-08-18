@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
-  import { LayoutDashboard, ListTodo, Settings, Wrench, LogOut, Key, ChevronLeft, ChevronRight, Menu, MessageSquare } from "lucide-svelte";
+  import { LayoutDashboard, ListTodo, Settings, Wrench, LogOut, Key, ChevronLeft, ChevronRight, Menu, MessageSquare, Network } from "lucide-svelte";
   import { clearToken, isAuthenticated } from "$lib/api";
   import { sidebarCollapsed } from "$lib/sidebar-state";
 
@@ -14,6 +14,7 @@
   const navItems: NavItem[] = [
     { href: "/dashboard", label: "概览", icon: LayoutDashboard },
     { href: "/dashboard/playground", label: "模型调试", icon: MessageSquare },
+    { href: "/dashboard/routes", label: "路由拓扑", icon: Network },
     { href: "/dashboard/logs", label: "调用记录", icon: ListTodo },
     { href: "/dashboard/api-settings", label: "API 设置", icon: Settings },
 	{ href: "/dashboard/settings", label: "设置", icon: Wrench },

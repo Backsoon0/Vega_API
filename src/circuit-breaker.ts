@@ -111,3 +111,14 @@ export function recordFailure(providerId: string) {
 export function getCircuitStates(): Map<string, CircuitState> {
 	return new Map(circuits);
 }
+
+export type CircuitStateName = 'closed' | 'open' | 'half-open';
+
+/**
+ * Read-only snapshot of a single provider's circuit state (for admin UI).
+ * Absent entry ⇒ closed (no failures recorded / last call succeeded).
+ */
+export function getCircuitState(providerId: string): CircuitStateName {
+	const circuit = circuits.get(providerId);
+	return circuit?.state ?? 'closed';
+}

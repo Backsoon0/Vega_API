@@ -324,6 +324,14 @@ export async function updateSettings(settings: { failoverEnabled?: boolean; circ
 	return data;
 }
 
+// Route topology — read-only model → provider routing visualization.
+// The tree data is computed server-side (router.getRouteTopology), never derived here.
+export async function getRoutes() {
+	const { ok, data } = await request('GET', '/routes');
+	if (!ok) throw new Error(data.error || '获取路由拓扑失败');
+	return data as RouteTopologyResponse;
+}
+
 // Types
 export interface ApiKeyInfo {
 	id: number;
@@ -380,3 +388,34 @@ export interface LogEntry {
 
 // Export state getters
 export { isAuthenticated, clearToken };
+
+// Route topology types (mirror of src/router.ts DTO)
+export type RoutingMode = 'priority' | 'failover' | 'weighted';
+export type MatchedBy = 'live' | 'configured' | 'prefix' | 'fallback';
+export type CircuitState = 'closed' | 'open' | 'half-open';
+
+export interface RouteTopologyProvider {
+	id: string;
+	name: string;
+	type: string;
+	enabled: boolean;
+	weight: number;
+	matchedBy: MatchedBy;
+	matchedModel: string;
+	matchedPattern?: string;
+	modelConfigured: boolean;
+	circuitState: CircuitState;
+}
+
+export interface RouteTopologyModel {
+	id: string;
+	routingMode: RoutingMode;
+	failoverEnabled: boolean;
+	providers: RouteTopologyProvider[];
+}
+
+export interface RouteTopologyResponse {
+	models: RouteTopologyModel[];
+	failoverEnabled: boolean;
+	generatedAt?: string;
+}
