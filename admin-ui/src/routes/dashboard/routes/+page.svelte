@@ -198,15 +198,15 @@
 			</h1>
 			<p class="text-xs text-muted mt-1">模型路由关系与实时 Provider 统计概览</p>
 		</div>
-		<div class="flex items-center gap-2">
-			<button class="px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]" onclick={handleExpandAll} disabled={loading}>
-				<Maximize2 class="w-4 h-4" />展开全部
+		<div class="flex flex-wrap items-center gap-2">
+			<button class="px-2.5 sm:px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]" onclick={handleExpandAll} disabled={loading} title="展开全部" aria-label="展开全部">
+				<Maximize2 class="w-4 h-4 shrink-0" /><span class="hidden sm:inline">展开全部</span>
 			</button>
-			<button class="px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]" onclick={handleCollapseAll} disabled={loading}>
-				<Minimize2 class="w-4 h-4" />收起全部
+			<button class="px-2.5 sm:px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]" onclick={handleCollapseAll} disabled={loading} title="收起全部" aria-label="收起全部">
+				<Minimize2 class="w-4 h-4 shrink-0" /><span class="hidden sm:inline">收起全部</span>
 			</button>
-			<button class="px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]" onclick={loadAll} disabled={loading || statsLoading}>
-				<RefreshCw class={`w-4 h-4 ${loading || statsLoading ? "animate-spin" : ""}`} />刷新
+			<button class="px-2.5 sm:px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]" onclick={loadAll} disabled={loading || statsLoading} title="刷新" aria-label="刷新">
+				<RefreshCw class={`w-4 h-4 shrink-0 ${loading || statsLoading ? "animate-spin" : ""}`} /><span class="hidden sm:inline">刷新</span>
 			</button>
 		</div>
 	</div>
@@ -218,7 +218,7 @@
 				<div class="text-sm font-semibold text-primary">Overview</div>
 				<div class="text-[11px] text-muted mt-1">当前路由状态 + 所选时间窗口的真实请求统计</div>
 			</div>
-			<div class="flex items-center gap-2">
+			<div class="flex flex-wrap items-center gap-2">
 				<span class={`px-2 py-1 rounded-md text-[11px] font-mono ${failoverEnabledGlobal ? "bg-accent-subtle text-accent" : "bg-white/[0.04] text-muted"}`}>
 					Failover {failoverEnabledGlobal ? "Enabled" : "Disabled"}
 				</span>
@@ -277,7 +277,7 @@
 					{:else}
 						<div class="space-y-3">
 							{#each barProviders as provider}
-								<div class="grid grid-cols-[minmax(90px,160px)_1fr_auto] items-center gap-3 text-xs">
+								<div class="grid grid-cols-[minmax(72px,160px)_1fr_auto] items-center gap-2 sm:gap-3 text-xs">
 									<div class="truncate text-secondary" title={provider.name}>{provider.name}</div>
 									<div class="h-7 bg-surface rounded-md overflow-hidden">
 										<div class="h-full rounded-md bg-cta/80 transition-all duration-500" style={`width:${(provider.requestCount / maxRequests) * 100}%`}></div>
@@ -291,7 +291,7 @@
 
 				<!-- Provider latency trend -->
 				<div class="rounded-xl bg-background/40 border border-white/[0.05] p-4 min-h-[300px]">
-					<div class="flex items-center justify-between gap-3 mb-4">
+					<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
 						<div>
 							<h2 class="text-sm font-semibold text-primary flex items-center gap-2"><Activity class="w-4 h-4" />延迟趋势</h2>
 							<p class="text-[11px] text-muted mt-1">仅显示能直接关联 Provider 且 <span class="font-mono">duration_ms &gt; 0</span> 的样本</p>
@@ -338,21 +338,21 @@
 			<Search class="w-4 h-4 shrink-0 text-muted" stroke-width={1.5} />
 			<input type="text" placeholder="搜索模型 ID / Provider 名称..." class="flex-1 py-2.5 bg-transparent text-sm text-primary placeholder:text-placeholder focus:outline-none" bind:value={query} />
 		</div>
-		<div class="flex gap-2">
-			<select class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary" value={statusFilter} onchange={(event) => (statusFilter = (event.target as HTMLSelectElement).value as StatusFilter)}>
+		<div class="flex flex-wrap gap-2">
+			<select class="flex-1 min-w-28 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary" value={statusFilter} onchange={(event) => (statusFilter = (event.target as HTMLSelectElement).value as StatusFilter)}>
 				<option value="all">全部状态</option>
 				<option value="healthy">Healthy</option>
 				<option value="half-open">Half Open</option>
 				<option value="open">Circuit Open</option>
 				<option value="disabled">Disabled</option>
 			</select>
-			<select class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary" value={modeFilter} onchange={(event) => (modeFilter = (event.target as HTMLSelectElement).value as ModeFilter)}>
+			<select class="flex-1 min-w-28 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary" value={modeFilter} onchange={(event) => (modeFilter = (event.target as HTMLSelectElement).value as ModeFilter)}>
 				<option value="all">全部路由模式</option>
 				<option value="priority">Priority</option>
 				<option value="failover">Failover</option>
 				<option value="weighted">Weighted</option>
 			</select>
-			<button class="px-3 py-2.5 rounded-xl text-sm text-muted hover:text-secondary transition-all border border-white/[0.06]" onclick={() => { query = ""; statusFilter = "all"; modeFilter = "all"; }} title="清除筛选">清除</button>
+			<button class="w-full sm:w-auto px-3 py-2.5 rounded-xl text-sm text-muted hover:text-secondary transition-all border border-white/[0.06]" onclick={() => { query = ""; statusFilter = "all"; modeFilter = "all"; }} title="清除筛选">清除</button>
 		</div>
 	</div>
 
@@ -375,15 +375,15 @@
 				{@const groupExpanded = expanded.groups.has(groupKey(model.id))}
 				{@const isFailoverChain = model.routingMode === "failover" && model.failoverEnabled}
 				<div class="bg-surface rounded-xl shadow-card border border-white/[0.05] overflow-hidden">
-					<button class="w-full flex items-center gap-2.5 px-4 py-3 hover:bg-surface-hover transition-colors text-left" onclick={() => toggleModel(model.id)} aria-expanded={modelExpanded}>
+					<button class="w-full flex items-center gap-2 sm:gap-2.5 px-3.5 sm:px-4 py-3 hover:bg-surface-hover transition-colors text-left" onclick={() => toggleModel(model.id)} aria-expanded={modelExpanded}>
 						{#if modelExpanded}<ChevronDown class="w-4 h-4 shrink-0 text-cta" stroke-width={2} />{:else}<ChevronRight class="w-4 h-4 shrink-0 text-muted" stroke-width={2} />{/if}
-						<span class="font-mono text-sm text-primary truncate">{model.id}</span>
+						<span class="flex-1 min-w-0 font-mono text-sm text-primary truncate">{model.id}</span>
 						{#if stats.open > 0}<span class="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-danger-subtle text-danger font-mono">✕ {stats.open} 熔断</span>{:else if stats.halfOpen > 0}<span class="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-warning-subtle text-warning font-mono">⚠ {stats.halfOpen} Half Open</span>{/if}
 						{#if stats.available === 0}<span class="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-danger-subtle text-danger font-mono">无可用 Provider</span>{/if}
 						<span class="ml-auto flex items-center gap-2 shrink-0 text-xs">
-							<span class="px-2 py-0.5 rounded-md bg-white/[0.04] text-muted font-mono">{stats.total} upstream{stats.total === 1 ? "" : "s"}</span>
+							<span class="hidden sm:inline px-2 py-0.5 rounded-md bg-white/[0.04] text-muted font-mono">{stats.total} upstream{stats.total === 1 ? "" : "s"}</span>
 							<span class={`px-2 py-0.5 rounded-md font-mono ${model.routingMode === "failover" ? "bg-cta-subtle text-cta" : "bg-white/[0.04] text-secondary"}`}>
-								{MODE_LABELS[model.routingMode]}{#if model.routingMode === "priority" && !model.failoverEnabled} · Failover Disabled{/if}
+								{MODE_LABELS[model.routingMode]}{#if model.routingMode === "priority" && !model.failoverEnabled}<span class="hidden sm:inline"> · Failover Disabled</span>{/if}
 							</span>
 							<span class="hidden sm:inline text-muted"><span class="text-accent">{stats.available}</span> 可用</span>
 						</span>
@@ -391,13 +391,13 @@
 
 					{#if modelExpanded}
 						<div class="border-t border-white/[0.06]">
-							<div class="flex items-center gap-2 px-4 pt-2">
+							<div class="flex flex-wrap items-center gap-2 px-4 pt-2">
 								<button class="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-semibold text-secondary hover:bg-surface-hover transition-colors" onclick={() => toggleGroup(model.id)} aria-expanded={groupExpanded}>
 									{#if groupExpanded}<ChevronDown class="w-3.5 h-3.5 text-cta" stroke-width={2} />{:else}<ChevronRight class="w-3.5 h-3.5 text-muted" stroke-width={2} />{/if}
 									<ListTree class="w-3.5 h-3.5" stroke-width={1.5} />{MODE_LABELS[model.routingMode]}
 								</button>
 								<span class={`px-2 py-0.5 rounded-md text-[10px] font-mono ${model.failoverEnabled ? "bg-accent-subtle text-accent" : "bg-white/[0.04] text-muted"}`}>Failover {model.failoverEnabled ? "Enabled" : "Disabled"}</span>
-								{#if model.routingMode === "weighted"}<span class="text-[10px] text-muted font-mono">（真实加权负载均衡尚未启用 — 当前权重仅决定候选顺序）</span>{/if}
+								{#if model.routingMode === "weighted"}<span class="hidden sm:inline text-[10px] text-muted font-mono">（真实加权负载均衡尚未启用 — 当前权重仅决定候选顺序）</span>{/if}
 							</div>
 
 							{#if groupExpanded}
@@ -411,16 +411,16 @@
 											{#if isFailoverChain && index > 0}
 												<div class="flex items-center gap-2 py-1 pl-3 text-[10px] text-muted font-mono"><span class="w-px h-3 bg-white/[0.12]"></span>↓ Failover {index}</div>
 											{/if}
-											<button class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-surface-hover transition-colors text-left" onclick={() => toggleProvider(model.id, provider.id)} aria-expanded={providerExpanded}>
+											<button class="w-full flex items-center gap-2 sm:gap-2.5 px-3 py-2 rounded-lg hover:bg-surface-hover transition-colors text-left" onclick={() => toggleProvider(model.id, provider.id)} aria-expanded={providerExpanded}>
 												<span class={`shrink-0 flex items-center justify-center w-5 h-5 rounded-md text-[9px] font-bold font-mono ${index === 0 ? "bg-cta-subtle text-cta" : isFailoverChain ? "bg-white/[0.05] text-muted" : "bg-white/[0.05] text-placeholder"}`}>
 													{index === 0 ? "P" : isFailoverChain ? index : "–"}
 												</span>
 												<span class={`w-2 h-2 rounded-full shrink-0 ${HEALTH_DOTS[health]}`}></span>
-												<span class="text-sm text-primary truncate">{provider.name}</span>
+												<span class="min-w-0 flex-1 text-sm text-primary truncate">{provider.name}</span>
 												<span class="font-mono text-[10px] text-muted truncate hidden md:inline">{provider.id}</span>
 												<span class={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase ${TYPE_BADGES[provider.type] || "bg-white/[0.05] text-muted"}`}>{typeLabel(provider.type)}</span>
-												<span class="shrink-0 text-[10px] text-muted font-mono">w{provider.weight}</span>
-												<span class="shrink-0 px-1.5 py-0.5 rounded text-[10px] bg-white/[0.04] text-secondary">{MATCHED_BY_LABELS[provider.matchedBy]}</span>
+												<span class="hidden sm:inline shrink-0 text-[10px] text-muted font-mono">w{provider.weight}</span>
+												<span class="hidden sm:inline shrink-0 px-1.5 py-0.5 rounded text-[10px] bg-white/[0.04] text-secondary">{MATCHED_BY_LABELS[provider.matchedBy]}</span>
 												<span class={`ml-auto shrink-0 flex items-center gap-1 text-[11px] font-medium ${HEALTH_TEXT[health]}`}>{HEALTH_LABELS[health]}{#if providerExpanded}<ChevronDown class="w-3.5 h-3.5" stroke-width={2} />{:else}<ChevronRight class="w-3.5 h-3.5" stroke-width={2} />{/if}</span>
 											</button>
 
