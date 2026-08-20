@@ -277,12 +277,15 @@
 					{:else}
 						<div class="space-y-3">
 							{#each barProviders as provider}
-								<div class="grid grid-cols-[minmax(72px,160px)_1fr_auto] items-center gap-2 sm:gap-3 text-xs">
-									<div class="truncate text-secondary" title={provider.name}>{provider.name}</div>
+								<div class="flex flex-col gap-1.5 sm:grid sm:grid-cols-[minmax(96px,160px)_1fr_auto] sm:items-center sm:gap-3 text-xs">
+									<div class="flex items-center justify-between gap-2 sm:contents">
+										<div class="truncate text-secondary" title={provider.name}>{provider.name}</div>
+										<span class="sm:hidden font-mono text-primary shrink-0">{provider.requestCount}</span>
+									</div>
 									<div class="h-7 bg-surface rounded-md overflow-hidden">
 										<div class="h-full rounded-md bg-cta/80 transition-all duration-500" style={`width:${(provider.requestCount / maxRequests) * 100}%`}></div>
 									</div>
-									<div class="font-mono text-primary min-w-12 text-right">{provider.requestCount}</div>
+									<span class="hidden sm:inline font-mono text-primary min-w-12 text-right">{provider.requestCount}</span>
 								</div>
 							{/each}
 						</div>
@@ -304,7 +307,7 @@
 						<div class="h-52 flex items-center justify-center text-sm text-muted">暂无数据</div>
 					{:else}
 						<div class="overflow-x-auto">
-							<svg viewBox="0 0 100 100" preserveAspectRatio="none" class="w-full h-52 min-w-[520px] rounded-lg bg-surface/70">
+							<svg viewBox="0 0 100 100" preserveAspectRatio="none" class="w-full h-64 sm:h-56 lg:h-52 min-w-0 sm:min-w-[520px] rounded-lg bg-surface/70">
 								<line x1="0" y1="25" x2="100" y2="25" stroke="currentColor" class="text-white/[0.06]" vector-effect="non-scaling-stroke" />
 								<line x1="0" y1="50" x2="100" y2="50" stroke="currentColor" class="text-white/[0.06]" vector-effect="non-scaling-stroke" />
 								<line x1="0" y1="75" x2="100" y2="75" stroke="currentColor" class="text-white/[0.06]" vector-effect="non-scaling-stroke" />
