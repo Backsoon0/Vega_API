@@ -1,0 +1,1472 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><script type="application/json" data-od-external-dependencies>["https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"]</script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#090B10" />
+<meta name="color-scheme" content="dark" />
+<title>Vega API — 管理控制台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'" />
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" /></noscript>
+<style>
+/* =====================================================================
+   Code Dark Pro — Vega API control console
+   Tokens are reused verbatim from admin-ui/src/app.css (@theme) and are
+   the ONLY place raw hex appears.
+   ===================================================================== */
+:root{
+  color-scheme:dark;
+  --bg:#090B10;
+  --surface:#11141D;
+  --surface-2:#161923;
+  --surface-3:#1C1F2B;
+  --input:rgba(9,11,16,.70);
+  --fg:#F1F5F9;
+  --fg-2:#CBD5E1;
+  --muted:#64748B;
+  --placeholder:#475569;
+
+  --accent:#22C55E;
+  --accent-2:#16A34A;
+  --accent-soft:rgba(34,197,94,.10);
+  --accent-glow:rgba(34,197,94,.35);
+
+  --cta:#3B82F6;
+  --cta-2:#2563EB;
+  --cta-soft:rgba(59,130,246,.10);
+  --cta-glow:rgba(59,130,246,.35);
+
+  --danger:#EF4444;
+  --danger-2:#DC2626;
+  --danger-soft:rgba(239,68,68,.10);
+  --warning:#F59E0B;
+  --warning-soft:rgba(245,158,11,.10);
+  --success:#22C55E;
+  --success-soft:rgba(34,197,94,.10);
+
+  --vertex:#818CF8;  --vertex-soft:rgba(129,140,248,.12);
+  --studio:#34D399;  --studio-soft:rgba(52,211,153,.12);
+  --openai:#FBBF24;  --openai-soft:rgba(251,191,36,.12);
+  --anthropic:#D9776F; --anthropic-soft:rgba(217,119,111,.12);
+
+  --b-sub:rgba(255,255,255,.04);
+  --b-def:rgba(255,255,255,.06);
+  --b-str:rgba(255,255,255,.10);
+
+  --font-sans:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'Cascadia Code','Fira Code',monospace;
+
+  --r-sm:10px; --r-md:14px; --r-lg:18px; --r-xl:22px;
+  --sh-card:0 1px 3px rgba(0,0,0,.40),0 1px 2px rgba(0,0,0,.30);
+  --sh-hover:0 12px 32px rgba(0,0,0,.45),0 2px 8px rgba(0,0,0,.35);
+  --sh-pop:0 25px 55px -12px rgba(0,0,0,.60);
+  --sh-glow-cta:0 0 24px rgba(59,130,246,.22),0 0 48px rgba(59,130,246,.06);
+  --sh-glow-accent:0 0 24px rgba(34,197,94,.22),0 0 48px rgba(34,197,94,.06);
+
+  --ease:cubic-bezier(.16,1,.3,1);
+  --ease-io:cubic-bezier(.4,0,.2,1);
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  --dur:180ms; --dur-2:280ms; --dur-3:400ms;
+
+  --sb-w:258px;
+  --sb-w-c:74px;
+  --tabbar-h:64px;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--font-sans);font-size:14.5px;line-height:1.5;
+  text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;
+  min-height:100dvh;
+}
+img,svg{display:block;max-width:100%}
+a{color:inherit;text-decoration:none}
+button{font:inherit;cursor:pointer;color:inherit;background:none;border:none}
+input,select,textarea{font:inherit;color:inherit}
+p{text-wrap:pretty}
+h1,h2,h3,h4{text-wrap:balance;margin:0}
+
+*:focus-visible{outline:2px solid var(--cta);outline-offset:2px;border-radius:6px}
+::selection{background:rgba(59,130,246,.30);color:#F8FAFC}
+
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.18)}
+
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* ── Login ──────────────────────────────────────────────────────────── */
+.login{
+  display:none;min-height:100dvh;place-items:center;padding:24px;position:relative;overflow:hidden;
+}
+.login::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    radial-gradient(60% 45% at 50% 20%,rgba(59,130,246,.12) 0%,transparent 60%),
+    radial-gradient(50% 40% at 80% 90%,rgba(34,197,94,.06) 0%,transparent 60%);
+}
+.login::after{
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:.02;
+  background-image:radial-gradient(circle,#fff 1px,transparent 1px);background-size:22px 22px;
+}
+.login-card{width:100%;max-width:400px;position:relative;z-index:1}
+.login-logo{display:grid;place-items:center;width:62px;height:62px;border-radius:18px;margin:0 auto 18px;
+  background:linear-gradient(135deg,rgba(59,130,246,.16),rgba(59,130,246,.05));
+  box-shadow:0 0 22px rgba(59,130,246,.18),inset 0 0 0 1px rgba(255,255,255,.06)}
+.login-card h1{font-size:24px;font-weight:700;text-align:center;letter-spacing:-.01em}
+.login-card .sub{text-align:center;color:var(--muted);font-size:13px;margin:6px 0 22px}
+.login-box{background:var(--surface);border:1px solid var(--b-def);border-radius:var(--r-lg);
+  padding:26px;box-shadow:var(--sh-pop);animation:rise .5s var(--ease) both}
+.login-box label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+
+/* ── App shell ──────────────────────────────────────────────────────── */
+.app{display:flex;min-height:100dvh}
+.sidebar{
+  z-index:50;width:var(--sb-w);flex-shrink:0;
+  background:var(--surface);border-right:1px solid var(--b-sub);
+  display:flex;flex-direction:column;
+  transition:width var(--dur-2) var(--ease),transform var(--dur-2) var(--ease);
+}
+/* mobile: overlay drawer */
+@media(max-width:1023px){
+  .sidebar{position:fixed;left:0;top:0;bottom:0;height:auto;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+}
+.app.collapsed .sidebar{width:var(--sb-w-c)}
+
+.brand{display:flex;align-items:center;gap:12px;padding:18px 18px 16px;overflow:hidden}
+.brand-mark{width:38px;height:38px;border-radius:12px;flex-shrink:0;display:grid;place-items:center;
+  background:linear-gradient(135deg,rgba(59,130,246,.16),rgba(59,130,246,.04));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);color:var(--cta)}
+.brand-name{font-family:var(--font-mono);font-weight:700;font-size:15px;letter-spacing:-.01em;white-space:nowrap}
+.brand-name em{font-style:normal;font-family:var(--font-sans);font-weight:600;color:var(--cta)}
+.brand-cap{font-size:10.5px;color:var(--muted);white-space:nowrap}
+.app.collapsed .brand{padding-inline:16px}
+.app.collapsed .brand-txt{opacity:0;width:0}
+
+.nav{flex:1;padding:10px;display:flex;flex-direction:column;gap:4px;overflow-y:auto}
+.nav-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--placeholder);padding:8px 12px 6px}
+.app.collapsed .nav-label{opacity:0;height:0;padding:0;overflow:hidden}
+.nav-item{
+  display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:var(--r-sm);
+  color:var(--fg-2);font-size:13.5px;font-weight:500;position:relative;transition:background var(--dur),color var(--dur);
+}
+.nav-item svg{width:18px;height:18px;flex-shrink:0;stroke-width:1.6}
+.nav-item:hover{background:var(--surface-3);color:var(--fg)}
+.nav-item.active{background:var(--cta-soft);color:var(--cta);font-weight:600}
+.nav-item.active::before{
+  content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:3px;height:18px;border-radius:0 3px 3px 0;background:var(--cta);box-shadow:0 0 12px var(--cta-glow);
+}
+.app.collapsed .nav-item{justify-content:center;padding:11px 0}
+.app.collapsed .nav-item span.nav-txt,.app.collapsed .nav-item span.nav-badge{opacity:0;width:0;overflow:hidden}
+.nav-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav-badge{margin-left:auto;font-family:var(--font-mono);font-size:10px;padding:1px 7px;border-radius:999px;
+  background:var(--surface-3);color:var(--muted)}
+.nav-item.active .nav-badge{background:rgba(59,130,246,.18);color:var(--cta)}
+.app.collapsed .nav-badge{display:none}
+
+.side-foot{padding:10px;display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--b-sub)}
+.side-foot .nav-item{color:var(--muted)}
+.side-foot .nav-item:hover{color:var(--fg)}
+.side-foot .logout:hover{color:var(--danger);background:var(--danger-soft)}
+.collapse-chev{transition:transform var(--dur-2) var(--ease)}
+.app.collapsed .collapse-chev{transform:rotate(180deg)}
+@media(max-width:1023px){#collapseBtn{display:none}}
+.ver{font-family:var(--font-mono);font-size:10px;color:var(--placeholder);text-align:center;padding:8px 0 2px}
+
+/* ── Main + topbar ──────────────────────────────────────────────────── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:100dvh}
+
+.topbar{
+  position:relative;top:0;z-index:30;display:flex;align-items:center;gap:14px;
+  padding:12px 20px;background:rgba(9,11,16,.90);
+  border-bottom:1px solid var(--b-sub);
+}
+@media(min-width:1024px){.topbar{padding:12px 28px}}
+.hamburger{display:grid;place-items:center;width:40px;height:40px;border-radius:var(--r-sm);
+  color:var(--fg-2);transition:background var(--dur),color var(--dur)}
+.hamburger:hover{background:var(--surface-3);color:var(--fg)}
+@media(min-width:1024px){.hamburger{display:none}}
+.crumb{display:flex;flex-direction:column;min-width:0}
+.crumb .t{font-size:15px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crumb .s{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.status-pill{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;
+  color:var(--accent);background:var(--accent-soft);border:1px solid rgba(34,197,94,.18);
+  padding:6px 11px;border-radius:999px;white-space:nowrap}
+.status-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 8px var(--accent-glow);animation:pulse 2.4s var(--ease) infinite}
+.demo-pill{display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;
+  color:var(--warning);background:var(--warning-soft);border:1px solid rgba(245,158,11,.18);
+  padding:6px 11px;border-radius:999px;white-space:nowrap}
+@media(max-width:620px){.demo-pill span{display:none}}
+.icon-btn{display:grid;place-items:center;width:40px;height:40px;border-radius:var(--r-sm);
+  color:var(--fg-2);transition:background var(--dur),color var(--dur),transform var(--dur)}
+.icon-btn:hover{background:var(--surface-3);color:var(--fg)}
+.icon-btn:active{transform:scale(.94)}
+
+.content{flex:1;padding:22px 20px 96px;width:100%}
+@media(min-width:1024px){.content{padding:28px 32px 72px}}
+.content-inner{max-width:1180px;margin:0 auto}
+@media(min-width:1280px){.content-inner{max-width:1280px}}
+
+/* ── Page header ────────────────────────────────────────────────────── */
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;
+  flex-wrap:wrap;margin-bottom:20px}
+.page-head h1{font-family:var(--font-mono);font-size:20px;font-weight:700;letter-spacing:-.01em}
+.page-head .lead{color:var(--muted);font-size:13px;margin-top:4px}
+.page-head .actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* ── Buttons ────────────────────────────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  padding:9px 15px;border-radius:var(--r-sm);font-size:13.5px;font-weight:600;
+  border:1px solid transparent;transition:background var(--dur),color var(--dur),
+  border-color var(--dur),transform var(--dur),box-shadow var(--dur);white-space:nowrap}
+.btn:active{transform:scale(.97)}
+.btn svg{width:16px;height:16px;stroke-width:1.9}
+.btn-primary{background:var(--cta);color:#fff;box-shadow:var(--sh-glow-cta)}
+.btn-primary:hover{background:var(--cta-2)}
+.btn-accent{background:var(--accent);color:#03140a;box-shadow:var(--sh-glow-accent)}
+.btn-accent:hover{background:var(--accent-2)}
+.btn-ghost{background:transparent;color:var(--fg-2);border-color:var(--b-def)}
+.btn-ghost:hover{background:var(--surface-3);color:var(--fg);border-color:var(--b-str)}
+.btn-danger{background:transparent;color:var(--danger);border-color:var(--b-def)}
+.btn-danger:hover{background:var(--danger-soft);border-color:rgba(239,68,68,.30)}
+.btn-soft{background:var(--surface-3);color:var(--fg-2)}
+.btn-soft:hover{background:var(--surface-2);color:var(--fg)}
+.btn-sm{padding:6px 11px;font-size:12.5px;border-radius:9px}
+.btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed;pointer-events:none}
+.btn .spark{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.35);
+  border-top-color:#fff;animation:spin .7s linear infinite}
+
+/* ── Cards ──────────────────────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--b-def);border-radius:var(--r-lg);
+  box-shadow:var(--sh-card);overflow:hidden}
+.card-pad{padding:20px}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:16px 20px;border-bottom:1px solid var(--b-sub)}
+.card-head h2{font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.card-head h2 svg{width:16px;height:16px;color:var(--cta);stroke-width:1.7}
+.card-head .sub{font-size:11px;color:var(--muted);margin-top:2px;font-weight:400}
+
+/* KPI */
+.kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(min-width:900px){.kpis{grid-template-columns:repeat(4,1fr)}}
+.kpi{padding:16px;border-radius:var(--r-md);background:var(--surface);
+  border:1px solid var(--b-def);box-shadow:var(--sh-card);
+  transition:transform var(--dur) var(--ease),box-shadow var(--dur),border-color var(--dur)}
+.kpi:hover{transform:translateY(-2px);box-shadow:var(--sh-hover);border-color:var(--b-str)}
+.kpi-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.kpi-label{font-size:12px;color:var(--muted)}
+.kpi-ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex-shrink:0}
+.kpi-ico svg{width:17px;height:17px;stroke-width:1.7}
+.kpi-val{font-family:var(--font-mono);font-size:23px;font-weight:700;letter-spacing:-.02em}
+.kpi-sub{font-size:11px;color:var(--muted);margin-top:6px;display:flex;align-items:center;gap:5px}
+.kpi-sub .up{color:var(--accent)}.kpi-sub .down{color:var(--danger)}.kpi-sub .flat{color:var(--muted)}
+
+.ico-cta{background:linear-gradient(135deg,rgba(59,130,246,.16),rgba(59,130,246,.04));color:var(--cta)}
+.ico-accent{background:linear-gradient(135deg,rgba(34,197,94,.16),rgba(34,197,94,.04));color:var(--accent)}
+.ico-warn{background:linear-gradient(135deg,rgba(245,158,11,.16),rgba(245,158,11,.04));color:var(--warning)}
+.ico-danger{background:linear-gradient(135deg,rgba(239,68,68,.16),rgba(239,68,68,.04));color:var(--danger)}
+
+/* ── Chips / badges ─────────────────────────────────────────────────── */
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;
+  padding:3px 9px;border-radius:999px;white-space:nowrap}
+.chip .c-dot{width:6px;height:6px;border-radius:50%}
+.chip-accent{color:var(--accent);background:var(--accent-soft)}
+.chip-cta{color:var(--cta);background:var(--cta-soft)}
+.chip-warn{color:var(--warning);background:var(--warning-soft)}
+.chip-danger{color:var(--danger);background:var(--danger-soft)}
+.chip-muted{color:var(--muted);background:var(--surface-3)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:11px;
+  font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:4px 9px;border-radius:8px;white-space:nowrap}
+.tag .t-dot{width:6px;height:6px;border-radius:50%}
+.tag-vertex{color:var(--vertex);background:var(--vertex-soft)}
+.tag-studio{color:var(--studio);background:var(--studio-soft)}
+.tag-openai{color:var(--openai);background:var(--openai-soft)}
+.tag-anthropic{color:var(--anthropic);background:var(--anthropic-soft)}
+.tag-muted{color:var(--muted);background:var(--surface-3)}
+
+/* ── Inputs ─────────────────────────────────────────────────────────── */
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.field label{font-size:12.5px;color:var(--fg-2);font-weight:500}
+.input,.select,.textarea{
+  width:100%;padding:10px 13px;border-radius:var(--r-sm);background:var(--input);
+  border:1px solid var(--b-def);color:var(--fg);font-size:14px;
+  transition:border-color var(--dur),box-shadow var(--dur),background var(--dur)}
+.input::placeholder,.textarea::placeholder{color:var(--placeholder)}
+.input:focus,.select:focus,.textarea:focus{outline:none;border-color:var(--cta);box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;padding-right:36px;cursor:pointer}
+.input-search,.select-wrap{display:flex;align-items:center;gap:8px;background:var(--input);
+  border:1px solid var(--b-def);border-radius:var(--r-sm);padding:0 12px}
+.input-search:focus-within,.select-wrap:focus-within{border-color:var(--cta);box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.input-search svg,.select-wrap>svg{color:var(--muted)}
+.input-search input{flex:1;background:none;border:none;outline:none;padding:10px 0;font-size:14px;color:var(--fg)}
+.input-search input::placeholder{color:var(--placeholder)}
+
+/* ── Custom animated dropdown (replaces native <select>) ────────────── */
+.dd{position:relative;display:inline-block;min-width:132px}
+.dd-btn{display:flex;align-items:center;gap:8px;width:100%;padding:10px 13px;border-radius:var(--r-sm);
+  background:var(--input);border:1px solid var(--b-def);color:var(--fg);font-size:13.5px;text-align:left;
+  transition:border-color var(--dur),box-shadow var(--dur),background var(--dur)}
+.dd-btn:hover{border-color:var(--b-str)}
+.dd-btn:focus-visible{outline:none;border-color:var(--cta);box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.dd-val{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dd-chev{color:var(--muted);transition:transform var(--dur-2) var(--ease),color var(--dur)}
+.dd.open .dd-chev{transform:rotate(180deg);color:var(--cta)}
+.dd-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:max(100%,176px);z-index:120;max-height:260px;overflow-y:auto;
+  background:var(--surface-2);border:1px solid var(--b-str);border-radius:var(--r-sm);box-shadow:var(--sh-pop);
+  padding:5px;opacity:0;transform:translateY(-6px) scale(.98);visibility:hidden;pointer-events:none;
+  transition:opacity var(--dur-2) var(--ease),transform var(--dur-2) var(--ease),visibility var(--dur-2)}
+.dd.open .dd-menu{opacity:1;transform:none;visibility:visible;pointer-events:auto}
+.dd-opt{display:block;width:100%;text-align:left;padding:8px 10px;border-radius:8px;font-size:13px;color:var(--fg-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  transition:background var(--dur),color var(--dur)}
+.dd-opt:hover{background:var(--surface-3);color:var(--fg)}
+.dd-opt.sel{background:var(--cta-soft);color:var(--cta);font-weight:600}
+.dd-sm{min-width:auto}
+.dd-sm .dd-btn{padding:6px 11px;font-size:12.5px;border-radius:9px}
+.select-wrap .dd{flex:1;min-width:0}
+.select-wrap .dd-btn{border:none;background:none;padding:10px 0;color:var(--fg-2);font-size:12.5px}
+.select-wrap .dd:hover .dd-btn{color:var(--fg)}
+
+/* Switch */
+.switch{position:relative;width:44px;height:24px;border-radius:999px;background:var(--surface-3);
+  border:1px solid var(--b-sub);transition:background var(--dur),border-color var(--dur);flex-shrink:0}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+  background:#fff;transition:transform var(--dur) var(--ease-spring)}
+.switch.on{background:var(--accent);border-color:var(--accent)}
+.switch.on::after{transform:translateX(20px)}
+
+/* ── Table ──────────────────────────────────────────────────────────── */
+.table-wrap{overflow-x:auto}
+table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl thead th{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--muted);font-weight:600;text-align:left;padding:11px 14px;border-bottom:1px solid var(--b-def);white-space:nowrap}
+.tbl thead th.right,.tbl td.right{text-align:right}
+.tbl tbody td{padding:12px 14px;border-bottom:1px solid var(--b-sub);color:var(--fg-2);white-space:nowrap}
+.tbl tbody tr{cursor:pointer;transition:background var(--dur)}
+.tbl tbody tr:hover{background:var(--surface-3)}
+.tbl tbody tr:hover .row-act{opacity:1}
+.tbl .mono{font-family:var(--font-mono)}
+.tbl .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.row-act{display:flex;align-items:center;gap:6px;opacity:0;transition:opacity var(--dur)}
+
+/* ── Mobile log cards ───────────────────────────────────────────────── */
+.log-cards{display:none}
+.log-pag{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;
+  padding:0 4px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.log-card{position:relative;display:block;background:var(--surface);border:1px solid var(--b-def);
+  border-radius:var(--r-lg);padding:14px 16px 14px 18px;box-shadow:var(--sh-card);overflow:hidden;
+  transition:background var(--dur),border-color var(--dur)}
+.log-card:hover{background:var(--surface-2);border-color:var(--b-str)}
+.log-card::before{content:"";position:absolute;top:14px;bottom:14px;left:0;width:3px;border-radius:0 3px 3px 0;background:var(--success)}
+.log-card.is-err::before{background:var(--danger)}
+.lc-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.lc-top .mono{font-size:12.5px;color:var(--fg-2)}
+.lc-badges{display:flex;align-items:center;gap:6px}
+.lc-line{font-size:13px;color:var(--fg-2);line-height:1.5;margin-bottom:5px;word-break:break-word}
+.lc-line .lb{color:var(--muted)}
+.lc-line .mono{font-family:var(--font-mono);font-size:12.5px;color:var(--fg-2)}
+.lc-stats{display:flex;flex-wrap:wrap;align-items:center;gap:3px 14px;margin-top:11px;padding-top:11px;
+  border-top:1px solid var(--b-sub);font-size:12.5px;color:var(--muted)}
+.lc-stats .lb{color:var(--muted)}
+.lc-err{font-size:11.5px;line-height:1.45;color:var(--danger);margin-top:9px;font-family:var(--font-mono);word-break:break-all}
+@media(max-width:819px){
+  .log-table-card{display:none}
+  .log-cards{display:flex;flex-direction:column;gap:12px}
+}
+
+/* ── Mobile recent-calls (concise list) ─────────────────────────────── */
+.rc-list{display:none}
+@media(max-width:819px){
+  .rc-table-wrap{display:none}
+  .rc-list{display:block}
+}
+.rc{border-bottom:1px solid var(--b-sub);padding:12px 16px;cursor:pointer;transition:background var(--dur)}
+.rc:last-child{border-bottom:none}
+.rc:hover{background:var(--surface-2)}
+.rc-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.rc-top .mono{font-size:12px;color:var(--muted)}
+.rc-main{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:13px;color:var(--fg-2)}
+.rc-main .mono{font-family:var(--font-mono);font-size:12.5px;color:var(--fg)}
+.rc-prov{color:var(--muted);font-size:12px}
+.rc-tok{color:var(--muted);font-size:11.5px;margin-left:auto;font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ── Mobile tab bar ─────────────────────────────────────────────────── */
+.tabbar{position:fixed;left:12px;right:12px;bottom:12px;z-index:45;
+  display:flex;background:color-mix(in srgb,var(--surface-2) 94%,transparent);
+  backdrop-filter:blur(16px) saturate(120%);-webkit-backdrop-filter:blur(16px) saturate(120%);
+  border:1px solid var(--b-str);border-radius:16px;box-shadow:var(--sh-pop);overflow:hidden}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 4px 8px;
+  color:var(--muted);font-size:10px;font-weight:500;transition:color var(--dur),background var(--dur);position:relative}
+.tab svg{width:19px;height:19px;stroke-width:1.7}
+.tab.active{color:var(--cta);background:var(--cta-soft)}
+.tab.active::before{content:"";position:absolute;top:0;left:24%;right:24%;height:2.5px;border-radius:0 0 3px 3px;
+  background:var(--cta);box-shadow:0 0 12px var(--cta-glow)}
+@media(min-width:1024px){.tabbar{display:none}}
+
+/* ── Overlay / drawer scrim ─────────────────────────────────────────── */
+.scrim{position:fixed;inset:0;z-index:44;background:rgba(2,4,8,.62);backdrop-filter:blur(4px);
+  opacity:0;visibility:hidden;transition:opacity var(--dur-2),visibility var(--dur-2)}
+.scrim.on{opacity:1;visibility:visible}
+@media(min-width:1024px){.scrim{display:none}}
+
+/* ── Modal ──────────────────────────────────────────────────────────── */
+.modal-wrap{position:fixed;inset:0;z-index:90;display:none}
+.modal-wrap.on{display:flex}
+.modal-scrim{position:absolute;inset:0;background:rgba(2,4,8,.66);backdrop-filter:blur(6px)}
+.modal-panel{position:relative;margin:auto;width:calc(100% - 24px);max-width:520px;
+  background:var(--surface);border:1px solid var(--b-str);border-radius:var(--r-xl);
+  box-shadow:var(--sh-pop);overflow:hidden;max-height:88dvh;display:flex;flex-direction:column;
+  animation:pop .32s var(--ease) both}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;
+  border-bottom:1px solid var(--b-sub)}
+.modal-head h3{font-size:15px;font-weight:600}
+.modal-body{padding:20px;overflow-y:auto}
+
+/* ── Toast ──────────────────────────────────────────────────────────── */
+.toasts{position:fixed;top:16px;right:16px;z-index:120;display:flex;flex-direction:column;gap:10px}
+.toast{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--b-str);
+  border-radius:var(--r-md);padding:12px 15px;box-shadow:var(--sh-pop);font-size:13px;max-width:340px;
+  animation:toastIn .34s var(--ease) both}
+.toast .ic{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;flex-shrink:0}
+.toast.err .ic{background:var(--danger-soft);color:var(--danger)}
+.toast.ok .ic{background:var(--accent-soft);color:var(--accent)}
+.toast .ic svg{width:13px;height:13px;stroke-width:2.4}
+
+/* ── Views + transitions ────────────────────────────────────────────── */
+.view{display:none}
+.view.on{display:block}
+.rise{animation:rise .5s var(--ease) both;animation-delay:var(--d,0ms)}
+
+/* ── Chart elements ─────────────────────────────────────────────────── */
+.chart-frame{position:relative}
+.grid-line{stroke:var(--b-def)}
+.chart-area{transition:opacity .6s var(--ease)}
+.chart-line{transition:opacity .6s var(--ease)}
+.chart-dot{transition:r .15s var(--ease),fill .15s}
+.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+.legend span{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--fg-2)}
+.legend .sw{width:9px;height:9px;border-radius:3px}
+.chart-tip{position:absolute;transform:translate(-50%,calc(-100% - 10px));z-index:8;min-width:112px;
+  padding:9px 12px;border-radius:11px;background:var(--surface-2);border:1px solid var(--b-str);
+  box-shadow:var(--sh-pop);font-size:11.5px;pointer-events:none;opacity:0;transition:opacity var(--dur);
+  white-space:nowrap}
+.chart-tip.on{opacity:1}
+.chart-tip .t{font-weight:600;color:var(--fg);margin-bottom:5px;font-family:var(--font-mono)}
+.chart-tip .r{display:flex;justify-content:space-between;gap:16px;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.chart-tip .r .lb{color:var(--muted);margin-right:auto}
+.chart-tip .r .v-c{color:var(--cta)}
+.chart-tip .r .v-t{color:var(--success)}
+
+/* ── Route tree ─────────────────────────────────────────────────────── */
+.tree-row{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;
+  transition:background var(--dur)}
+.tree-row:hover{background:var(--surface-3)}
+.tree-row .chev{transition:transform var(--dur-2) var(--ease);color:var(--muted);flex-shrink:0}
+.tree-row.open .chev{transform:rotate(90deg);color:var(--cta)}
+.tree-depth{border-left:1px solid var(--b-sub);margin-left:26px;padding-left:0}
+.tree-model .tree-depth{display:none}
+.tree-model.open .tree-depth{display:block}
+.tree-model>.tree-row .chev{transition:transform var(--dur-2) var(--ease),color var(--dur)}
+.tree-model.open>.tree-row .chev{transform:rotate(90deg);color:var(--cta)}
+
+/* ── Playground chat ────────────────────────────────────────────────── */
+.chat{display:flex;flex-direction:column;height:calc(100dvh - 180px);min-height:460px;
+  border:1px solid var(--b-def);border-radius:var(--r-lg);background:var(--surface);overflow:hidden}
+@media(max-width:819px){.chat{height:calc(100dvh - 296px);min-height:340px}}
+.chat-side{display:flex;flex-direction:column;border-right:1px solid var(--b-sub);
+  background:var(--surface-2);width:272px;flex-shrink:0}
+.chat-hd{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--b-sub);background:var(--surface-2)}
+@media(min-width:820px){.chat-hd{display:none}}
+@media(max-width:819px){
+  .chat-side{position:fixed;left:0;top:0;bottom:0;z-index:60;width:280px;max-width:85vw;
+    transform:translateX(-100%);transition:transform var(--dur-2) var(--ease);box-shadow:var(--sh-pop)}
+  .chat-side.open{transform:translateX(0)}
+}
+.chat-main{flex:1;display:flex;flex-direction:column;min-width:0}
+.chat-scroll{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:14px}
+.msg{display:flex;gap:10px;max-width:86%}
+.msg.user{align-self:flex-end;flex-direction:row-reverse}
+.msg .ava{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;flex-shrink:0}
+.msg.bot .ava{background:var(--cta-soft);color:var(--cta)}
+.msg.user .ava{background:var(--surface-3);color:var(--muted)}
+.msg-bubble{padding:10px 13px;border-radius:14px;font-size:13.5px;line-height:1.55}
+.msg.bot .msg-bubble{background:var(--surface-3);border:1px solid var(--b-sub)}
+.msg.user .msg-bubble{background:var(--cta-soft);border:1px solid rgba(59,130,246,.14)}
+.msg-meta{font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-top:5px}
+.chat-input{border-top:1px solid var(--b-sub);padding:12px 14px;background:var(--surface-2)}
+.chat-field{display:flex;align-items:flex-end;gap:8px}
+.chat-field textarea{flex:1;resize:none;background:var(--input);border:1px solid var(--b-def);
+  border-radius:var(--r-sm);padding:11px 13px;font-size:14px;color:var(--fg);min-height:42px;max-height:150px}
+.chat-field textarea:focus{outline:none;border-color:var(--cta);box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.model-list{padding:6px;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+.model-prov{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;cursor:pointer;
+  color:var(--fg-2);font-size:13px;transition:background var(--dur),color var(--dur)}
+.model-prov:hover{background:var(--surface-3);color:var(--fg)}
+.model-prov.sel{background:var(--cta-soft);color:var(--cta);font-weight:600}
+.model-item{display:block;width:100%;text-align:left;padding:6px 10px 6px 24px;border-radius:7px;
+  font-family:var(--font-mono);font-size:12px;color:var(--muted);transition:background var(--dur),color var(--dur)}
+.model-item:hover{background:var(--surface-3);color:var(--fg-2)}
+.model-item.sel{color:var(--cta)}
+
+/* ── Utility ────────────────────────────────────────────────────────── */
+.grid{display:grid;gap:16px}
+.grid-2{display:grid;grid-template-columns:1fr;gap:16px}
+.grid-3{display:grid;grid-template-columns:1fr;gap:16px}
+.settings-grid{align-items:start}
+@media(min-width:820px){.grid-2{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:repeat(3,1fr)}}
+.span-2{grid-column:span 1}
+@media(min-width:820px){.span-2{grid-column:span 2}}
+.mb{margin-bottom:16px}.mb-lg{margin-bottom:24px}.mt{margin-top:16px}
+.row{display:flex;align-items:center;gap:10px}
+.between{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.muted{color:var(--muted)}.secondary{color:var(--fg-2)}.accent{color:var(--accent)}.cta{color:var(--cta)}
+.empty{text-align:center;color:var(--muted);padding:40px 16px}
+.empty .ic{width:44px;height:44px;border-radius:14px;margin:0 auto 12px;display:grid;place-items:center;
+  background:var(--surface-3);color:var(--muted)}
+.empty .ic svg{width:22px;height:22px;stroke-width:1.5}
+.hide{display:none}
+
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes viewIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes pop{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 8px var(--accent-glow)}50%{opacity:.55;box-shadow:0 0 2px var(--accent-glow)}}
+@keyframes growBar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+
+@media(max-width:819px){
+  .crumb .s{display:none}
+  .demo-pill{display:none}
+  .crumb .t{font-size:14px}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important;scroll-behavior:auto!important}
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<section class="login" id="loginView" data-od-id="login">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    </div>
+    <h1>Vega <em style="font-style:normal;color:var(--cta)">API</em></h1>
+    <p class="sub">AI 网关 · 配置管理控制台</p>
+    <div class="login-box">
+      <label for="adminPass">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        管理密码
+      </label>
+      <div class="field">
+        <div style="position:relative">
+          <input id="adminPass" type="password" class="input" placeholder="请输入管理密码" style="padding-right:42px" />
+          <button type="button" class="icon-btn" id="togglePass" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:32px;height:32px" aria-label="显示密码">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="loginBtn" style="width:100%;font-size:14px;padding:12px">
+        进入控制台 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+      <p class="muted" style="font-size:12px;text-align:center;margin-top:16px">演示模式 · 点击直接进入</p>
+    </div>
+  </div>
+</section>
+
+<!-- APP -->
+<div class="app" id="appShell">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar" data-od-id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg>
+      </div>
+      <div class="brand-txt">
+        <div class="brand-name">Vega<em> API</em></div>
+        <div class="brand-cap">管理控制台</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-label">导航</div>
+      <a class="nav-item" data-view="overview" href="#overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span class="nav-txt">概览</span>
+      </a>
+      <a class="nav-item" data-view="playground" href="#playground">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="nav-txt">模型调试</span>
+      </a>
+      <a class="nav-item" data-view="routes" href="#routes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="6" height="6" rx="1"/><rect x="16" y="15" width="6" height="6" rx="1"/><circle cx="9" cy="18" r="2.5"/><circle cx="15" cy="6" r="2.5"/><path d="M9 18h7M15 6 12 8"/></svg>
+        <span class="nav-txt">路由拓扑</span><span class="nav-badge" data-badge="routes"></span>
+      </a>
+      <a class="nav-item" data-view="logs" href="#logs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        <span class="nav-txt">调用记录</span><span class="nav-badge" data-badge="logs"></span>
+      </a>
+      <a class="nav-item" data-view="api" href="#api">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>
+        <span class="nav-txt">API 设置</span>
+      </a>
+      <a class="nav-item" data-view="settings" href="#settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+        <span class="nav-txt">设置</span>
+      </a>
+    </nav>
+
+    <div class="side-foot">
+      <button class="nav-item" id="collapseBtn" title="收起侧边栏" aria-label="收起侧边栏">
+        <svg class="collapse-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg>
+        <span class="nav-txt">收起</span>
+      </button>
+      <a class="nav-item logout" id="logoutBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
+        <span class="nav-txt">退出登录</span>
+      </a>
+      <div class="ver">v2.1.0</div>
+    </div>
+  </aside>
+
+  <!-- Scrim for mobile nav -->
+  <div class="scrim" id="scrim"></div>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar" data-od-id="topbar">
+      <button class="hamburger" id="hamburger" aria-label="菜单">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <div class="crumb">
+        <div class="t" id="crumbTitle">概览</div>
+        <div class="s" id="crumbSub">Vega API 运行状态一览</div>
+      </div>
+      <div class="topbar-right">
+        <span class="demo-pill" title="本页为演示数据">▾ 演示数据</span>
+        <span class="status-pill"><span class="dot"></span><span id="statusTxt">运行中</span></span>
+        <button class="icon-btn" id="refreshBtn" title="刷新" aria-label="刷新">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        </button>
+        <button class="icon-btn" id="accountBtn" title="账户" aria-label="账户" style="border:1px solid var(--b-def)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="content">
+      <div class="content-inner">
+
+        <!-- ══ OVERVIEW ══ -->
+        <section class="view" id="view-overview" data-od-id="overview">
+          <div class="page-head">
+            <div>
+              <h1>概览</h1>
+              <p class="lead">网关实时运行状态与用量总览</p>
+            </div>
+            <div class="actions">
+              <select class="select" style="width:auto;font-size:12.5px" id="rangeSel">
+                <option>最近 24 小时</option><option>最近 7 天</option><option>最近 30 天</option>
+              </select>
+              <button class="btn btn-ghost" onclick="toast('数据已刷新','ok')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg> 刷新
+              </button>
+            </div>
+          </div>
+
+          <div class="kpis mb-lg">
+            <div class="kpi rise" style="--d:30ms">
+              <div class="kpi-top"><span class="kpi-label">总调用次数</span>
+                <span class="kpi-ico ico-cta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span></div>
+              <div class="kpi-val" id="kpi-calls">—</div>
+              <div class="kpi-sub"><span class="up">▲ 12.4%</span>&nbsp;较上周期</div>
+            </div>
+            <div class="kpi rise" style="--d:80ms">
+              <div class="kpi-top"><span class="kpi-label">活跃提供商</span>
+                <span class="kpi-ico ico-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg></span></div>
+              <div class="kpi-val" id="kpi-providers">—</div>
+              <div class="kpi-sub"><span class="up">4 / 5</span>&nbsp;运行中</div>
+            </div>
+            <div class="kpi rise" style="--d:130ms">
+              <div class="kpi-top"><span class="kpi-label">总 Token 数</span>
+                <span class="kpi-ico ico-warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></svg></span></div>
+              <div class="kpi-val" id="kpi-tokens">—</div>
+              <div class="kpi-sub"><span class="up">▲ 8.2%</span>&nbsp;较上周期</div>
+            </div>
+            <div class="kpi rise" style="--d:180ms">
+              <div class="kpi-top"><span class="kpi-label">平均时延</span>
+                <span class="kpi-ico ico-cta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span></div>
+              <div class="kpi-val" id="kpi-latency">—</div>
+              <div class="kpi-sub"><span style="color:var(--success)">▼ 4.1%</span>&nbsp;较上周期 · 更快</div>
+            </div>
+          </div>
+
+          <div class="grid grid-2 mb-lg">
+            <div class="card rise" style="--d:230ms">
+              <div class="card-head">
+                <div><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-6"/></svg>请求量趋势</h2>
+                  <div class="sub">全部 Provider · 覆盖所选时间窗口</div></div>
+                <span class="chip chip-cta">24h</span>
+              </div>
+              <div style="padding:18px 20px 14px;position:relative">
+                <svg id="overviewChart" viewBox="0 0 600 210" preserveAspectRatio="none" style="width:100%;height:190px;cursor:crosshair"></svg>
+                <div class="legend">
+                  <span><span class="sw" style="background:var(--cta)"></span>调用次数</span>
+                  <span><span class="sw" style="background:var(--success)"></span>Token（×10³）</span>
+                </div>
+                <div class="chart-tip" id="overviewTip"></div>
+              </div>
+            </div>
+
+            <div class="card rise" style="--d:280ms">
+              <div class="card-head"><div><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="6" height="6" rx="1"/><rect x="16" y="15" width="6" height="6" rx="1"/><circle cx="7" cy="18" r="2.5"/><circle cx="17" cy="6" r="2.5"/><path d="M7 18h9M17 6 7 10"/></svg>提供商状态</h2>
+                <div class="sub">当前启用的路由上游</div></div>
+                <button class="btn btn-ghost btn-sm" onclick="nav('api')">管理</button></div>
+              <div id="providerStatus" style="padding:6px"></div>
+            </div>
+          </div>
+
+          <div class="card rise" style="--d:330ms">
+            <div class="card-head"><div><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>最近调用</h2><div class="sub">最新 6 条调用记录</div></div>
+              <button class="btn btn-ghost btn-sm" onclick="nav('logs')">查看全部</button></div>
+            <div class="table-wrap rc-table-wrap"><table class="tbl"><thead><tr><th>时间</th><th>提供商</th><th>模型</th><th class="right">Tokens</th><th class="right">耗时</th><th>状态</th></tr></thead>
+              <tbody id="recentCalls"></tbody></table></div>
+            <div class="rc-list" id="recentCallsMobile"></div>
+          </div>
+        </section>
+
+        <!-- ══ PLAYGROUND ══ -->
+        <section class="view" id="view-playground" data-od-id="playground">
+          <div class="page-head">
+            <div><h1>模型调试</h1><p class="lead">选择 Provider 与模型，流式验证真实对话效果</p></div>
+          </div>
+          <div class="chat" style="display:flex;flex-direction:row">
+            <div class="chat-side" id="chatSide">
+              <div style="padding:15px 16px;border-bottom:1px solid var(--b-sub)">
+                <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;color:var(--fg)"><svg viewBox="0 0 24 24" width="16" height="16" style="color:var(--cta)" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>选择模型</div>
+                <div class="muted" style="font-size:11px;margin-top:3px">选择一个提供商开始对话</div>
+              </div>
+              <div class="model-list" id="modelList"></div>
+            </div>
+            <div class="chat-main">
+              <div class="chat-hd">
+                <button class="btn btn-ghost btn-sm" id="modelToggle"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18"/></svg>选择模型</button>
+                <span class="mono" id="hdTag" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">未选择模型</span>
+              </div>
+              <div class="chat-scroll" id="chatScroll">
+                <div class="empty" id="chatEmpty">
+                  <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                  <div style="font-size:14px;color:var(--fg-2);font-weight:600;margin-bottom:4px">Vega API 模型调试</div>
+                  <div style="font-size:12px">在左侧选择模型开始对话 · 支持流式输出与实时 Token 统计</div>
+                </div>
+              </div>
+              <div class="chat-input">
+                <div class="chat-field">
+                  <textarea id="chatText" rows="1" placeholder="输入消息…" style="max-height:150px"></textarea>
+                  <button class="btn btn-primary" id="sendBtn" style="height:42px;padding:0 15px" disabled>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                  </button>
+                </div>
+                <div class="between" style="margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--muted)">
+                  <span id="chatModelTag">未选择模型</span>
+                  <span id="chatTokens">0 tokens</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ ROUTES ══ -->
+        <section class="view" id="view-routes" data-od-id="routes">
+          <div class="page-head">
+            <div><h1>路由拓扑</h1><p class="lead">模型 → Provider 路由关系与实时统计</p></div>
+            <div class="actions">
+              <select class="select" id="routRange" style="width:auto;font-size:12.5px"><option value="6">最近 6 小时</option><option value="24" selected>最近 24 小时</option><option value="72">最近 3 天</option></select>
+              <button class="btn btn-ghost" onclick="toast('路由拓扑已刷新','ok')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>刷新</button>
+            </div>
+          </div>
+
+          <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:16px">
+            <div class="card card-pad rise" style="--d:40ms"><div class="muted" style="font-size:11px;margin-bottom:8px">模型</div><div class="kpi-val" id="r-models" style="font-size:20px">—</div></div>
+            <div class="card card-pad rise" style="--d:90ms"><div class="muted" style="font-size:11px;margin-bottom:8px">上游 Provider</div><div class="kpi-val" id="r-upstream" style="font-size:20px">—</div></div>
+            <div class="card card-pad rise" style="--d:140ms"><div class="muted" style="font-size:11px;margin-bottom:8px">健康上游</div><div class="kpi-val" id="r-healthy" style="font-size:20px;color:var(--success)">—</div></div>
+            <div class="card card-pad rise" style="--d:190ms"><div class="muted" style="font-size:11px;margin-bottom:8px">跟踪请求</div><div class="kpi-val" id="r-requests" style="font-size:20px">—</div></div>
+            <div class="card card-pad rise" style="--d:240ms"><div class="muted" style="font-size:11px;margin-bottom:8px">平均时延</div><div class="kpi-val" id="r-latency" style="font-size:20px">—</div></div>
+          </div>
+
+          <div class="grid grid-2 mb-lg">
+            <div class="card rise" style="--d:280ms">
+              <div class="card-head"><div><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="15" width="3" height="3"/></svg>Provider 请求量</h2><div class="sub">按调用记录聚合</div></div></div>
+              <div style="padding:18px 20px" id="reqBars"></div>
+            </div>
+            <div class="card rise" style="--d:320ms">
+              <div class="card-head"><div><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><path d="M7 14l4-3 3 2 5-5"/></svg>延迟趋势 (ms)</h2><div class="sub">真实 duration_ms 样本</div></div></div>
+              <div style="padding:18px 20px">
+                <svg id="latencyChart" viewBox="0 0 600 200" preserveAspectRatio="none" style="width:100%;height:180px"></svg>
+                <div class="legend" id="latLegend"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card rise" style="--d:360ms">
+            <div class="card-head"><div><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 3h6v6H2zM16 15h6v6h-6z"/><circle cx="7" cy="18" r="2.5"/><circle cx="17" cy="6" r="2.5"/><path d="M7 18h7M17 6 8 9"/></svg>模型路由关系</h2><div class="sub">点击展开每个模型的 Provider 参与链</div></div>
+              <div class="row"><button class="btn btn-ghost btn-sm" onclick="expandAllRoutes()">展开全部</button><button class="btn btn-ghost btn-sm" onclick="collapseAllRoutes()">收起全部</button></div></div>
+              <div id="routeTree" style="padding:6px 0"></div>
+          </div>
+        </section>
+
+        <!-- ══ LOGS ══ -->
+        <section class="view" id="view-logs" data-od-id="logs">
+          <div class="page-head">
+            <div><h1>调用记录</h1><p class="lead" id="logsLead">共 1,284,930 条 · 最多保留 10,000 条</p></div>
+            <div class="actions">
+              <button class="btn btn-danger" onclick="toast('已清空调用记录（演示）','ok')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18M8 6V4h8v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>清空记录</button>
+              <button class="btn btn-ghost" onclick="toast('记录已刷新','ok')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>刷新</button>
+            </div>
+          </div>
+
+          <div class="row mb" style="flex-wrap:wrap">
+            <div class="input-search" style="flex:1;min-width:200px">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+              <input id="logSearch" placeholder="搜索 IP / 请求 ID / 模型…" />
+            </div>
+            <div class="select-wrap" style="min-width:176px">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              <select class="select" id="logProvider" style="border:none;background:none">
+                <option value="">全部提供商</option>
+              </select>
+            </div>
+            <select class="select" id="logStatus" style="width:auto">
+              <option value="">全部状态</option><option value="1">成功</option><option value="0">失败</option>
+            </select>
+            <select class="select" id="logStream" style="width:auto">
+              <option value="">全部类型</option><option value="1">流式</option><option value="0">非流式</option>
+            </select>
+          </div>
+
+          <div class="card log-table-card">
+            <div class="table-wrap"><table class="tbl">
+              <thead><tr><th>时间</th><th>IP</th><th>提供商</th><th>模型</th><th>密钥</th><th class="right">Tokens</th><th class="right">耗时</th><th>状态</th></tr></thead>
+              <tbody id="logBody"></tbody>
+            </table></div>
+          </div>
+
+          <!-- Mobile: card list -->
+          <div class="log-cards" id="logCards"></div>
+
+          <div class="between log-pag">
+            <span id="logCount">共 0 条</span>
+            <div class="row">
+              <select class="select btn-sm" id="pageSize" style="width:auto;font-size:12px"><option>10</option><option selected>20</option><option>50</option></select>
+              <div class="row">
+                <button class="btn btn-ghost btn-sm" id="prevPage">‹</button>
+                <span class="mono" id="pageInfo">1 / 1</span>
+                <button class="btn btn-ghost btn-sm" id="nextPage">›</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ API SETTINGS ══ -->
+        <section class="view" id="view-api" data-od-id="api-settings">
+          <div class="page-head">
+            <div><h1>API 设置</h1><p class="lead">管理 AI 提供商与客户端密钥</p></div>
+            <div class="actions"><button class="btn btn-primary" onclick="openProviderModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>添加提供商</button></div>
+          </div>
+
+          <div class="card mb-lg rise" style="--d:40ms">
+            <div class="card-head"><div><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="6" height="6" rx="1"/><rect x="16" y="15" width="6" height="6" rx="1"/><circle cx="7" cy="18" r="2.5"/><circle cx="17" cy="6" r="2.5"/><path d="M7 18h9M17 6 7 10"/></svg>API 调用地址</h2><div class="sub">用作 SDK 的 base_url</div></div>
+              <button class="btn btn-accent btn-sm" onclick="copyUrl(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>复制</button></div>
+            <div class="card-pad">
+              <div class="input mono" id="apiUrl" style="font-size:13px;padding:12px 14px">https://vega.example.cloudflare.workers.dev/v1</div>
+              <div class="muted mt" style="font-size:11.5px">完整地址：<span class="mono" style="color:var(--fg-2)">/v1/chat/completions</span></div>
+            </div>
+          </div>
+
+          <div class="card mb-lg rise" style="--d:90ms">
+            <div class="card-head">
+              <div><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>客户端 API Key</h2>
+                <div class="sub">多个密钥 · 独立命名与追踪</div></div>
+              <button class="btn btn-soft btn-sm" onclick="newKey()">+ 新建密钥</button></div>
+            <div id="keyList" style="padding:6px"></div>
+          </div>
+
+          <div class="page-head" style="margin-top:8px"><h2 style="font-size:15px;font-family:var(--font-mono)">提供商</h2></div>
+          <div id="providerList" style="display:flex;flex-direction:column;gap:12px"></div>
+        </section>
+
+        <!-- ══ SETTINGS ══ -->
+        <section class="view" id="view-settings" data-od-id="settings">
+          <div class="page-head">
+            <div><h1>设置</h1><p class="lead">路由策略、熔断与显示偏好</p></div>
+          </div>
+
+          <div class="grid-2 settings-grid">
+            <div class="card card-pad rise" style="--d:40ms">
+              <div class="between" style="align-items:flex-start;gap:12px"><div><h2 style="font-size:14px;display:flex;gap:8px;align-items:center"><svg viewBox="0 0 24 24" width="16" height="16" style="color:var(--cta)" fill="none" stroke="currentColor"><path d="M9 12l2 2 4-4"/><path d="M21 12a9 9 0 1 1-9-9"/></svg>故障转移模式</h2>
+                <p class="muted" style="font-size:12px;margin-top:6px">主 Provider 调用失败时自动切换到下一个可用 Provider</p></div>
+                <div class="switch on" id="swFailover" style="width:46px"></div></div>
+              <p class="mono" style="font-size:11.5px;color:var(--success);margin-top:14px">● 已开启 — 失败时自动切换</p>
+            </div>
+
+            <div class="card card-pad rise" style="--d:90ms">
+              <h2 style="font-size:14px;display:flex;gap:8px;align-items:center;margin-bottom:12px"><svg viewBox="0 0 24 24" width="16" height="16" style="color:var(--warning)" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>熔断器</h2>
+              <p class="muted" style="font-size:12px;margin-bottom:14px">连续失败达阈值后自动跳过，冷却后恢复</p>
+              <div class="row" style="align-items:flex-end">
+                <div class="field" style="margin:0"><label>失败阈值</label><input class="input" id="cbThresh" type="number" value="5" style="width:84px;text-align:center" /></div>
+                <div class="field" style="margin:0"><label>冷却（秒）</label><input class="input" id="cbCool" type="number" value="30" style="width:84px;text-align:center" /></div>
+                <button class="btn btn-primary btn-sm" style="margin-bottom:1px" onclick="toast('熔断器设置已保存','ok')">保存</button>
+              </div>
+            </div>
+
+            <div class="card card-pad rise" style="--d:140ms">
+              <h2 style="font-size:14px;display:flex;gap:8px;align-items:center;margin-bottom:12px"><svg viewBox="0 0 24 24" width="16" height="16" style="color:var(--cta)" fill="none" stroke="currentColor"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>调用记录保留上限</h2>
+              <p class="muted" style="font-size:12px;margin-bottom:14px">超出后自动清理最旧记录</p>
+              <div class="row"><input class="input" id="logRet" type="number" value="10000" style="width:120px" /><span class="muted" style="font-size:12px">条</span>
+                <button class="btn btn-primary btn-sm" onclick="toast('保留上限已保存','ok')">保存</button></div>
+            </div>
+
+            <div class="card card-pad rise" style="--d:190ms">
+              <h2 style="font-size:14px;display:flex;gap:8px;align-items:center;margin-bottom:12px"><svg viewBox="0 0 24 24" width="16" height="16" style="color:var(--cta)" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>显示栏位</h2>
+              <p class="muted" style="font-size:12px;margin-bottom:12px">选择调用记录页显示的列</p>
+              <div class="row" style="flex-wrap:wrap;gap:8px" id="colChips"></div>
+              <button class="btn btn-primary btn-sm mt" onclick="toast('栏位设置已保存','ok')">保存栏位设置</button>
+            </div>
+          </div>
+
+          <div class="card card-pad mt-lg rise" style="--d:240ms;max-width:520px">
+            <h2 style="font-size:14px;display:flex;gap:8px;align-items:center;margin-bottom:14px"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>修改管理密码</h2>
+            <div class="field"><label>当前密码</label><input class="input" type="password" placeholder="输入当前密码" /></div>
+            <div class="field"><label>新密码</label><input class="input" type="password" placeholder="至少 6 个字符" /></div>
+            <div class="field"><label>确认新密码</label><input class="input" type="password" placeholder="再次输入新密码" /></div>
+            <button class="btn btn-primary" style="width:100%;margin-top:6px" onclick="toast('密码已修改','ok')">修改密码</button>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- Mobile tab bar -->
+  <nav class="tabbar" data-od-id="tabbar">
+    <button class="tab active" data-view="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>概览</button>
+    <button class="tab" data-view="playground"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>调试</button>
+    <button class="tab" data-view="routes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="6" height="6" rx="1"/><rect x="16" y="15" width="6" height="6" rx="1"/><circle cx="9" cy="18" r="2.5"/><circle cx="15" cy="6" r="2.5"/><path d="M9 18h7M15 6 12 8"/></svg>路由</button>
+    <button class="tab" data-view="logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>记录</button>
+    <button class="tab" data-view="api"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>API</button>
+  </nav>
+</div>
+
+<!-- MODAL -->
+<div class="modal-wrap" id="providerModal">
+  <div class="modal-scrim" onclick="closeProviderModal()"></div>
+  <div class="modal-panel">
+    <div class="modal-head"><h3 id="providerModalTitle">添加提供商</h3>
+      <button class="icon-btn" onclick="closeProviderModal()"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="modal-body">
+      <div class="field"><label>类型</label>
+        <select class="select" id="provType"><option value="vertex_ai">Vertex AI</option><option value="google_ai_studio">Google AI Studio</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></div>
+      <div class="field"><label>名称</label><input class="input" id="provName" placeholder="如：Vertex 主路由" /></div>
+      <div class="field"><label>权重</label><input class="input" id="provWeight" type="number" value="10" min="1" style="width:90px" /></div>
+      <div class="field"><label>模型 ID（每行一个）</label><textarea class="textarea" id="provModels" rows="3" placeholder="gemini-2.5-pro&#10;gemini-2.5-flash"></textarea></div>
+      <div class="row"><button class="btn btn-primary" style="flex:1;margin-top:6px" onclick="saveProvider()">保存</button>
+        <button class="btn btn-ghost" style="margin-top:6px" onclick="closeProviderModal()">取消</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ============================================================
+   Sample data — labelled "演示数据"; representative only, for a
+   control-panel design prototype. Not fabricated as production facts.
+   ============================================================ */
+const PROVIDERS=[
+  {id:'vertex-primary',type:'vertex_ai',name:'Vertex 主路由',enabled:true,weight:10,models:['gemini-2.5-pro','gemini-2.5-flash']},
+  {id:'ai-studio-fallback',type:'google_ai_studio',name:'AI Studio 备用',enabled:true,weight:5,models:['gemini-2.5-pro','gemini-2.0-flash']},
+  {id:'openai-extra',type:'openai',name:'OpenAI 备用池',enabled:true,weight:3,models:['gpt-4o','gpt-4o-mini']},
+  {id:'anthropic-edge',type:'anthropic',name:'Anthropic 专用',enabled:true,weight:2,models:['claude-3-5-sonnet','claude-3-haiku']},
+  {id:'legacy-openai',type:'openai',name:'旧版 OpenAI',enabled:false,weight:1,models:['gpt-3.5-turbo']},
+];
+const TYPE_LABEL={vertex_ai:'Vertex AI',google_ai_studio:'AI Studio',openai:'OpenAI',anthropic:'Anthropic'};
+const TYPE_TAG={vertex_ai:'tag-vertex',google_ai_studio:'tag-studio',openai:'tag-openai',anthropic:'tag-anthropic'};
+
+const USAGE=[{d:'06-12',c:182,t:340},{d:'06-13',c:236,t:410},{d:'06-14',c:198,t:356},{d:'06-15',c:284,t:522},{d:'06-16',c:322,t:640},{d:'06-17',c:298,t:588},{d:'06-18',c:356,t:704}];
+
+const LOGS=[
+  {id:1,time:'2026-06-18 21:42',ip:'103.27.4.118',provider:'vertex-primary',model:'gemini-2.5-pro',key:'生产容器',stream:true,pt:1284,ct:896,dur:1420,ok:true},
+  {id:2,time:'2026-06-18 21:40',ip:'45.88.201.9',provider:'openai-extra',model:'gpt-4o-mini',key:'移动端',stream:true,pt:412,ct:238,dur:780,ok:true},
+  {id:3,time:'2026-06-18 21:38',ip:'198.51.100.44',provider:'anthropic-edge',model:'claude-3-haiku',key:'实验舱',stream:false,pt:96,ct:64,dur:410,ok:false,err:'{"error":{"code":400,"message":"Missing or invalid Authorization header"}}'},
+  {id:4,time:'2026-06-18 21:35',ip:'203.0.113.7',provider:'vertex-primary',model:'gemini-2.5-flash',key:'生产容器',stream:true,pt:322,ct:180,dur:940,ok:true},
+  {id:5,time:'2026-06-18 21:31',ip:'192.0.2.221',provider:'ai-studio-fallback',model:'gemini-2.5-flash',key:'CICD',stream:false,pt:150,ct:110,dur:610,ok:true},
+  {id:6,time:'2026-06-18 21:27',ip:'103.27.4.118',provider:'vertex-primary',model:'gemini-2.5-pro',key:'生产容器',stream:true,pt:2048,ct:1204,dur:2130,ok:true},
+  {id:7,time:'2026-06-18 21:24',ip:'203.0.113.52',provider:'openai-extra',model:'gpt-4o',key:'移动端',stream:true,pt:88,ct:52,dur:360,ok:true},
+  {id:8,time:'2026-06-18 21:20',ip:'198.51.100.9',provider:'vertex-primary',model:'gemini-2.5-flash',key:'实验舱',stream:false,pt:140,ct:96,dur:520,ok:true},
+];
+
+const KEYS=[
+  {id:1,name:'生产容器',created:'2026-05-02',last:'2026-06-18'},
+  {id:2,name:'移动端',created:'2026-05-14',last:'2026-06-18'},
+  {id:3,name:'CICD',created:'2026-05-20',last:'2026-06-17'},
+  {id:4,name:'实验舱',created:'2026-06-01',last:'2026-06-12'},
+];
+
+const ROUTE_MODELS=[
+  {id:'gemini-2.5-pro',mode:'failover',providers:[
+    {id:'vertex-primary',name:'Vertex 主路由',type:'vertex_ai',w:10,enabled:true,matchedBy:'live',matched:'gemini-2.5-pro',circuit:'closed'},
+    {id:'ai-studio-fallback',name:'AI Studio 备用',type:'google_ai_studio',w:5,enabled:true,matchedBy:'configured',matched:'gemini-2.5-pro',circuit:'closed'}]},
+  {id:'gemini-2.5-flash',mode:'weighted',providers:[
+    {id:'vertex-primary',name:'Vertex 主路由',type:'vertex_ai',w:10,enabled:true,matchedBy:'prefix',matched:'gemini-2.5-flash',circuit:'closed'},
+    {id:'ai-studio-fallback',name:'AI Studio 备用',type:'google_ai_studio',w:5,enabled:true,matchedBy:'configured',matched:'gemini-2.5-flash',circuit:'half-open'}]},
+  {id:'gpt-4o',mode:'priority',providers:[
+    {id:'openai-extra',name:'OpenAI 备用池',type:'openai',w:3,enabled:true,matchedBy:'live',matched:'gpt-4o',circuit:'closed'}]},
+  {id:'claude-3-haiku',mode:'priority',providers:[
+    {id:'anthropic-edge',name:'Anthropic 专用',type:'anthropic',w:2,enabled:true,matchedBy:'configured',matched:'claude-3-haiku',circuit:'open'}]},
+];
+
+/* ============================================================ helpers */
+const $=(s,c=document)=>c.querySelector(s);
+const $$=(s,c=document)=>[...c.querySelectorAll(s)];
+const fmt=n=>n.toLocaleString();
+const fmtK=n=>(n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':''+n);
+const esc=s=>String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+function timeNow(){return new Date().toLocaleString('zh-CN',{hour12:false});}
+function dur(ms){return ms<1000?Math.round(ms)+'ms':(ms/1000).toFixed(1)+'s';}
+
+function toast(msg,kind='ok'){
+  const el=document.createElement('div');el.className='toast '+kind;
+  el.innerHTML=`<span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${kind==='ok'?'<path d="M20 6 9 17l-5-5"/>':'<path d="M18 6 6 18M6 6l12 12"/>'}</svg></span><span>${esc(msg)}</span>`;
+  $('#toasts').appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transform='translateX(20px)';el.style.transition='all .3s';setTimeout(()=>el.remove(),300);},2400);
+}
+function copyUrl(btn){
+  const url=$('#apiUrl').textContent.trim();
+  (navigator.clipboard?navigator.clipboard.writeText(url):Promise.resolve()).then(()=>{
+    const old=btn.innerHTML;btn.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M20 6 9 17l-5-5"/></svg>已复制';toast('地址已复制','ok');
+    setTimeout(()=>btn.innerHTML=old,1600);
+  }).catch(()=>toast('复制失败','err'));
+}
+
+/* ============================================================ view router */
+const VIEWS=['overview','playground','routes','logs','api','settings'];
+const META={
+  overview:['概览','Vega API 运行状态一览'],
+  playground:['模型调试','选择模型进行流式对话测试'],
+  routes:['路由拓扑','模型路由关系与实时统计'],
+  logs:['调用记录','全部 API 调用明细'],
+  api:['API 设置','管理 AI 提供商与客户端密钥'],
+  settings:['设置','路由策略、熔断与显示偏好'],
+};
+function showLogin(){document.body.style.overflow='';$('#loginView').style.display='grid';$('#appShell').style.display='none';}
+function showApp(){document.body.style.overflow='auto';$('#loginView').style.display='none';$('#appShell').style.display='flex';nav(current,true);}
+function nav(view){
+  if(!VIEWS.includes(view))view='overview';current=view;
+  try{localStorage.setItem('vega_view',view);}catch(e){}
+  $$('.view').forEach(v=>v.classList.remove('on'));
+  $('#view-'+view).classList.add('on');
+  $$('.nav-item').forEach(i=>i.classList.toggle('active',i.dataset.view===view));
+  $$('.tab').forEach(t=>t.classList.toggle('active',t.dataset.view===view));
+  const m=META[view];
+  $('#crumbTitle').textContent=m[0];$('#crumbSub').textContent=m[1];
+  document.title='Vega API — '+m[0];
+  $('.sidebar').classList.remove('open');$('#scrim').classList.remove('on');
+  $('.content').scrollTop=0;window.scrollTo(0,0);
+  if(view==='routes')renderRoutes();
+  if(view==='logs')renderLogs(0);
+}
+function expandAllRoutes(){$$('.tree-model').forEach(m=>m.classList.add('open'));}
+function collapseAllRoutes(){$$('.tree-model').forEach(m=>m.classList.remove('open'));}
+
+/* ============================================================ overview */
+function renderOverview(){
+  $('#kpi-calls').textContent=fmt(1284930);
+  $('#kpi-providers').textContent='4';
+  $('#kpi-tokens').textContent=fmtK(38400000);
+  $('#kpi-latency').textContent='612ms';
+
+  // provider status
+  $('#providerStatus').innerHTML=PROVIDERS.map(p=>`
+    <div class="between" style="padding:9px 10px;border-radius:10px;transition:background var(--dur)">
+      <div class="row">
+        <span class="t-dot" style="width:8px;height:8px;border-radius:50%;background:${p.enabled?'var(--success)':'var(--muted)'};box-shadow:${p.enabled?'0 0 8px var(--accent-glow)':'none'}"></span>
+        <span style="font-size:13px;color:var(--fg-2)">${esc(p.name)}</span>
+        <span class="tag ${TYPE_TAG[p.type]}">${TYPE_LABEL[p.type]}</span>
+      </div>
+      <span style="font-size:12px;${p.enabled?'color:var(--success)':'color:var(--muted)'}">${p.enabled?'运行中':'已禁用'}</span>
+    </div>`).join('');
+
+  // usage area chart
+  const w=600,h=210,pad=10,maxC=Math.max(...USAGE.map(u=>u.c)),maxT=Math.max(...USAGE.map(u=>u.t));
+  const x=i=>pad+(i/(USAGE.length-1))*(w-pad*2);
+  const yC=v=>h-34-(v/maxC)*(h-52);
+  const yT=v=>h-34-(v/maxT)*(h-52);
+  const lineC=USAGE.map((u,i)=>`${x(i)},${yC(u.c)}`).join(' ');
+  const lineT=USAGE.map((u,i)=>`${x(i)},${yT(u.t)}`).join(' ');
+  const pathC=USAGE.map((u,i)=>(i?'L ':'M ')+x(i)+' '+yC(u.c)).join(' ');
+  const pathT=USAGE.map((u,i)=>(i?'L ':'M ')+x(i)+' '+yT(u.t)).join(' ');
+  const areaC=`${pathC} L ${w-pad} ${h-34} L ${pad} ${h-34} Z`;
+  const areaT=`${pathT} L ${w-pad} ${h-34} L ${pad} ${h-34} Z`;
+  $('#overviewChart').innerHTML=`
+    <defs>
+      <linearGradient id="gC" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--cta)" stop-opacity=".30"/><stop offset="1" stop-color="var(--cta)" stop-opacity="0"/></linearGradient>
+      <linearGradient id="gT" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--success)" stop-opacity=".26"/><stop offset="1" stop-color="var(--success)" stop-opacity="0"/></linearGradient>
+    </defs>
+    ${[0.25,0.5,0.75].map(t=>`<line class="grid-line" x1="${pad}" y1="${h-34-(h-52)*t-14}" x2="${w-pad}" y2="${h-34-(h-52)*t-14}" stroke-width="1"/>`).join('')}
+    <path d="${areaC}" fill="url(#gC)"/>
+    <path d="${areaT}" fill="url(#gT)"/>
+    <polyline points="${lineC}" fill="none" stroke="var(--cta)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="${lineT}" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    ${USAGE.map((u,i)=>`<circle class="chart-dot" cx="${x(i)}" cy="${yC(u.c)}" r="2.6" fill="var(--cta)"/>`).join('')}
+    ${USAGE.map((u,i)=>`<text x="${x(i)}" y="${h-16}" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="var(--font-mono)">${u.d}</text>`).join('')}`;
+
+  // hover tooltip: nearest day's request volume
+  const chart=$('#overviewChart'),tip=$('#overviewTip'),box=chart.parentElement;
+  chart.onmousemove=e=>{
+    const vbW=600,vbH=210,pd=10;
+    const xr=chart.getBoundingClientRect(),br=box.getBoundingClientRect();
+    const mx=(e.clientX-xr.left)/xr.width*vbW;
+    let idx=0,best=Infinity;USAGE.forEach((u,i)=>{const dx=Math.abs(x(i)-mx);if(dx<best){best=dx;idx=i;}});
+    const u=USAGE[idx];
+    let px=(x(idx)/vbW)*xr.width+(xr.left-br.left);
+    const py=(yC(u.c)/vbH)*xr.height+(xr.top-br.top);
+    const half=64;if(px<half)px=half;if(px>br.width-half)px=br.width-half;
+    tip.innerHTML=`<div class="t">${u.d}</div><div class="r"><span class="lb">调用</span><span class="v-c">${fmt(u.c)}</span></div><div class="r"><span class="lb">Token</span><span class="v-t">${fmt(u.t)}</span></div>`;
+    tip.style.left=px+'px';tip.style.top=py+'px';tip.classList.add('on');
+  };
+  chart.onmouseleave=()=>tip.classList.remove('on');
+
+  // recent calls
+  $('#recentCalls').innerHTML=LOGS.slice(0,6).map(l=>`
+    <tr onclick="nav('logs')">
+      <td class="mono" style="color:var(--muted)">${l.time}</td>
+      <td>${l.provider}</td>
+      <td class="mono">${l.model}</td>
+      <td class="num right" style="color:var(--fg-2)">${fmt(l.pt)} / ${fmt(l.ct)}</td>
+      <td class="num right">${dur(l.dur)}</td>
+      <td><span class="chip ${l.ok?'chip-accent':'chip-danger'}"><span class="c-dot" style="background:currentColor"></span>${l.ok?'成功':'失败'}</span></td>
+    </tr>`).join('');
+  $('#recentCallsMobile').innerHTML=LOGS.slice(0,6).map(l=>`
+    <div class="rc" onclick="nav('logs')">
+      <div class="rc-top"><span class="mono">${l.time}</span>
+        <span class="chip ${l.ok?'chip-accent':'chip-danger'}"><span class="c-dot" style="background:currentColor"></span>${l.ok?'成功':'失败'}</span></div>
+      <div class="rc-main"><span class="mono">${l.model}</span><span class="rc-prov">${l.provider}</span>
+        <span class="rc-tok">${fmt(l.pt)}/${fmt(l.ct)} · ${dur(l.dur)}</span></div>
+    </div>`).join('');
+}
+
+/* ============================================================ playground */
+let selProv=null,selModel=null,chatMessages=[],chatTokens=0;
+function renderModelList(){
+  $('#modelList').innerHTML=PROVIDERS.map(p=>`
+    <div>
+      <div class="model-prov ${selProv===p.id?'sel':''}" data-pid="${p.id}"><span class="t-dot" style="width:7px;height:7px;border-radius:50%;background:${p.enabled?'var(--success)':'var(--muted)'}"></span>${esc(p.name)}
+        <span class="tag ${TYPE_TAG[p.type]}" style="margin-left:auto">${TYPE_LABEL[p.type]}</span></div>
+      <div class="model-group" id="models-${p.id}" ${selProv===p.id?'':'style="display:none"'}>
+        ${p.models.map(m=>`<button class="model-item ${selProv===p.id&&selModel===m?'sel':''}" data-model="${m}" data-pid="${p.id}">${m}</button>`).join('')}
+      </div>
+    </div>`).join('');
+  $$('.model-prov').forEach(el=>el.addEventListener('click',()=>{
+    selProv=el.dataset.pid;$$('.model-prov').forEach(x=>x.classList.toggle('sel',x.dataset.pid===selProv));
+    $$('.model-group').forEach(x=>x.style.display='none');$('#models-'+selProv).style.display='block';
+  }));
+  $$('.model-item').forEach(el=>el.addEventListener('click',()=>{
+    selModel=el.dataset.model;selProv=el.dataset.pid;
+    $$('.model-item').forEach(x=>x.classList.toggle('sel',x.dataset.model===selModel));
+    updateChatModelTag();updateSendState();
+    $('#chatSide').classList.remove('open');$('#scrim').classList.remove('on');
+  }));
+}
+function updateChatModelTag(){
+  const p=PROVIDERS.find(x=>x.id===selProv);
+  const label=selModel?`${p?p.name:''} · ${selModel}`:'未选择模型';
+  $('#chatModelTag').textContent=label;
+  $('#hdTag').textContent=label;
+}
+function updateSendState(){$('#sendBtn').disabled=!selModel||!$('#chatText').value.trim()||chatTyping;}
+let chatTyping=false;
+function addMsg(role,text){
+  $('#chatEmpty')&&$('#chatEmpty').remove();
+  const d=document.createElement('div');d.className='msg '+role;
+  d.innerHTML=`<div class="ava"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8">${role==='bot'?'<path d="M12 3v3M8 8a4 4 0 0 1 8 0v3a4 4 0 0 1-8 0V8z"/><path d="M8 8H6a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h2M16 8h2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M9 16v2h6v-2"/><path d="M10 12h.01M14 12h.01"/>':'<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'}</svg></div><div><div class="msg-bubble">${esc(text)}</div></div>`;
+  $('#chatScroll').appendChild(d);$('#chatScroll').scrollTop=$('#chatScroll').scrollHeight;
+}
+function sendMessage(){
+  const t=$('#chatText').value.trim();if(!t||!selModel)return;
+  chatMessages.push({role:'user',content:t});addMsg('user',t);$('#chatText').value='';
+  chatTyping=true;updateSendState();$('#sendBtn').disabled=true;
+  const reply='好的，已收到你的请求。这里是基于所选模型（'+selModel+'）生成的演示回应。该控制面板复用了项目现成的 Code Dark Pro 设计 Token，并加入了页面切换、卡片入场与数据图表等过渡动画。';
+  setTimeout(()=>{
+    const bubble=document.createElement('div');bubble.className='msg bot';
+    bubble.innerHTML='<div class="ava"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v3"/><path d="M8 8a4 4 0 0 1 8 0v3a4 4 0 0 1-8 0V8z"/><path d="M8 8H6a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h2M16 8h2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M9 16v2h6v-2"/><path d="M10 12h.01M14 12h.01"/></svg></div><div><div class="msg-bubble" style="white-space:pre-wrap">${esc(reply)}<span style="color:var(--cta);animation:blink 1s infinite;margin-left:2px">▌</span></div></div>';
+    $('#chatScroll').appendChild(bubble);
+    // simulate stream
+    let i=0;const full=reply;const t0=setInterval(()=>{
+      i+=4;const text=full.slice(0,i);
+      bubble.querySelector('.msg-bubble').innerHTML=esc(text)+'<span style="color:var(--cta);animation:blink 1s infinite;margin-left:2px">▌</span>';
+      $('#chatScroll').scrollTop=$('#chatScroll').scrollHeight;
+      if(i>=full.length){clearInterval(t0);chatTokens+=1842;$('#chatTokens').textContent=fmtK(chatTokens)+' tokens';chatTyping=false;updateSendState();}
+    },40);
+  },500);
+  const ta=$('#chatText');ta.style.height='auto';
+}
+
+/* ============================================================ routes */
+function renderRoutes(){
+  $('#r-models').textContent=ROUTE_MODELS.length;
+  $('#r-upstream').textContent=PROVIDERS.filter(p=>p.enabled).length;
+  $('#r-healthy').textContent=3;
+  $('#r-requests').textContent=fmt(1284930);
+  $('#r-latency').textContent='612ms';
+
+  // request bars
+  const bars=[{n:'vertex-primary',v:512400,c:'var(--cta)'},{n:'ai-studio-fallback',v:298800,c:'var(--studio)'},{n:'openai-extra',v:214530,c:'var(--warning)'},{n:'anthropic-edge',v:47120,c:'var(--danger)'}];
+  const max=Math.max(...bars.map(b=>b.v));
+  $('#reqBars').innerHTML=bars.map(b=>`
+    <div style="margin-bottom:14px">
+      <div class="between" style="font-size:12px;margin-bottom:6px"><span style="color:var(--fg-2)">${esc(b.n)}</span><span class="mono">${fmt(b.v)}</span></div>
+      <div style="height:8px;border-radius:6px;background:var(--surface-3);overflow:hidden">
+        <div style="height:100%;border-radius:6px;background:linear-gradient(90deg,${b.c},color-mix(in srgb,${b.c} 70%,transparent));transform-origin:left;animation:growBar .8s var(--ease) both"></div>
+      </div>
+    </div>`).join('');
+
+  // latency chart multi-line
+  const w=600,h=200,pad=10;const pts=[0,1,2,3,4,5];const x=i=>pad+(i/(pts.length-1))*(w-pad*2);
+  const y=v=>h-24-(v/900)*(h-44);
+  const series=[{name:'vertex-primary',color:'var(--cta)',v:[520,580,540,640,700,660]},{name:'ai-studio-fallback',color:'var(--studio)',v:[430,470,450,520,560,540]}];
+  $('#latencyChart').innerHTML=`
+    ${[0.25,0.5,0.75].map(t=>`<line class="grid-line" x1="${pad}" y1="${h-24-(h-44)*t}" x2="${w-pad}" y2="${h-24-(h-44)*t}" stroke-width="1"/>`).join('')}
+    <text x="${pad}" y="12" font-size="10" fill="var(--muted)" font-family="var(--font-mono)">ms</text>
+    ${series.map(s=>`<polyline points="${s.v.map((v,i)=>`${x(i)},${y(v)}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}
+    ${series.map(s=>s.v.map((v,i)=>`<circle class="chart-dot" cx="${x(i)}" cy="${y(v)}" r="2.4" fill="${s.color}"/>`).join('')).join('')}`;
+  $('#latLegend').innerHTML=series.map(s=>`<span><span class="sw" style="background:${s.color}"></span>${s.name}</span>`).join('');
+
+  // route tree
+  const healthDot={closed:'var(--success)',halfOpen:'var(--warning)',open:'var(--danger)'};
+  const healthTxt={closed:'Healthy',halfOpen:'Half Open',open:'Circuit Open'};
+  const healthCls={closed:'var(--success)',halfOpen:'var(--warning)',open:'var(--danger)'};
+  const modeTag={failover:'chip-cta',weighted:'chip-accent',priority:'chip-muted'};
+  $('#routeTree').innerHTML=ROUTE_MODELS.map(m=>`
+    <div class="tree-model">
+      <div class="tree-row" role="button" aria-expanded="false">
+        <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        <span class="mono" style="font-weight:600;color:var(--fg)">${m.id}</span>
+        <span class="chip ${modeTag[m.mode]}" style="margin-left:8px">${m.mode}</span>
+        <span class="tag tag-muted" style="margin-left:auto">${m.providers.length} upstream</span>
+      </div>
+      <div class="tree-depth">
+        ${m.providers.map((p,i)=>{
+          const g=healthDot[p.circuit];
+          return `<div class="tree-row" style="padding-left:22px">
+            <span class="mono" style="font-size:11px;color:var(--muted);width:18px;text-align:center">${i===0?'P':i+1}</span>
+            <span style="width:8px;height:8px;border-radius:50%;background:${g};box-shadow:0 0 8px ${g}"></span>
+            <span style="color:var(--fg-2);font-size:13px">${esc(p.name)}</span>
+            <span class="tag ${TYPE_TAG[p.type]}">${TYPE_LABEL[p.type]}</span>
+            <span class="tag tag-muted">${p.matchedBy}</span>
+            <span class="mono" style="margin-left:auto;font-size:11px;color:${healthCls[p.circuit]}">${healthTxt[p.circuit]}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
+  $$('.tree-model > .tree-row').forEach(r=>r.addEventListener('click',()=>{
+    const model=r.closest('.tree-model');
+    model.classList.toggle('open');
+    r.setAttribute('aria-expanded',model.classList.contains('open'));
+  }));
+}
+
+/* ============================================================ logs */
+let logPage=0;
+function logCard(l){
+  return `<div class="log-card ${l.ok?'':'is-err'}" onclick="openLogDetail(${l.id})">
+    <div class="lc-top"><span class="mono">${l.time}</span>
+      <div class="lc-badges">${l.stream?'<span class="chip chip-cta">流式</span>':''}<span class="chip ${l.ok?'chip-accent':'chip-danger'}"><span class="c-dot" style="background:currentColor"></span>${l.ok?'成功':'失败'}</span></div></div>
+    <div class="lc-line"><span class="lb">IP:</span> ${l.ip}</div>
+    <div class="lc-line"><span class="lb">提供商:</span> ${esc(l.provider)}</div>
+    <div class="lc-line"><span class="lb">模型:</span> <span class="mono">${l.model}</span></div>
+    <div class="lc-line"><span class="lb">密钥:</span> ${l.key}</div>
+    <div class="lc-stats">
+      <span class="lb">Prompt:</span><span class="mono" style="color:var(--success)">${fmt(l.pt)}</span>
+      <span class="lb">Completion:</span><span class="mono" style="color:var(--cta)">${fmt(l.ct)}</span>
+      <span class="lb">耗时:</span><span class="mono">${dur(l.dur)}</span></div>
+    ${l.err?`<div class="lc-err">${esc(l.err)}</div>`:''}
+  </div>`;
+}
+function renderLogs(page){
+  const q=$('#logSearch').value.trim().toLowerCase();
+  const pf=$('#logProvider').value;const st=$('#logStatus').value;const sk=$('#logStream').value;
+  const size=parseInt($('#pageSize').value)||20;
+  let rows=LOGS.filter(l=>(!q||l.ip.includes(q)||l.model.toLowerCase().includes(q)||(''+l.id).includes(q))&&(!pf||l.provider===pf)&&(st===''||(l.ok?'1':'0')===st)&&(sk===''||(l.stream?'1':'0')===sk));
+  const pages=Math.max(1,Math.ceil(rows.length/size));logPage=Math.min(Math.max(0,page),pages-1);
+  const slice=rows.slice(logPage*size,logPage*size+size);
+  $('#logBody').innerHTML=slice.length?slice.map(l=>`
+    <tr onclick="openLogDetail(${l.id})">
+      <td class="mono" style="color:var(--muted)">${l.time}</td>
+      <td class="mono">${l.ip}</td>
+      <td>${esc(l.provider)}</td>
+      <td class="mono">${l.model}</td>
+      <td style="max-width:90px;overflow:hidden;text-overflow:ellipsis">${l.key}</td>
+      <td class="num right" style="color:var(--success)">${fmt(l.pt)}<span style="color:var(--muted)"> / </span>${fmt(l.ct)}</td>
+      <td class="num right">${dur(l.dur)}</td>
+      <td><span class="chip ${l.ok?'chip-accent':'chip-danger'}"><span class="c-dot" style="background:currentColor"></span>${l.ok?'成功':'失败'}</span></td>
+    </tr>`).join(''):`<tr><td colspan="8"><div class="empty" style="padding:26px">未找到匹配的记录</div></td></tr>`;
+  $('#logCards').innerHTML=slice.length?slice.map(logCard).join(''):`<div class="empty" style="padding:26px">未找到匹配的记录</div>`;
+  $('#logCount').textContent=`共 ${rows.length} 条`;
+  $('#pageInfo').textContent=`${logPage+1} / ${pages}`;
+  $('#prevPage').disabled=logPage===0;$('#nextPage').disabled=logPage>=pages-1;
+}
+function openLogDetail(id){
+  const l=LOGS.find(x=>x.id===id);if(!l)return;
+  toast(`查看请求 #${id} · 模型 ${l.model}`,'ok');
+}
+
+/* ============================================================ api view */
+function renderKeyList(){
+  $('#keyList').innerHTML=KEYS.map(k=>`
+    <div class="between" style="padding:11px 12px;border-radius:10px;transition:background var(--dur)">
+      <div class="row">
+        <span class="kpi-ico ico-cta" style="width:32px;height:32px"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5"/></svg></span>
+        <div><div style="font-size:13px;color:var(--fg)">${esc(k.name)}</div>
+          <div class="mono" style="font-size:11px;color:var(--muted)">创建 ${k.created} · 最近 ${k.last}</div></div>
+      </div>
+      <div class="row"><button class="icon-btn" title="复制" style="width:34px;height:34px" onclick="toast('已复制密钥（演示）','ok')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        <button class="icon-btn" title="重命名" style="width:34px;height:34px" onclick="toast('重命名密钥（演示）','ok')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>
+        <button class="icon-btn" title="删除" style="width:34px;height:34px;color:var(--danger)" onclick="toast('密钥已删除（演示）','err')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M3 6h18M8 6V4h8v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg></button></div>
+    </div>`).join('');
+}
+function newKey(){$('#keyList').insertAdjacentHTML('beforeend',`
+  <div style="padding:12px;border:1px dashed var(--b-str);border-radius:10px">
+    <div class="row"><input class="input" placeholder="密钥名称" style="flex:1"/><button class="btn btn-primary btn-sm" onclick="this.parentElement.parentElement.remove();toast('密钥已创建（演示）','ok')">创建</button></div>
+  </div>`);}
+let editingProvider=null;
+function renderProviders(){
+  $('#providerList').innerHTML=PROVIDERS.map(p=>`
+    <div class="card card-pad" style="display:flex;align-items:center;gap:14px;padding:14px 18px;${p.enabled?'':'opacity:.62'}">
+      <span class="tag ${TYPE_TAG[p.type]}" style="flex-shrink:0"><span class="t-dot" style="background:currentColor;border-radius:50%"></span>${TYPE_LABEL[p.type]}</span>
+      <div style="flex:1;min-width:0">
+        <div class="row"><span style="font-weight:600;color:var(--fg)">${esc(p.name)}</span>
+          <span style="width:7px;height:7px;border-radius:50%;background:${p.enabled?'var(--success)':'var(--muted)'};box-shadow:${p.enabled?'0 0 8px var(--accent-glow)':'none'}"></span></div>
+        <div class="mono" style="font-size:11px;color:var(--muted)">${p.id} · 权重 ${p.weight}</div>
+      </div>
+      <div class="row">
+        <button class="icon-btn" style="width:36px;height:36px" onclick="toast('编辑提供商（演示）','ok')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>
+        <button class="icon-btn" style="width:36px;height:36px;color:${p.enabled?'var(--warning)':'var(--success)'}" onclick="toast('已切换状态（演示）','ok')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><path d="M12 2v9"/></svg></button>
+        <button class="icon-btn" style="width:36px;height:36px;color:var(--danger)" onclick="toast('提供商已删除（演示）','err')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M3 6h18M8 6V4h8v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg></button>
+      </div>
+    </div>`).join('');
+}
+function openProviderModal(){$('#providerModal').classList.add('on');}
+function closeProviderModal(){$('#providerModal').classList.remove('on');}
+function saveProvider(){closeProviderModal();toast('提供商已添加（演示）','ok');}
+
+/* ============================================================ settings */
+function renderSettings(){
+  $('#swFailover').addEventListener('click',()=>{const on=$('#swFailover').classList.toggle('on');toast(on?'故障转移已开启':'故障转移已关闭','ok');});
+  const cols=[['time','时间'],['ip','IP'],['provider','提供商'],['model','模型'],['keyName','密钥'],['stream','流式'],['tokens','Token'],['duration','耗时'],['status','状态']];
+  const show=new Set(['time','ip','provider','model','stream','tokens','duration','status']);
+  $('#colChips').innerHTML=cols.map(c=>{
+    const on=show.has(c[0]);
+    return `<button class="chip ${on?'chip-accent':'chip-muted'}" data-col="${c[0]}" onclick="toggleCol(this)">${c[1]}</button>`;
+  }).join('');
+}
+function toggleCol(el){el.classList.toggle('chip-accent');el.classList.toggle('chip-muted');}
+
+/* ============================================================ custom dropdown */
+function buildDropdown(sel){
+  const opts=[...sel.options];
+  if(opts.length===0)return;
+  const cur=opts.find(o=>o.selected)||opts[0];
+  const dd=document.createElement('div');dd.className='dd';
+  if(sel.classList.contains('btn-sm'))dd.classList.add('dd-sm');
+  dd.innerHTML=`<button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false">
+      <span class="dd-val">${esc(cur.text)}</span>
+      <svg class="dd-chev" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+    <div class="dd-menu" role="listbox">${opts.map(o=>`<button type="button" class="dd-opt${o.selected?' sel':''}" data-v="${esc(o.value)}">${esc(o.text)}</button>`).join('')}</div>`;
+  sel.style.display='none';
+  sel.insertAdjacentElement('afterend',dd);
+  const btn=dd.querySelector('.dd-btn'),menu=dd.querySelector('.dd-menu');
+  btn.addEventListener('click',e=>{e.stopPropagation();const open=dd.classList.toggle('open');btn.setAttribute('aria-expanded',open);});
+  menu.querySelectorAll('.dd-opt').forEach(opt=>opt.addEventListener('click',e=>{
+    e.stopPropagation();
+    menu.querySelectorAll('.dd-opt').forEach(x=>x.classList.toggle('sel',x===opt));
+    dd.querySelector('.dd-val').textContent=opt.textContent;
+    dd.classList.remove('open');btn.setAttribute('aria-expanded','false');
+    sel.value=opt.dataset.v;sel.dispatchEvent(new Event('change',{bubbles:true}));
+  }));
+  document.addEventListener('click',e=>{if(!dd.contains(e.target)){dd.classList.remove('open');btn.setAttribute('aria-expanded','false');}});
+}
+function initDropdowns(){['logProvider','logStatus','logStream','rangeSel','routRange','pageSize'].forEach(id=>{const s=document.getElementById(id);if(s)buildDropdown(s);});}
+
+/* ============================================================ init */
+let current='overview';
+document.getElementById('loginBtn').addEventListener('click',showApp);
+document.getElementById('togglePass').addEventListener('click',()=>{
+  const i=$('#adminPass');i.type=i.type==='password'?'text':'password';
+});
+$('#adminPass').addEventListener('keydown',e=>{if(e.key==='Enter')showApp();});
+$('#logoutBtn').addEventListener('click',showLogin);
+$('#hamburger').addEventListener('click',()=>{
+  $('.sidebar').classList.add('open');$('#scrim').classList.add('on');
+});
+$('#scrim').addEventListener('click',()=>{$('.sidebar').classList.remove('open');$('#chatSide').classList.remove('open');$('#scrim').classList.remove('on');});
+$('#modelToggle').addEventListener('click',()=>{$('#chatSide').classList.add('open');$('#scrim').classList.add('on');});
+$('#accountBtn').addEventListener('click',()=>nav('settings'));
+$('.sidebar').addEventListener('click',e=>{
+  const it=e.target.closest('.nav-item');if(it&&it.dataset.view)nav(it.dataset.view);
+});
+// sidebar collapse / expand
+const appShell=$('#appShell');
+function applyCollapsed(c){
+  appShell.classList.toggle('collapsed',c);
+  $('#collapseBtn .nav-txt').textContent=c?'展开':'收起';
+  $('#collapseBtn').title=c?'展开侧边栏':'收起侧边栏';
+  try{localStorage.setItem('vega_collapsed',c?'1':'0');}catch(e){}
+}
+applyCollapsed((()=>{try{return localStorage.getItem('vega_collapsed')==='1';}catch(e){return false;}})());
+$('#collapseBtn').addEventListener('click',()=>applyCollapsed(!appShell.classList.contains('collapsed')));
+$$('.tab').forEach(t=>t.addEventListener('click',()=>nav(t.dataset.view)));
+$('#refreshBtn').addEventListener('click',()=>{toast('数据已刷新','ok');});
+
+// logs controls
+$('#logSearch').addEventListener('input',()=>renderLogs(0));
+$('#logProvider').addEventListener('change',()=>renderLogs(0));
+$('#logStatus').addEventListener('change',()=>renderLogs(0));
+$('#logStream').addEventListener('change',()=>renderLogs(0));
+$('#pageSize').addEventListener('change',()=>renderLogs(0));
+$('#prevPage').addEventListener('click',()=>renderLogs(logPage-1));
+$('#nextPage').addEventListener('click',()=>renderLogs(logPage+1));
+// populate provider filter (append after the existing blank option)
+$('#logProvider').innerHTML+=PROVIDERS.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+initDropdowns();
+
+// playground
+$('#sendBtn').addEventListener('click',sendMessage);
+$('#chatText').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}});
+$('#chatText').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';updateSendState();});
+
+// modal escape
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){$('#providerModal').classList.remove('on');$('.sidebar').classList.remove('open');$('#scrim').classList.remove('on');}});
+
+// initial
+renderOverview();renderModelList();renderKeyList();renderProviders();renderSettings();
+try{const saved=localStorage.getItem('vega_view');current=VIEWS.includes(saved)?saved:'overview';}catch(e){}
+showApp();
+</script>
+</body>
+</html>

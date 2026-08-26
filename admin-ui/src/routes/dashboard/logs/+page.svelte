@@ -3,6 +3,7 @@
 	import { toasts } from "$lib/toast-store";
 	import CallLogTable from "$lib/CallLogTable.svelte";
 	import LogDetailModal from "$lib/LogDetailModal.svelte";
+	import CustomSelect from "$lib/CustomSelect.svelte";
 
 	let entries = $state<LogEntry[]>([]);
 	let total = $state(0);
@@ -126,11 +127,6 @@
 		}
 	}
 
-	function changeFilter(filterSetter: (() => void)) {
-		page = 0;
-		filterSetter();
-	}
-
 	function changePageSize(size: number) {
 		pageSize = size;
 		page = 0;
@@ -139,6 +135,23 @@
 	function jumpPage(v: number) {
 		if (v >= 1 && v <= totalPages) page = v - 1;
 	}
+
+	// ---- Custom dropdown option lists (native <select> popups render light) ----
+	const providerOptions = $derived([
+		{ value: '', label: '全部提供商' },
+		...allProviderIds.map((p) => ({ value: p, label: p })),
+	]);
+	const streamOptions = [
+		{ value: '', label: '全部类型' },
+		{ value: 'stream', label: '流式' },
+		{ value: 'nonstream', label: '非流式' },
+	];
+	const statusOptions = [
+		{ value: '', label: '全部状态' },
+		{ value: 'success', label: '成功' },
+		{ value: 'failed', label: '失败' },
+	];
+	const pageSizeOptionsMap = $derived(pageSizeOptions.map((n) => ({ value: n, label: String(n) })));
 </script>
 
 <svelte:head><title>调用记录 — Vega API</title></svelte:head>
@@ -161,30 +174,16 @@
 </div>
 
 <!-- Search & filter bar -->
-<div class="row mb" style="flex-wrap:wrap">
-	<div class="input-search" style="flex:1;min-width:200px">
+<div class="mb flex flex-col gap-2.5 md:flex-row md:items-center md:gap-3">
+	<div class="input-search w-full md:flex-1 min-w-[200px]">
 		<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.35-4.35" /></svg>
 		<input placeholder="搜索 IP / 请求 ID / 模型…" bind:value={search} />
 	</div>
-	<div class="select-wrap" style="min-width:176px">
-		<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
-		<select class="select" style="border:none;background:none" value={providerFilter} onchange={(e) => changeFilter(() => providerFilter = (e.target as HTMLSelectElement).value)}>
-			<option value="">全部提供商</option>
-			{#each allProviderIds as p}
-				<option value={p}>{p}</option>
-			{/each}
-		</select>
+	<div class="flex flex-wrap items-center gap-2.5">
+		<CustomSelect options={providerOptions} bind:value={providerFilter} onchange={() => (page = 0)} />
+		<CustomSelect options={streamOptions} bind:value={streamFilter} onchange={() => (page = 0)} />
+		<CustomSelect options={statusOptions} bind:value={successFilter} onchange={() => (page = 0)} />
 	</div>
-	<select class="select" style="width:auto" value={streamFilter} onchange={(e) => changeFilter(() => streamFilter = (e.target as HTMLSelectElement).value)}>
-		<option value="">全部类型</option>
-		<option value="stream">流式</option>
-		<option value="nonstream">非流式</option>
-	</select>
-	<select class="select" style="width:auto" value={successFilter} onchange={(e) => changeFilter(() => successFilter = (e.target as HTMLSelectElement).value)}>
-		<option value="">全部状态</option>
-		<option value="success">成功</option>
-		<option value="failed">失败</option>
-	</select>
 </div>
 
 <CallLogTable entries={entries} loading={loading} visibleColumns={visibleColumns} onRowClick={openDetail} />
@@ -194,11 +193,7 @@
 	<div class="between log-pag">
 		<div class="row">
 			<span>每页</span>
-			<select class="select btn-sm" style="width:auto;font-size:12px" value={pageSize} onchange={(e) => changePageSize(Number((e.target as HTMLSelectElement).value))}>
-				{#each pageSizeOptions as size}
-					<option value={size}>{size}</option>
-				{/each}
-			</select>
+			<CustomSelect small options={pageSizeOptionsMap} bind:value={pageSize} onchange={(v) => changePageSize(Number(v))} />
 			<span>条</span>
 		</div>
 		<div class="row">

@@ -302,7 +302,7 @@ h1,h2,h3,h4{text-wrap:balance;margin:0}
 .input-search input::placeholder{color:var(--placeholder)}
 
 /* ── Custom animated dropdown (replaces native <select>) ────────────── */
-.dd{position:relative;display:inline-block;min-width:132px}
+.dd{position:relative;display:inline-block;width:max-content;min-width:0}
 .dd-btn{display:flex;align-items:center;gap:8px;width:100%;padding:10px 13px;border-radius:var(--r-sm);
   background:var(--input);border:1px solid var(--b-def);color:var(--fg);font-size:13.5px;text-align:left;
   transition:border-color var(--dur),box-shadow var(--dur),background var(--dur)}
@@ -311,7 +311,7 @@ h1,h2,h3,h4{text-wrap:balance;margin:0}
 .dd-val{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dd-chev{color:var(--muted);transition:transform var(--dur-2) var(--ease),color var(--dur)}
 .dd.open .dd-chev{transform:rotate(180deg);color:var(--cta)}
-.dd-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:max(100%,176px);z-index:120;max-height:260px;overflow-y:auto;
+.dd-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:100%;width:max-content;z-index:120;max-height:260px;overflow-y:auto;
   background:var(--surface-2);border:1px solid var(--b-str);border-radius:var(--r-sm);box-shadow:var(--sh-pop);
   padding:5px;opacity:0;transform:translateY(-6px) scale(.98);visibility:hidden;pointer-events:none;
   transition:opacity var(--dur-2) var(--ease),transform var(--dur-2) var(--ease),visibility var(--dur-2)}

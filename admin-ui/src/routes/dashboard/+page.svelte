@@ -2,6 +2,7 @@
   import { getProviders, getUsage, getCallLogs, type Provider, type UsageData, type LogEntry } from "$lib/api";
   import { getRouteStats, formatLatency, type RouteStatsResponse } from "$lib/route-stats";
   import { formatNumber, formatDuration, formatTime } from "$lib/utils";
+  import CustomSelect from "$lib/CustomSelect.svelte";
 
   let providers = $state<Provider[]>([]);
   let usage = $state<UsageData | null>(null);
@@ -18,6 +19,7 @@
   ];
   const rangeLabel = $derived(RANGES.find((r) => r.hours === rangeHours)?.label || "最近 24 小时");
   const rangeDays = $derived(Math.max(1, Math.round(rangeHours / 24)));
+  const rangeOptions = RANGES.map((r) => ({ value: r.hours, label: r.label }));
 
   const TYPE_LABEL: Record<string, string> = {
     vertex_ai: "Vertex AI",
@@ -136,11 +138,7 @@
     <p class="lead">网关实时运行状态与用量总览</p>
   </div>
   <div class="actions">
-    <select class="select" style="width:auto;font-size:12.5px" value={rangeHours} onchange={(e) => { rangeHours = Number((e.target as HTMLSelectElement).value); loadAll(); }}>
-      {#each RANGES as r}
-        <option value={r.hours}>{r.label}</option>
-      {/each}
-    </select>
+    <CustomSelect options={rangeOptions} bind:value={rangeHours} onchange={() => loadAll()} />
     <button class="btn btn-ghost" onclick={refresh} disabled={refreshing}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
         <path d="M21 12a9 9 0 1 1-2.64-6.36" />

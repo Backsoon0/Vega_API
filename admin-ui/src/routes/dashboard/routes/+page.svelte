@@ -18,7 +18,8 @@
 	} from "$lib/route-topology";
 	import { getRouteStats, formatLatency, type RouteStatsResponse } from "$lib/route-stats";
 	import Spinner from "$lib/Spinner.svelte";
-	import { RefreshCw, Search, ChevronDown, ChevronRight, ListTree, BarChart3, Activity, Network } from "lucide-svelte";
+	import CustomSelect from "$lib/CustomSelect.svelte";
+	import { RefreshCw, Search, ChevronDown, ChevronRight, ListTree, BarChart3, Activity } from "lucide-svelte";
 
 	let models = $state<RouteTopologyModel[]>([]);
 	let failoverEnabledGlobal = $state(true);
@@ -175,6 +176,27 @@
 		"#a78bfa",
 		"#38bdf8",
 	];
+
+	// ---- Custom dropdown option lists (native <select> popups render light) ----
+	const periodOptions = [
+		{ value: 6, label: "最近 6 小时" },
+		{ value: 24, label: "最近 24 小时" },
+		{ value: 72, label: "最近 3 天" },
+		{ value: 168, label: "最近 7 天" },
+	];
+	const statusOptions = [
+		{ value: "all", label: "全部状态" },
+		{ value: "healthy", label: "Healthy" },
+		{ value: "half-open", label: "Half Open" },
+		{ value: "open", label: "Circuit Open" },
+		{ value: "disabled", label: "Disabled" },
+	];
+	const modeOptions = [
+		{ value: "all", label: "全部路由模式" },
+		{ value: "priority", label: "Priority" },
+		{ value: "failover", label: "Failover" },
+		{ value: "weighted", label: "Weighted" },
+	];
 </script>
 
 <svelte:head><title>路由拓扑 — Vega API</title></svelte:head>
@@ -185,17 +207,7 @@
 		<p class="lead">模型 → Provider 路由关系与实时统计</p>
 	</div>
 	<div class="actions">
-		<select
-			class="select"
-			style="width:auto;font-size:12.5px"
-			value={periodHours}
-			onchange={(event) => (periodHours = Number((event.target as HTMLSelectElement).value))}
-		>
-			<option value={6}>最近 6 小时</option>
-			<option value={24}>最近 24 小时</option>
-			<option value={72}>最近 3 天</option>
-			<option value={168}>最近 7 天</option>
-		</select>
+		<CustomSelect options={periodOptions} bind:value={periodHours} onchange={() => {}} />
 		<button class="btn btn-ghost" onclick={loadAll} disabled={loading || statsLoading}>
 			<RefreshCw class={loading || statsLoading ? "animate-spin" : ""} stroke-width={1.8} />
 			刷新
@@ -310,31 +322,14 @@
 	</div>
 
 	<!-- Search & filters -->
-	<div class="row mb" style="flex-wrap:wrap">
-		<div class="input-search" style="flex:1;min-width:200px">
+	<div class="mb flex flex-col gap-2.5 md:flex-row md:items-center md:gap-3">
+		<div class="input-search w-full md:flex-1 min-w-[200px]">
 			<Search stroke-width={1.8} />
 			<input placeholder="搜索模型 ID / Provider 名称..." bind:value={query} />
 		</div>
-		<div class="row" style="flex-wrap:wrap">
-			<div class="select-wrap" style="min-width:176px">
-				<Network stroke-width={1.6} />
-				<select class="select" style="border:none;background:none" value={statusFilter} onchange={(event) => (statusFilter = (event.target as HTMLSelectElement).value as StatusFilter)}>
-					<option value="all">全部状态</option>
-					<option value="healthy">Healthy</option>
-					<option value="half-open">Half Open</option>
-					<option value="open">Circuit Open</option>
-					<option value="disabled">Disabled</option>
-				</select>
-			</div>
-			<div class="select-wrap" style="min-width:176px">
-				<Network stroke-width={1.6} />
-				<select class="select" style="border:none;background:none" value={modeFilter} onchange={(event) => (modeFilter = (event.target as HTMLSelectElement).value as ModeFilter)}>
-					<option value="all">全部路由模式</option>
-					<option value="priority">Priority</option>
-					<option value="failover">Failover</option>
-					<option value="weighted">Weighted</option>
-				</select>
-			</div>
+		<div class="flex flex-wrap items-center gap-2.5">
+			<CustomSelect options={statusOptions} bind:value={statusFilter} onchange={() => {}} />
+			<CustomSelect options={modeOptions} bind:value={modeFilter} onchange={() => {}} />
 			<button class="btn btn-ghost btn-sm" onclick={() => { query = ""; statusFilter = "all"; modeFilter = "all"; }}>清除</button>
 		</div>
 	</div>
