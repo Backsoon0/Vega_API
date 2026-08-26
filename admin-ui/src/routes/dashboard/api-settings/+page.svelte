@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getProviders } from "$lib/api";
+  import { getProviders, updateProvider, deleteProvider } from "$lib/api";
   import type { Provider } from "$lib/api";
   import { toasts } from "$lib/toast-store";
   import Modal from "$lib/Modal.svelte";
