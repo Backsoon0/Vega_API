@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { changePassword, getSettings, updateSettings } from "$lib/api";
-	import { Wrench, Lock, Eye, EyeOff, ToggleLeft, ToggleRight, Columns, Shield, Database } from "lucide-svelte";
+	import { ToggleLeft, Columns, Shield, Database, Lock, Eye, EyeOff } from "lucide-svelte";
 	import Alert from "$lib/Alert.svelte";
 	import Spinner from "$lib/Spinner.svelte";
 	import { toasts } from "$lib/toast-store";
@@ -157,256 +157,143 @@
 
 <svelte:head><title>设置 — Vega API</title></svelte:head>
 
-<div class="max-w-6xl mx-auto">
-	<div class="mb-8">
-		<h1 class="text-lg font-bold text-primary font-mono flex items-center gap-2">
-			<Wrench class="w-5 h-5" stroke-width={1.5} />
-			设置
-		</h1>
-		<p class="text-xs text-muted mt-1">管理面板配置、安全设置和显示偏好</p>
+<div class="page-head">
+	<div>
+		<h1>设置</h1>
+		<p class="lead">路由策略、熔断与显示偏好</p>
 	</div>
+</div>
 
-	<div class="flex flex-col gap-6 max-w-3xl">
-		<!-- Failover toggle -->
-		<div class="card-gradient-cta rounded-2xl p-5 shadow-card">
-			<div class="flex items-center justify-between">
-				<div>
-					<h2 class="text-sm font-semibold text-primary flex items-center gap-2">
-						<ToggleLeft class="w-4 h-4 text-cta" stroke-width={1.5} />
-						故障转移模式
-					</h2>
-					<p class="text-xs text-muted mt-1">
-						开启后，当一个 provider 调用失败时，系统会自动尝试下一个可用 provider 的相同模型
-					</p>
-				</div>
-				{#if settingsLoading}
-					<div class="flex items-center gap-2 text-sm text-muted shrink-0 ml-4">
-						<Spinner size="sm" />
-					</div>
-				{:else}
-					<button
-						onclick={toggleFailover}
-						disabled={failoverSaving}
-						class="shrink-0 ml-4 transition-all {failoverSaving ? 'opacity-50' : 'hover:scale-110'}"
-					>
-						{#if failoverEnabled}
-							<ToggleRight class="w-10 h-6 text-accent" stroke-width={1.5} />
-						{:else}
-							<ToggleLeft class="w-10 h-6 text-muted" stroke-width={1.5} />
-						{/if}
-					</button>
-				{/if}
+<div class="grid-2 settings-grid">
+	<!-- Failover toggle -->
+	<div class="card card-pad rise" style="--d:40ms">
+		<div class="between" style="align-items:flex-start;gap:12px">
+			<div>
+				<h2 style="font-size:14px;display:flex;gap:8px;align-items:center">
+					<ToggleLeft class="w-4 h-4" style="color:var(--cta)" stroke-width={1.5} />
+					故障转移模式
+				</h2>
+				<p style="font-size:12px;color:var(--muted);margin-top:6px">主 Provider 调用失败时自动切换到下一个可用 Provider</p>
 			</div>
-			{#if !settingsLoading}
-				<p class="text-xs {failoverEnabled ? 'text-accent' : 'text-muted'} mt-3">
-					{failoverEnabled ? '● 已开启 — 调用失败时自动切换提供商' : '○ 已关闭 — 仅使用权重最高的提供商'}
-				</p>
+			{#if settingsLoading}
+				<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);flex-shrink:0;margin-left:12px"><Spinner size="sm" /></div>
+			{:else}
+				<button
+					class="switch {failoverEnabled ? 'on' : ''}"
+					style="width:46px"
+					onclick={toggleFailover}
+					disabled={failoverSaving}
+					role="switch"
+					aria-checked={failoverEnabled}
+					aria-label="故障转移模式"
+				></button>
 			{/if}
 		</div>
+		<p class="mono" style="font-size:11.5px;color:{failoverEnabled ? 'var(--success)' : 'var(--muted)'};margin-top:14px">
+			● {failoverEnabled ? '已开启 — 失败时自动切换' : '已关闭 — 仅使用权重最高的提供商'}
+		</p>
+	</div>
 
-		<!-- Circuit breaker config -->
-		<div class="bg-surface rounded-xl p-5 shadow-card">
-			<h2 class="text-sm font-semibold text-primary mb-3 flex items-center gap-2">
-				<Shield class="w-4 h-4 text-warning" stroke-width={1.5} />
-				熔断器
-			</h2>
-			<p class="text-xs text-muted mb-4">同一 provider 连续失败达阈值后自动跳过，冷却后恢复。即时生效，无需重启。</p>
-			<div class="flex flex-wrap items-end gap-4">
-				<div>
-					<label for="cb-threshold" class="block text-xs text-muted mb-1">失败阈值</label>
-					<div class="flex items-center gap-2">
-						<input
-							id="cb-threshold"
-							type="number"
-							min="1" max="50"
-							class="w-16 px-3 py-2 bg-input rounded-lg text-sm text-primary text-center focus:outline-none"
-							bind:value={cbThreshold}
-						/>
-						<span class="text-xs text-muted">次</span>
-					</div>
-				</div>
-				<div>
-					<label for="cb-cooldown" class="block text-xs text-muted mb-1">冷却时间</label>
-					<div class="flex items-center gap-2">
-						<input
-							id="cb-cooldown"
-							type="number"
-							min="5" max="600"
-							class="w-16 px-3 py-2 bg-input rounded-lg text-sm text-primary text-center focus:outline-none"
-							bind:value={cbCooldown}
-						/>
-						<span class="text-xs text-muted">秒</span>
-					</div>
-				</div>
-				<button
-					onclick={saveCircuitBreaker}
-					disabled={cbSaving}
-					class="px-4 py-2 text-xs font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all active:scale-[0.97] shadow-glow-cta-subtle disabled:opacity-50"
-				>
-					{cbSaving ? '保存中...' : '保存'}
-				</button>
+	<!-- Circuit breaker -->
+	<div class="card card-pad rise" style="--d:90ms">
+		<h2 style="font-size:14px;display:flex;gap:8px;align-items:center;margin-bottom:12px">
+			<Shield class="w-4 h-4" style="color:var(--warning)" stroke-width={1.5} />
+			熔断器
+		</h2>
+		<p style="font-size:12px;color:var(--muted);margin-bottom:14px">连续失败达阈值后自动跳过，冷却后恢复</p>
+		<div class="row" style="align-items:flex-end">
+			<div class="field" style="margin:0">
+				<label for="cb-threshold">失败阈值</label>
+				<input id="cb-threshold" class="input" type="number" style="width:84px;text-align:center" bind:value={cbThreshold} min="1" max="50" />
 			</div>
-		</div>
-
-		<!-- Call log retention -->
-		<div class="bg-surface rounded-xl p-5 shadow-card">
-			<h2 class="text-sm font-semibold text-primary mb-3 flex items-center gap-2">
-				<Database class="w-4 h-4 text-cta" stroke-width={1.5} />
-				调用记录保留上限
-			</h2>
-			<p class="text-xs text-muted mb-4">系统最多保留的调用记录条数，超出后自动清理最旧的记录。修改后立即生效，无需重启。</p>
-			<div class="flex flex-wrap items-end gap-4">
-				<div>
-					<label for="log-retention" class="block text-xs text-muted mb-1">最大保留条数</label>
-					<div class="flex items-center gap-2">
-						<input
-							id="log-retention"
-							type="number"
-							min="100" max="1000000" step="100"
-							class="w-28 px-3 py-2 bg-input rounded-lg text-sm text-primary text-center focus:outline-none"
-							bind:value={logRetention}
-						/>
-						<span class="text-xs text-muted">条</span>
-					</div>
-				</div>
-				<button
-					onclick={saveRetentionLimit}
-					disabled={retentionSaving}
-					class="px-4 py-2 text-xs font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all active:scale-[0.97] shadow-glow-cta-subtle disabled:opacity-50"
-				>
-					{retentionSaving ? '保存中...' : '保存'}
-				</button>
+			<div class="field" style="margin:0">
+				<label for="cb-cooldown">冷却（秒）</label>
+				<input id="cb-cooldown" class="input" type="number" style="width:84px;text-align:center" bind:value={cbCooldown} min="5" max="600" />
 			</div>
-		</div>
-
-		<!-- Call log columns -->
-		<div class="card-gradient-accent rounded-2xl p-5 shadow-card">
-			<h2 class="text-sm font-semibold text-primary mb-2 flex items-center gap-2">
-				<Columns class="w-4 h-4 text-accent" stroke-width={1.5} />
-				调用记录显示栏位
-			</h2>
-			<p class="text-xs text-muted mb-3">选择在调用记录页面中显示的列</p>
-			<div class="flex flex-wrap gap-1 mb-4">
-				{#each ALL_COLUMNS as col}
-					<label class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-white/[0.06] cursor-pointer transition-colors {visibleColumns.includes(col.key) ? 'bg-white/[0.06]' : ''}">
-						<input
-							type="checkbox"
-							checked={visibleColumns.includes(col.key)}
-							onchange={() => toggleColumn(col.key)}
-							class="rounded bg-input border-default text-cta focus:ring-cta/40 w-3.5 h-3.5"
-						/>
-						<span class="text-xs text-secondary">{col.label}</span>
-					</label>
-				{/each}
-			</div>
-			<button
-				onclick={saveColumnPrefs}
-				class="px-4 py-2 text-xs font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all active:scale-[0.97] shadow-glow-cta-subtle"
-			>
-				保存栏位设置
+			<button class="btn btn-primary btn-sm" style="margin-bottom:1px" onclick={saveCircuitBreaker} disabled={cbSaving}>
+				{cbSaving ? '保存中...' : '保存'}
 			</button>
 		</div>
+	</div>
 
-		<!-- Password change -->
-		<div class="bg-surface rounded-xl p-5 shadow-card">
-			<h2 class="text-sm font-semibold text-primary mb-4 flex items-center gap-2">
-				<Lock class="w-4 h-4" stroke-width={1.5} />
-				修改管理密码
-			</h2>
-
-			<form onsubmit={handleChangePassword} class="space-y-4 max-w-md">
-				<div>
-					<label for="current-password" class="block text-xs text-secondary mb-1.5">当前密码</label>
-					<div class="relative">
-						<input
-							id="current-password"
-							type={showCurrent ? 'text' : 'password'}
-							class="w-full px-3 py-2.5 bg-input rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none"
-							bind:value={currentPassword}
-							placeholder="输入当前密码"
-						/>
-						<button
-							type="button"
-							class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary p-1 transition-colors"
-							onclick={() => (showCurrent = !showCurrent)}
-						>
-							{#if showCurrent}
-								<EyeOff class="w-3.5 h-3.5" stroke-width={1.5} />
-							{:else}
-								<Eye class="w-3.5 h-3.5" stroke-width={1.5} />
-							{/if}
-						</button>
-					</div>
-				</div>
-
-				<div>
-					<label for="new-password" class="block text-xs text-secondary mb-1.5">新密码</label>
-					<div class="relative">
-						<input
-							id="new-password"
-							type={showNew ? 'text' : 'password'}
-							class="w-full px-3 py-2.5 bg-input rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none"
-							bind:value={newPassword}
-							placeholder="至少 6 个字符"
-						/>
-						<button
-							type="button"
-							class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary p-1 transition-colors"
-							onclick={() => (showNew = !showNew)}
-						>
-							{#if showNew}
-								<EyeOff class="w-3.5 h-3.5" stroke-width={1.5} />
-							{:else}
-								<Eye class="w-3.5 h-3.5" stroke-width={1.5} />
-							{/if}
-						</button>
-					</div>
-				</div>
-
-				<div>
-					<label for="confirm-password" class="block text-xs text-secondary mb-1.5">确认新密码</label>
-					<div class="relative">
-						<input
-							id="confirm-password"
-							type={showConfirm ? 'text' : 'password'}
-							class="w-full px-3 py-2.5 bg-input rounded-lg text-sm text-primary placeholder:text-placeholder focus:outline-none"
-							bind:value={confirmPassword}
-							placeholder="再次输入新密码"
-						/>
-						<button
-							type="button"
-							class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary p-1 transition-colors"
-							onclick={() => (showConfirm = !showConfirm)}
-						>
-							{#if showConfirm}
-								<EyeOff class="w-3.5 h-3.5" stroke-width={1.5} />
-							{:else}
-								<Eye class="w-3.5 h-3.5" stroke-width={1.5} />
-							{/if}
-						</button>
-					</div>
-				</div>
-
-				{#if error}
-					<Alert type="error" message={error} />
-				{/if}
-				{#if message}
-					<Alert type="success" message={message} />
-				{/if}
-
-				<button
-					type="submit"
-					disabled={saving}
-					class="w-full py-2.5 text-sm font-semibold rounded-xl bg-cta hover:bg-cta-hover text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-glow-cta-subtle"
-				>
-					{#if saving}
-						<Spinner size="sm" />
-						保存中...
-					{:else}
-						修改密码
-					{/if}
-				</button>
-			</form>
+	<!-- Call log retention -->
+	<div class="card card-pad rise" style="--d:140ms">
+		<h2 style="font-size:14px;display:flex;gap:8px;align-items:center;margin-bottom:12px">
+			<Database class="w-4 h-4" style="color:var(--cta)" stroke-width={1.5} />
+			调用记录保留上限
+		</h2>
+		<p style="font-size:12px;color:var(--muted);margin-bottom:14px">超出后自动清理最旧记录</p>
+		<div class="row">
+			<input class="input" type="number" style="width:120px" bind:value={logRetention} min="100" max="1000000" step="100" />
+			<span style="font-size:12px;color:var(--muted)">条</span>
+			<button class="btn btn-primary btn-sm" onclick={saveRetentionLimit} disabled={retentionSaving}>
+				{retentionSaving ? '保存中...' : '保存'}
+			</button>
 		</div>
 	</div>
+
+	<!-- Display columns -->
+	<div class="card card-pad rise" style="--d:190ms">
+		<h2 style="font-size:14px;display:flex;gap:8px;align-items:center;margin-bottom:12px">
+			<Columns class="w-4 h-4" style="color:var(--cta)" stroke-width={1.5} />
+			显示栏位
+		</h2>
+		<p style="font-size:12px;color:var(--muted);margin-bottom:12px">选择调用记录页显示的列</p>
+		<div class="row" style="flex-wrap:wrap;gap:8px" id="colChips">
+			{#each ALL_COLUMNS as col}
+				<button
+					class="chip {visibleColumns.includes(col.key) ? 'chip-accent' : 'chip-muted'}"
+					data-col={col.key}
+					onclick={() => toggleColumn(col.key)}
+				>
+					{col.label}
+				</button>
+			{/each}
+		</div>
+		<button class="btn btn-primary btn-sm mt" onclick={saveColumnPrefs}>保存栏位设置</button>
+	</div>
+</div>
+
+<!-- Password change -->
+<div class="card card-pad rise" style="--d:240ms;max-width:520px;margin-top:24px">
+	<h2 style="font-size:14px;display:flex;gap:8px;align-items:center;margin-bottom:14px">
+		<Lock class="w-4 h-4" stroke-width={1.5} />
+		修改管理密码
+	</h2>
+	<form onsubmit={handleChangePassword} class="space-y-4">
+		<div class="field">
+			<label for="pw-current">当前密码</label>
+			<div style="position:relative">
+				<input id="pw-current" class="input" type={showCurrent ? 'text' : 'password'} style="padding-right:42px" bind:value={currentPassword} placeholder="输入当前密码" />
+				<button type="button" class="icon-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:32px;height:32px" onclick={() => (showCurrent = !showCurrent)} aria-label="显示/隐藏密码">
+					{#if showCurrent}<EyeOff style="width:15px;height:15px" stroke-width={1.8} />{:else}<Eye style="width:15px;height:15px" stroke-width={1.8} />{/if}
+				</button>
+			</div>
+		</div>
+		<div class="field">
+			<label for="pw-new">新密码</label>
+			<div style="position:relative">
+				<input id="pw-new" class="input" type={showNew ? 'text' : 'password'} style="padding-right:42px" bind:value={newPassword} placeholder="至少 6 个字符" />
+				<button type="button" class="icon-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:32px;height:32px" onclick={() => (showNew = !showNew)} aria-label="显示/隐藏密码">
+					{#if showNew}<EyeOff style="width:15px;height:15px" stroke-width={1.8} />{:else}<Eye style="width:15px;height:15px" stroke-width={1.8} />{/if}
+				</button>
+			</div>
+		</div>
+		<div class="field">
+			<label for="pw-confirm">确认新密码</label>
+			<div style="position:relative">
+				<input id="pw-confirm" class="input" type={showConfirm ? 'text' : 'password'} style="padding-right:42px" bind:value={confirmPassword} placeholder="再次输入新密码" />
+				<button type="button" class="icon-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:32px;height:32px" onclick={() => (showConfirm = !showConfirm)} aria-label="显示/隐藏密码">
+					{#if showConfirm}<EyeOff style="width:15px;height:15px" stroke-width={1.8} />{:else}<Eye style="width:15px;height:15px" stroke-width={1.8} />{/if}
+				</button>
+			</div>
+		</div>
+
+		{#if error}<Alert type="error" message={error} />{/if}
+		{#if message}<Alert type="success" message={message} />{/if}
+
+		<button type="submit" disabled={saving} class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px">
+			{#if saving}<span class="spark"></span> 保存中...{:else}修改密码{/if}
+		</button>
+	</form>
 </div>

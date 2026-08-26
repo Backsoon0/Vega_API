@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { getProviders, createProvider, updateProvider, deleteProvider } from "$lib/api";
+  import { getProviders } from "$lib/api";
   import type { Provider } from "$lib/api";
-  import { Settings, Plus, Server, Copy, Check } from "lucide-svelte";
   import { toasts } from "$lib/toast-store";
   import Modal from "$lib/Modal.svelte";
   import ProviderCard from "$lib/ProviderCard.svelte";
@@ -80,83 +79,68 @@
 
 <svelte:head><title>API 设置 — Vega API</title></svelte:head>
 
-<div class="max-w-6xl mx-auto">
-  <div class="mb-8 flex items-center justify-between flex-wrap gap-4">
-    <div>
-      <h1 class="text-lg font-bold text-primary font-mono flex items-center gap-2">
-        <Settings class="w-5 h-5" stroke-width={1.5} />
-        API 设置
-      </h1>
-      <p class="text-xs text-muted mt-1">管理 AI 提供商和客户端 API 密钥</p>
-    </div>
-    <button
-      class="btn-cta-gradient px-4 py-2.5 text-sm font-semibold rounded-xl hover:opacity-90 text-white transition-all active:scale-[0.97] inline-flex items-center gap-2"
-      onclick={handleAdd}
-    >
-      <Plus class="w-4 h-4" stroke-width={2.5} /> 添加提供商
+<div class="page-head">
+  <div>
+    <h1>API 设置</h1>
+    <p class="lead">管理 AI 提供商与客户端密钥</p>
+  </div>
+  <div class="actions">
+    <button class="btn btn-primary" onclick={handleAdd}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14" /></svg>
+      添加提供商
     </button>
   </div>
-
-  <!-- API Endpoint -->
-  <div class="mb-8 card-gradient-cta rounded-2xl p-6 shadow-card">
-    <h2 class="text-sm font-semibold text-primary font-mono flex items-center gap-2 mb-4">
-      <Server class="w-4 h-4 text-cta" stroke-width={1.5} />
-      API 调用地址
-    </h2>
-    <p class="text-xs text-muted mb-3">
-      将此地址用作 OpenAI SDK 的 <code class="text-accent bg-accent-subtle px-1.5 py-0.5 rounded text-[11px] font-mono">base_url</code>，即可通过标准 OpenAI 接口访问所有已配置的 AI 模型。
-    </p>
-    <div class="flex items-center gap-2">
-      <code
-        class="flex-1 bg-input border border-strong rounded-xl px-4 py-3 text-sm text-primary font-mono break-all select-all"
-      >{apiBase}</code>
-      <button
-        onclick={copyApiUrl}
-        class="shrink-0 px-4 py-3 rounded-xl text-sm text-white font-semibold transition-all duration-200 flex items-center gap-1.5 {copied ? 'bg-accent' : 'bg-cta hover:bg-cta-hover active:scale-[0.97]'}"
-      >
-        {#if copied}
-          <Check class="w-4 h-4" stroke-width={2.5} />
-          已复制
-        {:else}
-          <Copy class="w-4 h-4" stroke-width={1.75} />
-          复制
-        {/if}
-      </button>
-    </div>
-    <p class="text-[11px] text-muted mt-2">
-      完整地址: <span class="text-secondary font-mono">{apiBase}/chat/completions</span>
-    </p>
-  </div>
-
-  <!-- Client Key -->
-  <div class="mb-8">
-    <ClientKeySection />
-  </div>
-
-  <!-- Providers -->
-  {#if loading}
-    <div class="flex items-center justify-center py-12">
-      <div class="flex flex-col items-center gap-4">
-        <Spinner class="text-cta" />
-        <span class="text-sm text-muted font-mono">加载提供商...</span>
-      </div>
-    </div>
-  {:else if providers.length === 0}
-    <div class="glass-surface border border-subtle border-dashed rounded-2xl p-12 text-center shadow-card">
-      <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl stat-icon-cta mb-4">
-        <Server class="w-6 h-6 text-cta" stroke-width={1.5} />
-      </div>
-      <h3 class="text-sm font-semibold text-primary mb-1">暂无 AI 提供商</h3>
-      <p class="text-xs text-muted">点击上方按钮添加第一个提供商</p>
-    </div>
-  {:else}
-    <div class="space-y-3">
-      {#each providers as p (p.id)}
-        <ProviderCard provider={p} onedit={handleEdit} ontoggle={handleToggle} ondelete={handleDelete} />
-      {/each}
-    </div>
-  {/if}
 </div>
+
+<!-- API Endpoint -->
+<div class="card mb-lg rise" style="--d:40ms">
+  <div class="card-head">
+    <div>
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="6" height="6" rx="1" /><rect x="16" y="15" width="6" height="6" rx="1" /><circle cx="7" cy="18" r="2.5" /><circle cx="17" cy="6" r="2.5" /><path d="M7 18h9M17 6 7 10" /></svg>
+        API 调用地址
+      </h2>
+      <div class="sub">用作 SDK 的 base_url</div>
+    </div>
+    <button class="btn btn-accent btn-sm" onclick={copyApiUrl}>
+      {#if copied}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5" /></svg>
+        已复制
+      {:else}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+        复制
+      {/if}
+    </button>
+  </div>
+  <div class="card-pad">
+    <div class="input mono" style="font-size:13px;padding:12px 14px">{apiBase}</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:10px">完整地址：<span style="color:var(--fg-2);font-family:var(--font-mono)">/v1/chat/completions</span></div>
+  </div>
+</div>
+
+<!-- Client Key -->
+<div class="mb-lg">
+  <ClientKeySection />
+</div>
+
+<!-- Providers -->
+{#if loading}
+  <div class="empty" style="padding:40px">
+    <div class="flex flex-col items-center gap-4"><Spinner class="text-cta" /><span class="mono" style="font-size:13px;color:var(--muted)">加载提供商...</span></div>
+  </div>
+{:else if providers.length === 0}
+  <div class="card" style="padding:40px 16px;text-align:center;border-style:dashed">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" style="color:var(--muted);margin:0 auto 10px"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z" /></svg>
+    <h3 style="font-size:14px;font-weight:600;color:var(--fg);margin-bottom:4px">暂无 AI 提供商</h3>
+    <p style="font-size:12px;color:var(--muted)">点击上方按钮添加第一个提供商</p>
+  </div>
+{:else}
+  <div style="display:flex;flex-direction:column;gap:12px">
+    {#each providers as p (p.id)}
+      <ProviderCard provider={p} onedit={handleEdit} ontoggle={handleToggle} ondelete={handleDelete} />
+    {/each}
+  </div>
+{/if}
 
 <Modal bind:open={modalOpen} title={modalTitle} onclose={() => (editingProvider = null)}>
   <ProviderForm editing={editingProvider} onsave={handleSaved} />

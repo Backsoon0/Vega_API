@@ -1,14 +1,20 @@
 <script lang="ts">
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
-  import { LayoutDashboard, ListTodo, Settings, Wrench, LogOut, Key, ChevronLeft, ChevronRight, Menu, MessageSquare, Network } from "lucide-svelte";
-  import { clearToken, isAuthenticated } from "$lib/api";
+  import {
+    LayoutDashboard, MessageSquare, Network, ListTodo, Settings, Wrench, LogOut,
+    ChevronsRight, ChevronsLeft, Zap,
+  } from "lucide-svelte";
+  import { clearToken } from "$lib/api";
   import { sidebarCollapsed } from "$lib/sidebar-state";
+
+  let { open = null, onnav = () => {} } = $props();
 
   interface NavItem {
     href: string;
     label: string;
     icon: typeof LayoutDashboard;
+    badge?: string;
   }
 
   const navItems: NavItem[] = [
@@ -17,128 +23,79 @@
     { href: "/dashboard/routes", label: "路由拓扑", icon: Network },
     { href: "/dashboard/logs", label: "调用记录", icon: ListTodo },
     { href: "/dashboard/api-settings", label: "API 设置", icon: Settings },
-	{ href: "/dashboard/settings", label: "设置", icon: Wrench },
+    { href: "/dashboard/settings", label: "设置", icon: Wrench },
   ];
 
   let collapsed = $derived($sidebarCollapsed);
-
-  function toggleCollapse() {
-    sidebarCollapsed.toggle();
-  }
 
   function isActive(href: string): boolean {
     if (href === "/dashboard") return $page.url.pathname === "/dashboard";
     return $page.url.pathname.startsWith(href);
   }
 
+  function go(href: string) {
+    onnav();
+    goto(href);
+  }
+
+  function toggleCollapse() {
+    sidebarCollapsed.toggle();
+  }
+
   function handleLogout() {
     clearToken();
     window.location.href = "/";
   }
-
-  let mobileOpen = $state(false);
-
-  function closeMobile() {
-    mobileOpen = false;
-  }
 </script>
 
-<!-- Mobile overlay -->
-{#if mobileOpen}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
-    onclick={closeMobile}
-    onkeydown={(e) => { if (e.key === 'Escape') closeMobile(); }}
-    role="button"
-    tabindex="-1"
-  ></div>
-{/if}
-
-<!-- Mobile toggle button -->
-<button
-  class="lg:hidden fixed bottom-6 left-5 z-50 w-11 h-11 rounded-xl bg-cta text-white shadow-lg flex items-center justify-center transition-all duration-200"
-  onclick={() => (mobileOpen = !mobileOpen)}
-  aria-label="菜单"
->
-  <Menu class="w-5 h-5" stroke-width={1.5} />
-</button>
-
-<!-- Sidebar -->
 <aside
-  class="fixed left-0 top-0 z-50 h-dvh bg-surface flex flex-col
-         transition-all duration-300 ease-in-out
-         lg:translate-x-0
-         {mobileOpen ? 'translate-x-0' : '-translate-x-full'}
-         {collapsed ? 'w-[64px]' : 'w-[240px]'}"
+  class="sidebar {open ? 'open' : ''}"
+  data-od-id="sidebar"
 >
-  <!-- Logo -->
-  <div class="p-3 flex items-center gap-3 overflow-hidden" class:justify-center={collapsed}>
-    <div class="flex items-center justify-center w-9 h-9 shrink-0 rounded-xl stat-icon-cta">
-      <Key class="w-[18px] h-[18px] text-cta" stroke-width={1.75} />
+  <!-- Brand -->
+  <div class="brand">
+    <div class="brand-mark">
+      <Zap class="w-5 h-5" stroke-width={1.8} />
     </div>
-    {#if !collapsed}
-      <div class="min-w-0">
-        <div class="text-sm font-bold text-primary font-mono tracking-tight truncate">
-          Vega<span class="text-cta font-sans font-semibold"> API</span>
-        </div>
-        <div class="text-[10px] text-muted">控制台</div>
-      </div>
-    {/if}
+    <div class="brand-txt">
+      <div class="brand-name">Vega<em> API</em></div>
+      <div class="brand-cap">管理控制台</div>
+    </div>
   </div>
 
-  <!-- Nav items -->
-  <nav class="flex-1 p-2 flex flex-col gap-1 overflow-y-auto">
+  <!-- Nav -->
+  <nav class="nav">
+    <div class="nav-label">导航</div>
     {#each navItems as item}
       <button
-class="flex items-center gap-3 rounded-lg text-sm transition-all duration-200 overflow-hidden
-               {isActive(item.href)
-                  ? 'bg-cta-subtle text-cta font-semibold nav-active-glow'
-                  : 'text-secondary hover:bg-surface-hover hover:text-primary'}
-               {collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'}"
-        onclick={() => {
-          closeMobile();
-          goto(item.href);
-        }}
-        title={collapsed ? item.label : ''}
+        class="nav-item {isActive(item.href) ? 'active' : ''}"
+        onclick={() => go(item.href)}
+        title={collapsed ? item.label : ""}
+        aria-label={item.label}
       >
-        <item.icon class="w-[18px] h-[18px] shrink-0" stroke-width={1.5} />
-        {#if !collapsed}
-          <span class="truncate">{item.label}</span>
+        <item.icon stroke-width={1.6} />
+        <span class="nav-txt">{item.label}</span>
+        {#if item.badge}
+          <span class="nav-badge">{item.badge}</span>
         {/if}
       </button>
     {/each}
   </nav>
 
   <!-- Footer -->
-  <div class="p-2 space-y-1">
-    <div class="divider-gradient mb-1"></div>
-    <!-- Collapse toggle (desktop only) -->
-    <button
-      class="hidden lg:flex items-center gap-3 rounded-lg text-sm text-muted hover:text-secondary hover:bg-surface-hover transition-all duration-200 animate-pulse-glow w-full overflow-hidden
-             {collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'}"
-      onclick={toggleCollapse}
-      title={collapsed ? '展开侧边栏' : '收起侧边栏'}
-    >
+  <div class="side-foot">
+    <button class="nav-item" id="collapseBtn" onclick={toggleCollapse} title={collapsed ? "展开侧边栏" : "收起侧边栏"} aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}>
       {#if collapsed}
-        <ChevronRight class="w-[18px] h-[18px] shrink-0" stroke-width={1.5} />
+        <ChevronsRight class="collapse-chev" stroke-width={1.8} />
       {:else}
-        <ChevronLeft class="w-[18px] h-[18px] shrink-0" stroke-width={1.5} />
-        <span class="truncate">收起</span>
+        <ChevronsLeft class="collapse-chev" stroke-width={1.8} />
       {/if}
+      <span class="nav-txt">{collapsed ? "展开" : "收起"}</span>
     </button>
-
-    <button
-      class="flex items-center gap-3 rounded-lg text-sm text-muted hover:text-danger hover:bg-danger-subtle transition-all duration-200 w-full overflow-hidden
-             {collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'}"
-      onclick={handleLogout}
-      title={collapsed ? '退出登录' : ''}
-    >
-      <LogOut class="w-[18px] h-[18px] shrink-0" stroke-width={1.5} />
-      {#if !collapsed}
-        <span class="truncate">退出登录</span>
-      {/if}
+    <button class="nav-item logout" onclick={handleLogout} title="退出登录">
+      <LogOut stroke-width={1.6} />
+      <span class="nav-txt">退出登录</span>
     </button>
-    <div class="text-[10px] text-placeholder font-mono text-center pt-1" class:hidden={collapsed}>v2.0.0</div>
+    <div class="ver">v2.1.0</div>
   </div>
 </aside>

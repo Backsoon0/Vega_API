@@ -1,79 +1,49 @@
 <script lang="ts">
-  import { X } from "lucide-svelte";
-  import { fly, fade } from "svelte/transition";
+	import { fly, fade } from "svelte/transition";
 
-  interface Props {
-    title: string;
-    open?: boolean;
-    onclose?: () => void;
-    children?: import("svelte").Snippet;
-  }
+	interface Props {
+		title: string;
+		open?: boolean;
+		onclose?: () => void;
+		children?: import("svelte").Snippet;
+	}
 
-  let { title, open = $bindable(false), onclose, children }: Props = $props();
+	let { title, open = $bindable(false), onclose, children }: Props = $props();
 
-  function close() {
-    open = false;
-    onclose?.();
-  }
+	function close() {
+		open = false;
+		onclose?.();
+	}
 
-  function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") close();
-  }
-
-  function onBackdropClick(e: MouseEvent) {
-    if (e.target === e.currentTarget) close();
-  }
+	function onKeydown(e: KeyboardEvent) {
+		if (e.key === "Escape") close();
+	}
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
 {#if open}
-  <!-- Backdrop -->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="fixed inset-0 z-100 flex items-start sm:items-center justify-center
-           bg-black/65 backdrop-blur-lg
-           px-4 py-6 sm:p-6"
-    onclick={onBackdropClick}
-    role="dialog"
-    aria-modal="true"
-    aria-label={title}
-    tabindex="-1"
-    transition:fade={{ duration: 200 }}
-  >
-    <!-- Panel -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div
-      class="glass-heavy rounded-2xl shadow-elevated animate-scale-in
-             w-full max-w-lg max-h-[85dvh] overflow-y-auto
-             mx-auto"
-      onclick={(e) => e.stopPropagation()}
-      role="document"
-      transition:fly={{ y: 24, duration: 250, easing: (t: number) => 1 - Math.pow(1 - t, 3) }}
-    >
-      <!-- Header -->
-      <div
-        class="sticky top-0 z-10 flex items-center justify-between px-5 sm:px-6 py-4
-               bg-transparent border-b border-white/[0.06] rounded-t-2xl backdrop-blur-sm"
-      >
-        <h2 class="text-base font-semibold text-primary font-mono tracking-tight">{title}</h2>
-        <button
-          class="p-2 -mr-1 rounded-lg hover:bg-white/[0.06] text-muted hover:text-secondary transition-all duration-150"
-          onclick={close}
-          aria-label="关闭对话框"
-        >
-          <X class="w-4 h-4" />
-        </button>
-      </div>
-
-      <!-- Body -->
-      <div class="p-5 sm:p-6">
-        {#if children}
-          {@render children()}
-        {/if}
-      </div>
-    </div>
-  </div>
+	<div
+		class="modal-wrap on"
+		role="dialog"
+		aria-modal="true"
+		aria-label={title}
+		transition:fade={{ duration: 180 }}
+	>
+		<!-- The backdrop itself is a real <button>, so clicking it closes without a11y warnings. -->
+		<button type="button" class="modal-scrim" onclick={close} tabindex="-1" aria-label="关闭对话框"></button>
+		<div class="modal-panel" role="document" transition:fly={{ y: 24, duration: 250, easing: (t: number) => 1 - Math.pow(1 - t, 3) }}>
+			<div class="modal-head">
+				<h3>{title}</h3>
+				<button class="icon-btn" onclick={close} aria-label="关闭对话框">
+					<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6 6 18M6 6l12 12" /></svg>
+				</button>
+			</div>
+			<div class="modal-body">
+				{#if children}
+					{@render children()}
+				{/if}
+			</div>
+		</div>
+	</div>
 {/if}

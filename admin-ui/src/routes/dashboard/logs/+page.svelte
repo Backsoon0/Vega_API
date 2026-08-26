@@ -3,7 +3,6 @@
 	import { toasts } from "$lib/toast-store";
 	import CallLogTable from "$lib/CallLogTable.svelte";
 	import LogDetailModal from "$lib/LogDetailModal.svelte";
-	import { ListTodo, RefreshCw, ChevronLeft, ChevronRight, Search, Trash2 } from "lucide-svelte";
 
 	let entries = $state<LogEntry[]>([]);
 	let total = $state(0);
@@ -144,141 +143,70 @@
 
 <svelte:head><title>调用记录 — Vega API</title></svelte:head>
 
-<div class="max-w-6xl mx-auto">
-	<div class="mb-6 flex items-center justify-between flex-wrap gap-4">
-		<div>
-			<h1 class="text-lg font-bold text-primary font-mono flex items-center gap-2">
-				<ListTodo class="w-5 h-5" stroke-width={1.5} />
-				调用记录
-			</h1>
-			<p class="text-xs text-muted mt-1">最近 {total} 条 API 调用记录（最多保留 {retentionLimit.toLocaleString()} 条，可在设置页调整）</p>
-		</div>
-		<div class="flex items-center gap-2">
-			<button
-				class="px-3 py-2 rounded-xl text-sm text-danger hover:bg-danger-subtle transition-all flex items-center gap-2 border border-white/[0.06] disabled:opacity-50"
-				onclick={handleClearLogs}
-				disabled={clearing || (loading && entries.length === 0)}
-			>
-				<Trash2 class={`w-4 h-4 ${clearing ? 'animate-pulse' : ''}`} stroke-width={1.5} />
-				{clearing ? '清空中...' : '清空记录'}
-			</button>
-			<button
-				class="px-3 py-2 rounded-xl text-sm text-secondary hover:text-primary hover:bg-surface-hover transition-all flex items-center gap-2 border border-white/[0.06]"
-				onclick={handleRefresh}
-				disabled={loading}
-			>
-				<RefreshCw class={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} stroke-width={1.5} />
-				刷新
-			</button>
-		</div>
+<div class="page-head">
+	<div>
+		<h1>调用记录</h1>
+		<p class="lead">最近 {total} 条 API 调用记录（最多保留 {retentionLimit.toLocaleString()} 条，可在设置页调整）</p>
 	</div>
+	<div class="actions">
+		<button class="btn btn-danger" onclick={handleClearLogs} disabled={clearing || (loading && entries.length === 0)}>
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18M8 6V4h8v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" /></svg>
+			{clearing ? '清空中...' : '清空记录'}
+		</button>
+		<button class="btn btn-ghost" onclick={handleRefresh} disabled={loading}>
+			<svg class={loading ? 'animate-spin' : ''} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
+			刷新
+		</button>
+	</div>
+</div>
 
-	<!-- Search & filter bar -->
-	<div class="mb-4 flex flex-col sm:flex-row gap-2 sm:gap-3">
-		<div class="flex-1 flex items-center gap-2 bg-input border border-white/[0.06] rounded-xl px-3 focus-within:ring-2 focus-within:ring-cta/50 transition-all">
-			<Search
-				class="w-4 h-4 shrink-0 transition-opacity {search ? 'text-muted/30' : 'text-muted'}"
-				stroke-width={1.5}
-			/>
-			<input
-				type="text"
-				placeholder="搜索 IP / 模型..."
-				class="flex-1 py-2.5 bg-transparent text-sm text-primary placeholder:text-placeholder focus:outline-none"
-				bind:value={search}
-			/>
-		</div>
-		<div class="flex gap-2">
-			<select
-				class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
-				value={providerFilter}
-				onchange={(e) => changeFilter(() => providerFilter = (e.target as HTMLSelectElement).value)}
-			>
-				<option value="">全部提供商</option>
-				{#each allProviderIds as p}
-					<option value={p}>{p}</option>
+<!-- Search & filter bar -->
+<div class="row mb" style="flex-wrap:wrap">
+	<div class="input-search" style="flex:1;min-width:200px">
+		<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.35-4.35" /></svg>
+		<input placeholder="搜索 IP / 请求 ID / 模型…" bind:value={search} />
+	</div>
+	<div class="select-wrap" style="min-width:176px">
+		<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
+		<select class="select" style="border:none;background:none" value={providerFilter} onchange={(e) => changeFilter(() => providerFilter = (e.target as HTMLSelectElement).value)}>
+			<option value="">全部提供商</option>
+			{#each allProviderIds as p}
+				<option value={p}>{p}</option>
+			{/each}
+		</select>
+	</div>
+	<select class="select" style="width:auto" value={streamFilter} onchange={(e) => changeFilter(() => streamFilter = (e.target as HTMLSelectElement).value)}>
+		<option value="">全部类型</option>
+		<option value="stream">流式</option>
+		<option value="nonstream">非流式</option>
+	</select>
+	<select class="select" style="width:auto" value={successFilter} onchange={(e) => changeFilter(() => successFilter = (e.target as HTMLSelectElement).value)}>
+		<option value="">全部状态</option>
+		<option value="success">成功</option>
+		<option value="failed">失败</option>
+	</select>
+</div>
+
+<CallLogTable entries={entries} loading={loading} visibleColumns={visibleColumns} onRowClick={openDetail} />
+
+<!-- Pagination -->
+{#if entries.length > 0 || hasMore}
+	<div class="between log-pag">
+		<div class="row">
+			<span>每页</span>
+			<select class="select btn-sm" style="width:auto;font-size:12px" value={pageSize} onchange={(e) => changePageSize(Number((e.target as HTMLSelectElement).value))}>
+				{#each pageSizeOptions as size}
+					<option value={size}>{size}</option>
 				{/each}
 			</select>
-			<select
-				class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
-				value={streamFilter}
-				onchange={(e) => changeFilter(() => streamFilter = (e.target as HTMLSelectElement).value)}
-			>
-				<option value="">全部类型</option>
-				<option value="stream">流式</option>
-				<option value="nonstream">非流式</option>
-			</select>
-			<select
-				class="flex-1 sm:flex-none px-3 py-2.5 bg-input border border-white/[0.06] rounded-xl text-sm text-secondary"
-				value={successFilter}
-				onchange={(e) => changeFilter(() => successFilter = (e.target as HTMLSelectElement).value)}
-			>
-				<option value="">全部状态</option>
-				<option value="success">成功</option>
-				<option value="failed">失败</option>
-			</select>
+			<span>条</span>
+		</div>
+		<div class="row">
+			<button class="btn btn-ghost btn-sm" onclick={() => page--} disabled={page === 0}>‹</button>
+			<span class="mono">{page + 1} / {totalPages}</span>
+			<button class="btn btn-ghost btn-sm" onclick={() => page++} disabled={!hasMore && page >= totalPages - 1}>›</button>
 		</div>
 	</div>
-
-	<CallLogTable entries={entries} loading={loading} visibleColumns={visibleColumns} onRowClick={openDetail} />
-
-	<!-- Pagination -->
-	{#if entries.length > 0 || hasMore}
-		<div class="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted">
-			<div class="flex items-center gap-2">
-				<span>每页</span>
-				<select
-					class="px-3 py-2 bg-input border border-white/[0.08] rounded-xl text-secondary text-xs"
-					value={pageSize}
-					onchange={(e) => changePageSize(Number((e.target as HTMLSelectElement).value))}
-				>
-					{#each pageSizeOptions as size}
-						<option value={size}>{size}</option>
-					{/each}
-				</select>
-				<span>条</span>
-			</div>
-
-			<div class="flex items-center gap-3">
-				<button
-					class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1
-						{page === 0
-							? 'text-muted bg-surface border border-white/[0.06] cursor-not-allowed'
-							: 'text-white bg-cta hover:bg-cta-hover shadow-glow-cta active:scale-[0.97]'}"
-					onclick={() => page--}
-					disabled={page === 0}
-				>
-					<ChevronLeft class="w-3.5 h-3.5" stroke-width={2} />
-					上一页
-				</button>
-				<span class="tabular-nums flex items-center gap-1.5">
-					第
-					<input
-						type="number"
-						min="1"
-						max={totalPages}
-						value={page + 1}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') jumpPage(parseInt((e.target as HTMLInputElement).value));
-						}}
-						onchange={(e) => jumpPage(parseInt((e.target as HTMLInputElement).value))}
-						class="w-12 px-1.5 py-0.5 bg-input border border-white/[0.10] rounded text-center text-secondary font-mono text-xs focus:outline-none focus:ring-1 focus:ring-cta/50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-					/>
-					/ <span class="text-secondary font-mono">{totalPages}</span> 页
-				</span>
-				<button
-					class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1
-						{!hasMore && page >= totalPages - 1
-							? 'text-muted bg-surface border border-white/[0.06] cursor-not-allowed'
-							: 'text-white bg-cta hover:bg-cta-hover shadow-glow-cta active:scale-[0.97]'}"
-					onclick={() => page++}
-					disabled={!hasMore && page >= totalPages - 1}
-				>
-					下一页
-					<ChevronRight class="w-3.5 h-3.5" stroke-width={2} />
-				</button>
-			</div>
-		</div>
-	{/if}
-</div>
+{/if}
 
 <LogDetailModal entry={detailEntry} open={detailOpen} onclose={closeDetail} />

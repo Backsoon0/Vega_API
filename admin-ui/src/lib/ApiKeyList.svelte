@@ -1,8 +1,4 @@
 <script lang="ts">
-	import {
-		Eye, Copy, Trash2, RefreshCw, Edit3, Plus, Pencil, ArrowRight,
-		Shield, Key, X, Check, AlertTriangle, ShieldOff
-	} from "lucide-svelte";
 	import { getApiKeys, createApiKey, deleteApiKey, renameApiKey, deleteLegacyKey, migrateLegacyKey, type ApiKeyInfo } from "$lib/api";
 	import { toasts } from "$lib/toast-store";
 	import Spinner from "$lib/Spinner.svelte";
@@ -160,146 +156,91 @@
 	}
 
 	$effect(() => { load(); });
+
+	function fmtDate(iso: string | null): string {
+		if (!iso) return '—';
+		return new Date(iso).toLocaleString('zh-CN', { hour12: false });
+	}
+	function fmtDay(iso: string): string {
+		return new Date(iso).toLocaleDateString('zh-CN');
+	}
 </script>
 
-<div class="bg-surface border border-white/[0.08] rounded-2xl p-5 sm:p-6 space-y-5 shadow-card">
+<div class="card" style="padding:6px">
 	<!-- Header -->
-	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-		<div class="flex items-center gap-2.5">
-			<div class="flex items-center justify-center w-8 h-8 rounded-lg {keys.length > 0 || hasLegacyKey ? 'bg-accent-subtle' : 'bg-warning-subtle'}">
-				{#if keys.length > 0 || hasLegacyKey}
-					<Shield class="w-4 h-4 text-accent" />
-				{:else}
-					<ShieldOff class="w-4 h-4 text-warning" />
-				{/if}
+	<div class="card-head" style="padding:16px 16px">
+		<div class="row">
+			<div style="width:32px;height:32px;border-radius:10px;display:grid;place-items:center;{keys.length > 0 || hasLegacyKey ? 'background:var(--accent-soft);color:var(--accent)' : 'background:var(--warning-soft);color:var(--warning)'}">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
 			</div>
 			<div>
-				<h2 class="text-sm font-semibold text-primary">客户端 API Key</h2>
-				<p class="text-xs text-muted">管理多个 API 密钥，每个密钥可单独命名和追踪</p>
+				<h2 style="font-size:13.5px;font-weight:600;color:var(--fg)">客户端 API Key</h2>
+				<div style="font-size:11px;color:var(--muted);margin-top:2px;font-weight:400">多个密钥 · 独立命名与追踪</div>
 			</div>
 		</div>
-
-		<button
-			class="px-3 py-2 text-xs font-medium rounded-lg
-						 bg-cta hover:bg-cta-hover text-white
-						 transition-all duration-200
-						 inline-flex items-center gap-1.5"
-			onclick={() => { showInput = !showInput; hideRevealed(); }}
-		>
-			<Plus class="w-3 h-3" />
+		<button class="btn btn-soft btn-sm" onclick={() => { showInput = !showInput; hideRevealed(); }}>
+			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14" /></svg>
 			新建密钥
 		</button>
 	</div>
 
 	<!-- Loading -->
 	{#if loading}
-		<div class="flex items-center gap-2 text-sm text-muted py-2">
-			<Spinner size="sm" />
-			加载中...
-		</div>
-
-	<!-- Key list -->
+		<div class="row" style="padding:14px 16px;color:var(--muted);font-size:13px"><Spinner size="sm" /> 加载中...</div>
 	{:else}
 		{#if keys.length === 0 && !hasLegacyKey}
-			<div class="flex items-center gap-2.5 text-sm text-warning bg-warning-subtle rounded-xl px-4 py-3 border border-warning/20">
-				<ShieldOff class="w-4 h-4 shrink-0" />
+			<div class="row" style="margin:4px 16px;padding:12px 14px;border-radius:12px;background:var(--warning-soft);border:1px solid rgba(245,158,11,.2);color:var(--warning);font-size:13px">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
 				<span>未设置密钥 — /v1/* 接口可公开访问</span>
 			</div>
 		{/if}
 
 		{#if hasLegacyKey}
-			<div class="space-y-2">
-				<div class="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-warning-subtle border border-warning/20">
-					<div class="flex items-center gap-2 text-sm text-warning">
-						<AlertTriangle class="w-4 h-4 shrink-0" />
-						<span>旧版兼容密钥 (未命名)</span>
-					</div>
-					<div class="flex items-center gap-2 shrink-0">
-						<button
-							class="text-xs text-cta hover:text-cta/80 transition-colors inline-flex items-center gap-1"
-							onclick={() => { showMigrate = !showMigrate; migrateName = ''; }}
-						>
-							<Edit3 class="w-3 h-3" />
-							{showMigrate ? '取消' : '设置名称'}
-						</button>
-						<button
-							class="text-xs text-danger hover:text-danger-hover transition-colors inline-flex items-center gap-1"
-							onclick={handleDeleteLegacy}
-						>
-							<Trash2 class="w-3 h-3" />
-							删除
-						</button>
-					</div>
+			<div style="margin:4px 16px;padding:12px 14px;border-radius:12px;background:var(--warning-soft);border:1px solid rgba(245,158,11,.2)">
+				<div class="between" style="color:var(--warning);font-size:13px">
+					<span class="row"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" style="flex-shrink:0"><path d="M10.3 3.2 2.3 18a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3L13.7 3.2a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg> ← 旧版兼容密钥 (未命名)</span>
+					<span class="row">
+						<button class="btn btn-ghost btn-sm" onclick={() => { showMigrate = !showMigrate; migrateName = ''; }}>{showMigrate ? '取消' : '设置名称'}</button>
+						<button class="btn btn-danger btn-sm" onclick={handleDeleteLegacy}>删除</button>
+					</span>
 				</div>
-
 				{#if showMigrate}
-					<div class="flex items-center gap-2 px-4 py-3 rounded-xl bg-white/[0.02] border border-white/[0.08]">
-						<ArrowRight class="w-3.5 h-3.5 text-muted shrink-0" />
-						<input
-							type="text"
-							bind:value={migrateName}
-							placeholder="输入密钥名称"
-							class="flex-1 px-3 py-2 rounded-lg bg-input border border-white/[0.10] text-primary text-sm
-										 placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40"
-						/>
-						<button
-							class="px-3 py-2 text-xs font-semibold rounded-lg bg-accent hover:bg-accent-hover text-white transition-all"
-							onclick={handleMigrate}
-						>保存</button>
+					<div class="row" style="margin-top:10px">
+						<input class="input" style="flex:1" bind:value={migrateName} placeholder="输入密钥名称" />
+						<button class="btn btn-accent btn-sm" onclick={handleMigrate}>保存</button>
 					</div>
 				{/if}
 			</div>
 		{/if}
 
 		{#each keys as k (k.id)}
-			<div class="space-y-2">
-				<div class="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-					<div class="flex items-center gap-3 min-w-0">
-						<Key class="w-4 h-4 text-cta shrink-0" stroke-width={1.5} />
-						<div class="min-w-0">
-							{#if renamingId === k.id}
-								<div class="flex items-center gap-2">
-									<input
-										type="text"
-										bind:value={renameName}
-										class="px-2 py-1 rounded-lg bg-input border border-white/[0.10] text-primary text-sm w-full max-w-[200px]
-													 placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40"
-									/>
-									<button
-										class="text-xs text-accent hover:text-accent-hover p-1" onclick={handleRename}
-									>保存</button>
-									<button
-										class="text-xs text-muted hover:text-secondary p-1" onclick={cancelRename}
-									>取消</button>
-								</div>
-							{:else}
-								<div class="text-sm text-secondary font-medium truncate">{k.name}</div>
-							{/if}
-							<div class="text-[10px] text-muted font-mono">
-								创建于 {new Date(k.createdAt).toLocaleDateString('zh-CN')}
-								{#if k.lastUsedAt}
-									<span class="ml-2">最后使用: {new Date(k.lastUsedAt).toLocaleString('zh-CN')}</span>
-								{/if}
+			<div class="between" style="padding:11px 12px;border-radius:10px">
+				<div class="row">
+					<div style="width:32px;height:32px;border-radius:10px;display:grid;place-items:center;background:var(--cta-soft);color:var(--cta)">
+						<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5" /></svg>
+					</div>
+					<div>
+						{#if renamingId === k.id}
+							<div class="row">
+								<input class="input" style="width:200px;padding:6px 10px;font-size:13px" bind:value={renameName} />
+								<button class="btn btn-accent btn-sm" onclick={handleRename}>保存</button>
+								<button class="btn btn-ghost btn-sm" onclick={cancelRename}>取消</button>
 							</div>
-						</div>
-					</div>
-					<div class="flex items-center gap-2 shrink-0">
-						{#if renamingId !== k.id}
-							<button
-								class="text-xs text-muted hover:text-secondary transition-colors inline-flex items-center gap-1"
-								onclick={() => startRename(k.id, k.name)}
-							>
-								<Pencil class="w-3 h-3" />
-							</button>
+						{:else}
+							<div style="font-size:13px;color:var(--fg)">{k.name}</div>
 						{/if}
-						<button
-							class="text-xs text-danger hover:text-danger-hover transition-colors inline-flex items-center gap-1"
-							onclick={() => handleDelete(k.id, k.name)}
-						>
-							<Trash2 class="w-3 h-3" />
-							删除
-						</button>
+						<div class="mono" style="font-size:11px;color:var(--muted)">创建 {fmtDay(k.createdAt)}{#if k.lastUsedAt}<span style="margin-left:8px">最近 {fmtDate(k.lastUsedAt)}</span>{/if}</div>
 					</div>
+				</div>
+				<div class="row">
+					{#if renamingId !== k.id}
+						<button class="icon-btn" style="width:34px;height:34px" title="重命名" onclick={() => startRename(k.id, k.name)}>
+							<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" /></svg>
+						</button>
+					{/if}
+					<button class="icon-btn" style="width:34px;height:34px;color:var(--danger)" title="删除" onclick={() => handleDelete(k.id, k.name)}>
+						<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M3 6h18M8 6V4h8v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" /></svg>
+					</button>
 				</div>
 			</div>
 		{/each}
@@ -307,81 +248,43 @@
 
 	<!-- New key input -->
 	{#if showInput}
-		<div class="space-y-3 p-4 rounded-xl bg-white/[0.02] border border-white/[0.08]">
-			<div class="flex flex-col sm:flex-row gap-2.5">
-				<input
-					type="text"
-					bind:value={newKeyName}
-					placeholder="密钥名称（如：我的应用、项目A）"
-					class="flex-1 px-3.5 py-2.5 rounded-xl bg-input border border-white/[0.10] text-primary text-sm
-								 placeholder:text-placeholder
-								 focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-								 transition-all duration-200"
-				/>
-				<input
-					type="text"
-					bind:value={newKeyValue}
-					placeholder="自行设置 Key（留空将随机生成）"
-					class="flex-1 px-3.5 py-2.5 rounded-xl bg-input border border-white/[0.10] text-primary text-sm font-mono
-								 placeholder:text-placeholder
-								 focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-								 transition-all duration-200"
-				/>
+		<div style="margin:4px 16px 12px;padding:14px;border-radius:12px;background:var(--surface-3);border:1px dashed var(--b-str)">
+			<div class="row" style="flex-wrap:wrap">
+				<input class="input" style="flex:1;min-width:160px" bind:value={newKeyName} placeholder="密钥名称（如：我的应用、项目A）" />
+				<input class="input" style="flex:1;min-width:160px;font-family:var(--font-mono)" bind:value={newKeyValue} placeholder="自行设置 Key（留空将随机生成）" />
 			</div>
-			<div class="flex gap-2">
-				<button
-					class="px-4 py-2.5 text-xs font-semibold rounded-xl bg-accent hover:bg-accent-hover text-white
-								 transition-all duration-200 active:scale-[0.97]"
-					onclick={() => newKeyValue.trim() ? handleSet() : handleGenerate()}
-				>创建</button>
-				<button
-					class="px-4 py-2.5 text-xs font-semibold rounded-xl bg-surface-elevated hover:bg-surface-hover text-secondary
-								 transition-all duration-200"
-					onclick={handleCancelInput}
-				>取消</button>
+			<div class="row" style="margin-top:10px">
+				<button class="btn btn-primary btn-sm" onclick={() => newKeyValue.trim() ? handleSet() : handleGenerate()}>创建</button>
+				<button class="btn btn-ghost btn-sm" onclick={handleCancelInput}>取消</button>
 			</div>
 		</div>
 	{/if}
 
 	<!-- Revealed key display -->
 	{#if revealedKey}
-		<div class="p-4 rounded-xl bg-input border border-warning/20 space-y-3">
-			<div class="flex items-start justify-between gap-3">
-				<div class="flex-1 min-w-0">
-					<div class="text-xs text-muted mb-1">密钥 "{revealedName}" 已创建 — 请立即复制保存：</div>
-					<code class="text-sm text-warning font-mono break-all leading-relaxed">{revealedKey}</code>
+		<div style="margin:4px 16px 12px;padding:14px;border-radius:12px;background:var(--input);border:1px solid rgba(245,158,11,.2)">
+			<div class="between" style="align-items:flex-start">
+				<div style="flex:1;min-width:0">
+					<div style="font-size:12px;color:var(--muted);margin-bottom:6px">密钥 "{revealedName}" 已创建 — 请立即复制保存：</div>
+					<code style="font-size:13px;color:var(--warning);font-family:var(--font-mono);word-break:break-all;line-height:1.4">{revealedKey}</code>
 				</div>
-				<button
-					class="shrink-0 p-1.5 rounded-lg hover:bg-surface-elevated text-muted hover:text-secondary
-								 transition-all duration-150"
-					onclick={hideRevealed}
-					title="关闭"
-				>
-					<X class="w-4 h-4" />
-				</button>
+				<div class="row">
+					<button class="icon-btn" style="width:32px;height:32px" title="复制" onclick={handleCopy} disabled={copying}>
+						{#if copying}
+							<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5" /></svg>
+						{:else}
+							<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+						{/if}
+					</button>
+					<button class="icon-btn" style="width:32px;height:32px" title="关闭" onclick={hideRevealed}>
+						<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+					</button>
+				</div>
 			</div>
-			<div class="flex items-center justify-between gap-3 flex-wrap">
-				<p class="text-xs text-warning flex items-center gap-1.5">
-					<AlertTriangle class="w-3.5 h-3.5" />
-					此密钥仅显示一次，请立即复制保存
-				</p>
-				<button
-					class="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-lg
-								 bg-warning hover:bg-warning/80 text-background
-								 transition-all duration-200
-								 inline-flex items-center gap-1.5"
-					onclick={handleCopy}
-					disabled={copying}
-				>
-					{#if copying}
-						<Check class="w-3 h-3" />
-						已复制
-					{:else}
-						<Copy class="w-3 h-3" />
-						复制密钥
-					{/if}
-				</button>
-			</div>
+			<p style="font-size:11px;color:var(--warning);margin-top:10px;display:flex;align-items:center;gap:6px">
+				<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.2 2.3 18a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3L13.7 3.2a2 2 0 0 0-3.4 0z" /></svg>
+				此密钥仅显示一次，请立即复制保存
+			</p>
 		</div>
 	{/if}
 </div>

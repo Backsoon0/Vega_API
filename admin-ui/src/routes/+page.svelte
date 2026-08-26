@@ -1,8 +1,5 @@
 <script lang="ts">
   import { login } from "$lib/api";
-  import { Key, Shield, ChevronRight, Eye, EyeOff } from "lucide-svelte";
-  import Spinner from "$lib/Spinner.svelte";
-  import Alert from "$lib/Alert.svelte";
 
   let password = $state("");
   let error = $state("");
@@ -24,7 +21,7 @@
       if (result.ok) {
         window.location.href = "/dashboard";
       } else {
-        const errMsg = typeof result.error === 'string'
+        const errMsg = typeof result.error === "string"
           ? result.error
           : (result.error?.message || "登录失败");
         error = errMsg;
@@ -46,105 +43,86 @@
   <title>登录 — Vega API</title>
 </svelte:head>
 
-<div class="min-h-dvh flex items-center justify-center bg-background px-4 py-8 sm:px-6 relative overflow-hidden">
-  <!-- Subtle radial gradient background glow -->
-  <div
-    class="absolute inset-0 pointer-events-none"
-    style="background: radial-gradient(ellipse 70% 50% at 50% 35%, rgba(59,130,246,0.08) 0%, transparent 65%);"
-  ></div>
-  <!-- Subtle dot pattern overlay -->
-  <div
-    class="absolute inset-0 pointer-events-none opacity-[0.015]"
-    style="background-image: radial-gradient(circle, #ffffff 1px, transparent 1px); background-size: 24px 24px;"
-  ></div>
-
-  <div class="w-full max-w-sm relative z-10">
-    <!-- Logo & Brand -->
-    <div class="text-center mb-10">
-      <div
-        class="stat-icon-cta inline-flex items-center justify-center w-16 h-16 rounded-2xl ring-1 ring-border-strong mb-5"
-      >
-        <Key class="w-7 h-7 text-cta" stroke-width={1.75} />
-      </div>
-      <h1 class="text-2xl font-bold text-primary tracking-tight font-mono">
-        Vega<span class="text-cta font-sans font-semibold"> API</span>
-      </h1>
-      <p class="text-sm text-muted mt-2">AI 网关 · 配置管理面板</p>
+<section class="login" id="loginView" data-od-id="login" style="display:grid">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
     </div>
-
-    <!-- Login Card -->
-    <form
-      onsubmit={handleSubmit}
-      class="card-gradient-cta glass-surface rounded-2xl p-6 sm:p-8 space-y-5 shadow-elevated animate-scale-in"
-    >
-      <!-- Password Field -->
-      <div class="space-y-2">
-        <label
-          for="password"
-          class="flex items-center gap-2 text-xs font-semibold text-secondary uppercase tracking-wider"
-        >
-          <Shield class="w-3.5 h-3.5" />
-          管理密码
-        </label>
-        <div class="relative">
-          <!-- svelte-ignore a11y_autofocus -->
+    <h1>Vega <em style="font-style:normal;color:var(--cta)">API</em></h1>
+    <p class="sub">AI 网关 · 配置管理控制台</p>
+    <div class="login-box">
+      <label for="adminPass">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+        管理密码
+      </label>
+      <div class="field">
+        <div style="position:relative">
           <input
-            id="password"
+            id="adminPass"
             type={showPassword ? "text" : "password"}
-            bind:value={password}
+            class="input"
             placeholder="请输入管理密码"
-            autofocus
+            style="padding-right:42px"
             autocomplete="current-password"
-            class="w-full px-4 py-3 rounded-xl bg-input border border-default text-primary text-sm
-                   placeholder:text-placeholder
-                   focus:outline-none focus:ring-2 focus:ring-cta/30 focus:border-cta/40
-                   transition-all duration-200 font-mono tracking-wide"
+            bind:value={password}
+            onkeydown={(e) => { if (e.key === "Enter") handleSubmit(e); }}
           />
           <button
             type="button"
-            class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-secondary transition-colors p-1"
+            class="icon-btn"
             onclick={() => (showPassword = !showPassword)}
-            tabindex="-1"
+            style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:32px;height:32px"
             aria-label={showPassword ? "隐藏密码" : "显示密码"}
           >
-            {#if showPassword}
-              <EyeOff class="w-4 h-4" stroke-width={1.5} />
-            {:else}
-              <Eye class="w-4 h-4" stroke-width={1.5} />
-            {/if}
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8">
+              {#if showPassword}
+                <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                <circle cx="12" cy="12" r="3" />
+              {:else}
+                <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                <circle cx="12" cy="12" r="3" />
+                <line x1="2" y1="2" x2="22" y2="22" />
+              {/if}
+            </svg>
           </button>
         </div>
       </div>
 
-      <!-- Error -->
       {#if error}
-        <Alert type="error" message={error} />
+        <div
+          style="display:flex;align-items:flex-start;gap:8px;background:var(--danger-soft);border:1px solid rgba(239,68,68,.2);border-radius:var(--r-sm);padding:10px 12px;font-size:12.5px;color:var(--danger);margin-bottom:12px"
+          role="alert"
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" style="margin-top:1px;flex-shrink:0">
+            <path d="M12 9v4M12 17h.01" />
+            <path d="M10.3 3.2 2.3 18a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3L13.7 3.2a2 2 0 0 0-3.4 0z" />
+          </svg>
+          <span>{error}</span>
+        </div>
       {/if}
 
-      <!-- Submit -->
       <button
-        type="submit"
+        class="btn btn-primary"
+        onclick={handleSubmit}
+        style="width:100%;font-size:14px;padding:12px"
         disabled={loading}
-        class="btn-cta-gradient w-full py-3 rounded-xl disabled:opacity-40
-               text-white text-sm font-semibold tracking-wide
-               transition-all duration-200
-               hover:brightness-110
-               active:scale-[0.98]
-               flex items-center justify-center gap-2"
       >
         {#if loading}
-          <Spinner size="sm" />
-          <span>验证中...</span>
+          <span class="spark"></span>
+          验证中...
         {:else}
-          <span>登 录</span>
-          <ChevronRight class="w-4 h-4" />
+          进入控制台
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
         {/if}
       </button>
-
-      <!-- Hint -->
-      <p class="text-center text-xs text-muted pt-1">
-        首次使用？输入新密码即可设置管理密码
-      </p>
-    </form>
+      <p style="font-size:12px;text-align:center;margin-top:16px;color:var(--muted)">首次使用？输入新密码即可设置管理密码</p>
+    </div>
   </div>
-</div>
+</section>

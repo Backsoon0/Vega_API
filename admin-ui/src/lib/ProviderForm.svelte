@@ -187,120 +187,64 @@
 <form onsubmit={handleSubmit} class="space-y-5">
   <!-- Provider Type — visual radio cards -->
   <fieldset>
-    <legend class="flex items-center gap-2 text-xs font-semibold text-secondary uppercase tracking-wider mb-3">
-      提供商类型 <span class="text-danger">*</span>
+    <legend style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">
+      提供商类型 <span style="color:var(--danger)">*</span>
       {#if editing}
-        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-warning-subtle border border-warning/20 text-warning text-[10px] font-bold uppercase tracking-wider">
-          <Lock class="w-3 h-3" />
-          不可更改
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;background:var(--warning-soft);border:1px solid rgba(245,158,11,.2);color:var(--warning);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+          <Lock class="w-3 h-3" /> 不可更改
         </span>
       {/if}
     </legend>
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:6px">
       {#each typeOptions as opt}
         {@const isSelected = type === opt.value}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <label
-          class="relative flex items-center gap-2.5 px-4 py-3 rounded-xl
-                 border transition-all duration-200 select-none
-                 {editing
-                   ? (isSelected
-                       ? 'bg-surface cursor-default border-white/[0.12] text-primary'
-                       : 'opacity-30 cursor-not-allowed bg-input border-white/[0.05] text-muted')
-                   : (isSelected
-                       ? 'bg-cta-subtle border-cta/40 text-primary ring-1 ring-cta/20 cursor-pointer'
-                       : 'bg-input border-white/[0.08] text-muted hover:border-white/[0.14] hover:text-secondary cursor-pointer')}"
+          style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid {isSelected ? 'rgba(59,130,246,.4)' : 'var(--b-def)'};background:{isSelected ? 'var(--cta-soft)' : 'var(--input)'};color:{isSelected ? 'var(--fg)' : 'var(--muted)'};transition:all 150ms;{editing ? (isSelected ? 'cursor:default;border-color:rgba(255,255,255,.12);background:var(--surface);color:var(--fg)' : 'opacity:.3;cursor:not-allowed') : (isSelected ? 'cursor:pointer' : 'hover:cursor:pointer')}"
         >
-          <input
-            type="radio"
-            bind:group={type}
-            value={opt.value}
-            disabled={!!editing}
-            class="sr-only"
-          />
+          <input type="radio" bind:group={type} value={opt.value} disabled={!!editing} class="sr-only" />
           <opt.icon class="w-4 h-4 shrink-0" />
-          <span class="text-xs font-medium">{opt.label}</span>
-
-          {#if editing && isSelected}
-            <span class="absolute -top-1.5 -right-1.5 flex items-center justify-center w-5 h-5 rounded-full bg-warning text-background shadow-sm" title="提供商类型在创建后不可更改">
-              <Lock class="w-3 h-3" />
-            </span>
-          {/if}
+          <span style="font-size:12px;font-weight:500">{opt.label}</span>
         </label>
       {/each}
     </div>
     {#if editing}
-      <p class="text-[11px] text-warning flex items-center gap-1.5 mt-2">
-        <Lock class="w-3 h-3 shrink-0" />
-        提供商类型创建后无法修改，如需切换类型请删除后重新添加
+      <p style="font-size:11px;color:var(--warning);display:flex;align-items:center;gap:6px;margin-top:8px">
+        <Lock class="w-3 h-3 shrink-0" /> 提供商类型创建后无法修改，如需切换类型请删除后重新添加
       </p>
     {/if}
   </fieldset>
 
   <!-- Name + ID -->
-  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-    <div class="space-y-1.5">
-      <label for="pf-name" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-        名称 <span class="text-danger">*</span>
-      </label>
-      <input
-        id="pf-name"
-        type="text"
-        bind:value={name}
-        placeholder="如: Vertex AI Primary"
-        required
-        class="w-full px-3.5 py-2.5 rounded-xl bg-input border border-white/[0.10] text-primary text-sm
-               placeholder:text-placeholder font-sans
-               focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-               transition-all duration-200"
-      />
+  <div style="display:grid;grid-template-columns:1fr;gap:16px">
+    <div class="field" style="margin-bottom:0">
+      <label for="pf-name">名称 <span style="color:var(--danger)">*</span></label>
+      <input id="pf-name" type="text" class="input" bind:value={name} placeholder="如: Vertex AI Primary" required />
     </div>
-    <div class="space-y-1.5">
-      <label for="pf-id" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-        提供商 ID <span class="text-danger">*</span>
-      </label>
-      <input
-        id="pf-id"
-        type="text"
-        bind:value={provId}
-        placeholder="如: vertex-1"
-        required
-        disabled={!!editing}
-        class="w-full px-3.5 py-2.5 rounded-xl bg-input border border-white/[0.10] text-primary text-sm
-               placeholder:text-placeholder font-mono
-               focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-               transition-all duration-200
-               disabled:opacity-40 disabled:cursor-not-allowed"
-      />
+    <div class="field" style="margin-bottom:0">
+      <label for="pf-id">提供商 ID <span style="color:var(--danger)">*</span></label>
+      <input id="pf-id" type="text" class="input" style="font-family:var(--font-mono)" bind:value={provId} placeholder="如: vertex-1" required disabled={!!editing} />
     </div>
   </div>
 
   <!-- ═══════════ Vertex AI Fields ═══════════ -->
   {#if type === "vertex_ai"}
-    <div class="space-y-4 p-4 sm:p-5 rounded-xl bg-input border border-white/[0.06]">
-      <span class="text-xs font-semibold text-secondary uppercase tracking-wider">Vertex AI 配置</span>
+    <div style="padding:16px 18px;border-radius:14px;background:var(--input);border:1px solid var(--b-def)">
+      <span style="font-size:12px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em">Vertex AI 配置</span>
 
       <!-- Auth Mode Toggle -->
       <fieldset>
-        <legend class="block text-xs font-semibold text-secondary uppercase tracking-wider mb-2.5">
-          认证方式 <span class="text-danger">*</span>
-        </legend>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <legend style="font-size:12px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">认证方式 <span style="color:var(--danger)">*</span></legend>
+        <div style="display:grid;grid-template-columns:1fr;gap:8px">
           {#each vertexAuthOptions as opt}
             {@const isSelected = vAuthMode === opt.value}
             <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <label
-              class="relative flex items-center gap-2.5 px-4 py-3 rounded-xl
-                     border transition-all duration-200 select-none
-                     {isSelected
-                       ? 'bg-cta-subtle border-cta/40 text-primary ring-1 ring-cta/20 cursor-pointer'
-                       : 'bg-surface border-white/[0.08] text-muted hover:border-white/[0.14] hover:text-secondary cursor-pointer'}"
-            >
+            <label style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid {isSelected ? 'rgba(59,130,246,.4)' : 'var(--b-def)'};background:{isSelected ? 'var(--cta-soft)' : 'var(--surface)'};color:{isSelected ? 'var(--fg)' : 'var(--muted)'};transition:all 150ms">
               <input type="radio" bind:group={vAuthMode} value={opt.value} class="sr-only" />
               <opt.icon class="w-4 h-4 shrink-0" />
-              <div class="flex flex-col gap-0.5">
-                <span class="text-xs font-medium">{opt.label}</span>
-                <span class="text-[10px] text-muted leading-tight">{opt.desc}</span>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <span style="font-size:12px;font-weight:500">{opt.label}</span>
+                <span style="font-size:10px;color:var(--muted);line-height:1.3">{opt.desc}</span>
               </div>
             </label>
           {/each}
@@ -308,40 +252,23 @@
       </fieldset>
 
       <!-- Project ID + Location -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div class="space-y-1.5">
-          <label for="pf-proj" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-            项目 ID <span class="text-danger">*</span>
-          </label>
-          <input id="pf-proj" type="text" bind:value={vProjectId} placeholder="Google Cloud Project ID" required
-            class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
-                   placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-                   transition-all duration-200" />
+      <div style="display:grid;grid-template-columns:1fr;gap:16px">
+        <div class="field" style="margin-bottom:0">
+          <label for="pf-proj">项目 ID <span style="color:var(--danger)">*</span></label>
+          <input id="pf-proj" type="text" class="input" style="font-family:var(--font-mono)" bind:value={vProjectId} placeholder="Google Cloud Project ID" required />
         </div>
-        <div class="space-y-1.5">
-          <label for="pf-loc" class="block text-xs font-semibold text-secondary uppercase tracking-wider">区域</label>
-          <input id="pf-loc" type="text" bind:value={vLocation} placeholder="us-central1"
-            class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
-                   placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-                   transition-all duration-200" />
+        <div class="field" style="margin-bottom:0">
+          <label for="pf-loc">区域</label>
+          <input id="pf-loc" type="text" class="input" style="font-family:var(--font-mono)" bind:value={vLocation} placeholder="us-central1" />
         </div>
       </div>
 
       <!-- ═══ Service Account Mode ═══ -->
       {#if vAuthMode === "service_account"}
-        <div class="flex items-center justify-between gap-3 flex-wrap">
-          <span class="text-[11px] text-muted font-medium">服务账号凭据</span>
-          <button
-            type="button"
-            class="px-3 py-1.5 text-xs font-medium rounded-lg
-                   bg-surface-elevated hover:bg-surface-hover text-secondary hover:text-primary
-                   border border-white/[0.08]
-                   transition-all duration-200
-                   inline-flex items-center gap-1.5"
-            onclick={importFromJson}
-          >
-            <Upload class="w-3 h-3" />
-            从 JSON 密钥文件导入
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--muted);font-weight:500">服务账号凭据</span>
+          <button type="button" class="btn btn-soft btn-sm" onclick={importFromJson} style="display:inline-flex;align-items:center;gap:6px">
+            <Upload style="width:13px;height:13px" /> 从 JSON 密钥文件导入
           </button>
         </div>
 
@@ -349,41 +276,23 @@
           <Alert type={importOk ? 'success' : 'error'} message={importStatus} />
         {/if}
 
-        <div class="space-y-1.5">
-          <label for="pf-email" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-            服务账号邮箱 <span class="text-danger">*</span>
-          </label>
-          <input id="pf-email" type="text" bind:value={vSaEmail} placeholder="xxx@yyy.iam.gserviceaccount.com" required
-            class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
-                   placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-                   transition-all duration-200" />
+        <div class="field">
+          <label for="pf-email">服务账号邮箱 <span style="color:var(--danger)">*</span></label>
+          <input id="pf-email" type="text" class="input" style="font-family:var(--font-mono)" bind:value={vSaEmail} placeholder="xxx@yyy.iam.gserviceaccount.com" required />
         </div>
-        <div class="space-y-1.5">
-          <label for="pf-key" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-            私钥 (PEM)
-            {#if editing}<span class="text-muted font-normal normal-case tracking-normal"> — 留空则不修改</span>{/if}
-          </label>
-          <textarea id="pf-key" bind:value={vPrivateKey} placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" rows={5}
-            class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
-                   placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-                   transition-all duration-200 resize-y"></textarea>
+        <div class="field">
+          <label for="pf-key">私钥 (PEM){#if editing}<span style="color:var(--muted);font-weight:400;text-transform:none"> — 留空则不修改</span>{/if}</label>
+          <textarea id="pf-key" class="textarea" style="font-family:var(--font-mono)" rows={5} bind:value={vPrivateKey} placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"></textarea>
         </div>
       {/if}
 
       <!-- ═══ API Key Mode ═══ -->
       {#if vAuthMode === "api_key"}
-        <div class="space-y-1.5">
-          <label for="pf-vapikey" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-            Vertex AI API Key <span class="text-danger">*</span>
-            {#if editing}<span class="text-muted font-normal normal-case tracking-normal"> — 留空则不修改</span>{/if}
-          </label>
-          <input id="pf-vapikey" type="password" bind:value={vApiKey} placeholder="输入 Vertex AI API Key"
-            class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
-                   placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-                   transition-all duration-200" />
-          <p class="text-[11px] text-muted flex items-center gap-1 mt-1">
-            <AlertCircle class="w-3 h-3 shrink-0" />
-            使用 Vertex AI API 密钥进行认证，无需服务账号 JSON 文件
+        <div class="field">
+          <label for="pf-vapikey">Vertex AI API Key <span style="color:var(--danger)">*</span>{#if editing}<span style="color:var(--muted);font-weight:400;text-transform:none"> — 留空则不修改</span>{/if}</label>
+          <input id="pf-vapikey" type="password" class="input" style="font-family:var(--font-mono)" bind:value={vApiKey} placeholder="输入 Vertex AI API Key" />
+          <p style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:4px">
+            <AlertCircle style="width:12px;height:12px;flex-shrink:0" /> 使用 Vertex AI API 密钥进行认证，无需服务账号 JSON 文件
           </p>
         </div>
       {/if}
@@ -392,69 +301,47 @@
 
   <!-- ═══════════ API Key Fields ═══════════ -->
   {#if type === "google_ai_studio" || type === "openai" || type === "anthropic"}
-    <div class="space-y-4 p-4 sm:p-5 rounded-xl bg-input border border-white/[0.06]">
-      <span class="text-xs font-semibold text-secondary uppercase tracking-wider">
-        {type === "anthropic" ? "Anthropic" : ""}
-        {type === "google_ai_studio" ? "Google AI Studio" : ""}
-        {type === "openai" ? "OpenAI" : ""} API 密钥配置
+    <div style="padding:16px 18px;border-radius:14px;background:var(--input);border:1px solid var(--b-def)">
+      <span style="font-size:12px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em">
+        {type === "anthropic" ? "Anthropic" : ""}{type === "google_ai_studio" ? "Google AI Studio" : ""}{type === "openai" ? "OpenAI" : ""} API 密钥配置
       </span>
 
-      <div class="space-y-1.5">
-        <label for="pf-apikey" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-          API Key <span class="text-danger">*</span>
-          {#if editing}<span class="text-muted font-normal normal-case tracking-normal"> — 留空则不修改</span>{/if}
-        </label>
-        <input id="pf-apikey" type="password" bind:value={fApiKey} placeholder="输入 API Key"
-          class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
-                 placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-                 transition-all duration-200" />
+      <div class="field">
+        <label for="pf-apikey">API Key <span style="color:var(--danger)">*</span>{#if editing}<span style="color:var(--muted);font-weight:400;text-transform:none"> — 留空则不修改</span>{/if}</label>
+        <input id="pf-apikey" type="password" class="input" style="font-family:var(--font-mono)" bind:value={fApiKey} placeholder="输入 API Key" />
       </div>
 
       {#if type === "openai"}
-        <div class="space-y-1.5">
-          <label for="pf-url" class="block text-xs font-semibold text-secondary uppercase tracking-wider">
-            自定义 Base URL <span class="text-muted font-normal normal-case">（可选）</span>
-          </label>
-          <input id="pf-url" type="text" bind:value={oBaseUrl} placeholder="https://api.openai.com/v1"
-            class="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-white/[0.10] text-primary text-sm font-mono
-                   placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-                   transition-all duration-200" />
+        <div class="field">
+          <label for="pf-url">自定义 Base URL <span style="color:var(--muted);font-weight:400;text-transform:none">（可选）</span></label>
+          <input id="pf-url" type="text" class="input" style="font-family:var(--font-mono)" bind:value={oBaseUrl} placeholder="https://api.openai.com/v1" />
         </div>
       {/if}
     </div>
   {/if}
 
   <!-- ═══════════ Common: Weight + Enabled ═══════════ -->
-  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-    <div class="space-y-1.5">
-      <label for="pf-weight" class="block text-xs font-semibold text-secondary uppercase tracking-wider">权重</label>
-      <input id="pf-weight" type="number" bind:value={weight} min="0" max="100"
-        class="w-full px-3.5 py-2.5 rounded-xl bg-input border border-white/[0.10] text-primary text-sm font-mono
-               placeholder:text-placeholder focus:outline-none focus:ring-2 focus:ring-cta/40 focus:border-white/[0.20]
-               transition-all duration-200" />
+  <div style="display:grid;grid-template-columns:1fr;gap:16px">
+    <div class="field" style="margin-bottom:0">
+      <label for="pf-weight">权重</label>
+      <input id="pf-weight" type="number" class="input" style="font-family:var(--font-mono)" bind:value={weight} min="0" max="100" />
     </div>
 
     <!-- Toggle Switch -->
-    <div class="flex items-end pb-1">
-      <label class="flex items-center gap-3 cursor-pointer select-none">
-        <div class="relative">
-          <input type="checkbox" bind:checked={enabled} class="sr-only peer" />
-          <div class="w-10 h-6 rounded-full bg-white/[0.08] peer-checked:bg-accent transition-all duration-200"></div>
-          <div class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow
-                      transition-transform duration-200 ease-out
-                      peer-checked:translate-x-4"></div>
-        </div>
-        <span class="text-sm font-medium text-secondary">
-          {enabled ? "已启用" : "已禁用"}
-        </span>
-      </label>
-    </div>
+    <button
+      type="button"
+      style="display:flex;align-items:center;gap:12px;cursor:pointer;background:none;border:none;color:inherit;font:inherit;align-self:end;padding-bottom:2px"
+      onclick={() => (enabled = !enabled)}
+      role="switch"
+      aria-checked={enabled}
+    >
+      <span class="switch {enabled ? 'on' : ''}"></span>
+      <span style="font-size:12.5px;font-weight:500;color:var(--fg-2)">{enabled ? "已启用" : "已禁用"}</span>
+    </button>
   </div>
 
   <!-- Hint -->
-  <Alert type="info">
-    模型列表将自动从提供商 API 获取，无需手动配置。
-  </Alert>
+  <Alert type="info">模型列表将自动从提供商 API 获取，无需手动配置。</Alert>
 
   <!-- Error -->
   {#if error}
@@ -462,17 +349,10 @@
   {/if}
 
   <!-- Actions -->
-  <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-2">
-    <button type="submit" disabled={loading}
-      class="w-full sm:w-auto px-6 py-3 rounded-xl
-             bg-cta hover:bg-cta-hover disabled:opacity-40
-             text-white text-sm font-semibold tracking-wide
-             transition-all duration-200 shadow-glow-cta
-             active:scale-[0.98]
-             inline-flex items-center justify-center gap-2">
+  <div style="display:flex;flex-direction:column-reverse;gap:10px;padding-top:8px">
+    <button type="submit" disabled={loading} class="btn btn-primary" style="width:100%;justify-content:center">
       {#if loading}
-        <Spinner size="sm" />
-        保存中...
+        <span class="spark"></span> 保存中...
       {:else}
         保 存
       {/if}

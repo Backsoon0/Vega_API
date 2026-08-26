@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Power, PowerOff, Pencil, Trash2, GripVertical } from "lucide-svelte";
   import type { Provider } from "$lib/api";
 
   interface Props {
@@ -18,110 +17,53 @@
     anthropic: "Anthropic",
   };
 
-  const typeColorSets: Record<string, { text: string; bg: string; dot: string }> = {
-    vertex_ai: { text: "text-vertex", bg: "bg-vertex-subtle", dot: "bg-vertex" },
-    google_ai_studio: { text: "text-studio", bg: "bg-studio-subtle", dot: "bg-studio" },
-    openai: { text: "text-openai", bg: "bg-openai-subtle", dot: "bg-openai" },
-    anthropic: { text: "text-anthropic", bg: "bg-anthropic-subtle", dot: "bg-anthropic" },
+  const typeTag: Record<string, string> = {
+    vertex_ai: "tag-vertex",
+    google_ai_studio: "tag-studio",
+    openai: "tag-openai",
+    anthropic: "tag-anthropic",
   };
-
-  const typeBadgeGradients: Record<string, string> = {
-    vertex_ai: "bg-gradient-to-br from-vertex-subtle to-vertex-subtle/50 ring-1 ring-vertex/20",
-    google_ai_studio: "bg-gradient-to-br from-studio-subtle to-studio-subtle/50 ring-1 ring-studio/20",
-    openai: "bg-gradient-to-br from-openai-subtle to-openai-subtle/50 ring-1 ring-openai/20",
-    anthropic: "bg-gradient-to-br from-anthropic-subtle to-anthropic-subtle/50 ring-1 ring-anthropic/20",
-  };
-
-  let colors = $derived(typeColorSets[provider.type] || { text: "text-muted", bg: "bg-surface-elevated", dot: "bg-muted" });
-  let badgeGradient = $derived(typeBadgeGradients[provider.type] || "bg-surface-elevated ring-1 ring-white/[0.06]");
 </script>
 
 <div
-class="group bg-surface rounded-2xl p-4 sm:p-5
-         flex items-center gap-3 sm:gap-4
-         transition-all duration-200 shadow-card
-         hover:bg-surface-elevated hover:shadow-card-hover
-         active:scale-[0.995]"
-  class:opacity-50={!provider.enabled}
+  class="card card-pad"
+  style="display:flex;align-items:center;gap:14px;padding:14px 18px;{provider.enabled ? '' : 'opacity:.62'}"
   role="article"
   aria-label={`${provider.name} — ${provider.enabled ? "已启用" : "已禁用"}`}
 >
-  <!-- Drag handle (desktop only) -->
-  <div class="hidden sm:block text-muted/40 shrink-0" aria-hidden="true">
-    <GripVertical class="w-4 h-4" />
-  </div>
-
-  <!-- Type badge -->
-  <span
-    class="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
-           text-[11px] font-bold uppercase tracking-wider
-           {colors.text} {badgeGradient}"
-  >
-    <span class="w-1.5 h-1.5 rounded-full {colors.dot}" aria-hidden="true"></span>
+  <!-- Type tag -->
+  <span class="tag {typeTag[provider.type] || 'tag-muted'}" style="flex-shrink:0">
+    <span class="t-dot" style="background:currentColor;border-radius:50%"></span>
     {typeLabels[provider.type] || provider.type}
   </span>
 
   <!-- Info -->
-  <div class="flex-1 min-w-0">
-    <div class="flex items-center gap-2">
-      <span class="font-semibold text-sm text-primary truncate">{provider.name}</span>
-      <!-- Status dot -->
+  <div style="flex:1;min-width:0">
+    <div class="row">
+      <span style="font-weight:600;color:var(--fg)">{provider.name}</span>
       <span
-        class="shrink-0 w-1.5 h-1.5 rounded-full {provider.enabled ? 'bg-accent shadow-[0_0_8px_var(--color-accent-glow)]' : 'bg-muted'}"
-        aria-hidden="true"
+        style="width:7px;height:7px;border-radius:50%;background:{provider.enabled ? 'var(--success)' : 'var(--muted)'};box-shadow:{provider.enabled ? '0 0 8px var(--accent-glow)' : 'none'}"
       ></span>
     </div>
-    <p class="text-xs text-muted mt-0.5 truncate font-mono tabular-nums">
-      {provider.id} &middot; 权重 {provider.weight}
-    </p>
+    <div class="mono" style="font-size:11px;color:var(--muted)">{provider.id} · 权重 {provider.weight}</div>
   </div>
 
-  <!-- Actions — always visible on mobile, fade on desktop -->
-  <div
-    class="flex items-center gap-0.5 shrink-0
-           sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100
-           transition-opacity duration-200"
-  >
-    <!-- Edit -->
-    <button
-      class="p-2 rounded-lg hover:bg-surface-elevated text-muted hover:text-secondary transition-all duration-150 hover:scale-110
-             min-w-[36px] min-h-[36px] sm:min-w-0 sm:min-h-0
-             inline-flex items-center justify-center"
-      onclick={() => onedit(provider.id)}
-      title="编辑提供商"
-      aria-label={`编辑 ${provider.name}`}
-    >
-      <Pencil class="w-3.5 h-3.5" />
+  <!-- Actions -->
+  <div class="row">
+    <button class="icon-btn" style="width:36px;height:36px" onclick={() => onedit(provider.id)} title="编辑提供商" aria-label={`编辑 ${provider.name}`}>
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" /></svg>
     </button>
-
-    <!-- Toggle -->
     <button
-      class="p-2 rounded-lg hover:bg-surface-elevated transition-all duration-150 hover:scale-110
-             min-w-[36px] min-h-[36px] sm:min-w-0 sm:min-h-0
-             inline-flex items-center justify-center"
-      class:text-warning={provider.enabled}
-      class:text-accent={!provider.enabled}
+      class="icon-btn"
+      style="width:36px;height:36px;color:{provider.enabled ? 'var(--warning)' : 'var(--success)'}"
       onclick={() => ontoggle(provider.id)}
       title={provider.enabled ? "禁用提供商" : "启用提供商"}
       aria-label={provider.enabled ? `禁用 ${provider.name}` : `启用 ${provider.name}`}
     >
-      {#if provider.enabled}
-        <PowerOff class="w-3.5 h-3.5 text-warning" />
-      {:else}
-        <Power class="w-3.5 h-3.5 text-accent" />
-      {/if}
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" /><path d="M12 2v9" /></svg>
     </button>
-
-    <!-- Delete -->
-    <button
-      class="p-2 rounded-lg hover:bg-danger-subtle text-muted hover:text-danger transition-all duration-150 hover:scale-110
-             min-w-[36px] min-h-[36px] sm:min-w-0 sm:min-h-0
-             inline-flex items-center justify-center"
-      onclick={() => ondelete(provider.id)}
-      title="删除提供商"
-      aria-label={`删除 ${provider.name}`}
-    >
-      <Trash2 class="w-3.5 h-3.5" />
+    <button class="icon-btn" style="width:36px;height:36px;color:var(--danger)" onclick={() => ondelete(provider.id)} title="删除提供商" aria-label={`删除 ${provider.name}`}>
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M3 6h18M8 6V4h8v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" /></svg>
     </button>
   </div>
 </div>
