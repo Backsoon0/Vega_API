@@ -16,6 +16,8 @@ import { recordUsage, extractCacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
 import { getClientKeyName } from '../../middleware/auth';
 import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
+import { toJsonErrorBody } from '../../upstream-errors';
+import { shouldUseAISDKForGoogleTools } from '../../google-tool-mode';
 
 export const v1betaChatRoutes = new Hono<{ Bindings: Env }>();
 
@@ -90,12 +92,49 @@ function geminiToOpenAI(body: Record<string, unknown>): Record<string, unknown> 
 		const text = si.parts.map((p) => p.text || '').join('\n');
 		if (text) messages.push({ role: 'system', content: text });
 	}
+
+	// Match functionResponse → functionCall by name (Gemini has no call ids).
+	let callSeq = 0;
+	const pendingByName = new Map<string, string>();
+
 	for (const c of (body.contents as Array<Record<string, unknown>>) || []) {
 		const role = c.role === 'model' ? 'assistant' : String(c.role || 'user');
 		const parts = (c.parts as Array<Record<string, unknown>>) || [];
-		const text = parts.map((p: any) => p.text || '').join('\n');
-		if (text) messages.push({ role, content: text });
+		const textParts: string[] = [];
+		const toolCalls: Array<Record<string, unknown>> = [];
+		const toolResults: Array<Record<string, unknown>> = [];
+		for (const p of parts as Array<any>) {
+			if (p.thought) continue;
+			if (p.functionCall) {
+				const id = `call_${++callSeq}`;
+				const name = p.functionCall.name;
+				pendingByName.set(name, id);
+				toolCalls.push({
+					id,
+					type: 'function',
+					function: { name, arguments: JSON.stringify(p.functionCall.args ?? {}) },
+				});
+			} else if (p.functionResponse) {
+				const name = p.functionResponse.name;
+				const id = pendingByName.get(name) || `call_${++callSeq}`;
+				const resp = p.functionResponse.response;
+				toolResults.push({
+					role: 'tool',
+					tool_call_id: id,
+					content: typeof resp === 'string' ? resp : JSON.stringify(resp ?? {}),
+				});
+			} else if (typeof p.text === 'string' && p.text.length > 0) {
+				textParts.push(p.text);
+			}
+		}
+		if (textParts.length > 0 || toolCalls.length > 0) {
+			const msg: Record<string, unknown> = { role, content: textParts.join('\n') || null };
+			if (toolCalls.length > 0) msg.tool_calls = toolCalls;
+			messages.push(msg);
+		}
+		for (const tr of toolResults) messages.push(tr);
 	}
+
 	const gc = body.generationConfig as Record<string, unknown> | undefined;
 	return {
 		messages,
@@ -107,17 +146,23 @@ function geminiToOpenAI(body: Record<string, unknown>): Record<string, unknown> 
 }
 
 /**
- * Convert Gemini generateContent request to AI SDK format.
- * Gemini format: { contents: [{ role, parts: [{ text, ... }] }], systemInstruction, generationConfig, ... }
+ * Convert Gemini generateContent request to AI SDK model-message format.
+ *
+ * Handles native Gemini functionCall / functionResponse parts so tools round-trip
+ * through the AI SDK Google provider (which injects the Gemini-3
+ * `skip_thought_signature_validator` sentinel for replayed function calls).
+ * Thought parts (`thought: true`) are dropped — they can't be re-signed in this
+ * path. functionCall/functionResponse are matched by name, since native Gemini
+ * has no call ids.
  */
 function geminiToAISDK(body: Record<string, unknown>): {
-	messages: Array<{ role: string; content: Array<{ type: string; text: string }> }>;
+	messages: Array<{ role: string; content: any }>;
 	system?: string;
 } {
 	const contents = (body.contents as Array<Record<string, unknown>>) || [];
 	const systemInstruction = body.systemInstruction as { parts?: Array<{ text: string }> } | undefined;
 
-	const messages: Array<{ role: string; content: Array<{ type: string; text: string }> }> = [];
+	const messages: Array<{ role: string; content: any }> = [];
 	if (systemInstruction?.parts) {
 		messages.push({
 			role: 'system',
@@ -125,21 +170,94 @@ function geminiToAISDK(body: Record<string, unknown>): {
 		});
 	}
 
+	// Build a synthetic id per functionCall and match functionResponse by name
+	// (Gemini uses the same name to pair a call with its result).
+	let callSeq = 0;
+	const pendingByName = new Map<string, string[]>();
+
+	const toolResult = (fr: { name: string; response?: unknown }) => {
+		const arr = pendingByName.get(fr.name);
+		const toolCallId = (arr && arr.length ? arr.shift() : `${fr.name}_${++callSeq}`) || '';
+		const resp = fr.response;
+		const text = typeof resp === 'string' ? resp : JSON.stringify(resp ?? {});
+		return { type: 'tool-result', toolCallId, toolName: fr.name, output: { type: 'text', value: text } };
+	};
+
 	for (const c of contents) {
-		const role = c.role === 'model' ? 'assistant' : String(c.role || 'user');
 		const parts = (c.parts as Array<Record<string, unknown>>) || [];
-		const content: Array<{ type: string; text: string }> = [];
-		for (const p of parts) {
-			if (p.text !== undefined) {
-				content.push({ type: 'text', text: String(p.text) });
+		const rawRole = String(c.role || 'user');
+
+		if (rawRole === 'model') {
+			const content: any[] = [];
+			for (const p of parts) {
+				if (p.thought) continue; // reasoning can't be re-signed
+				const fc = p.functionCall as any;
+				if (fc && fc.name) {
+					const name = fc.name;
+					const callId = `${name}_${++callSeq}`;
+					const arr = pendingByName.get(name) || [];
+					arr.push(callId);
+					pendingByName.set(name, arr);
+					content.push({ type: 'tool-call', toolCallId: callId, toolName: name, input: fc.args ?? {} });
+				} else if (typeof p.text === 'string' && p.text.length > 0) {
+					content.push({ type: 'text', text: p.text });
+				}
 			}
-		}
-		if (content.length > 0) {
-			messages.push({ role, content });
+			if (content.length > 0) messages.push({ role: 'assistant', content });
+		} else if (rawRole === 'function' || rawRole === 'tool') {
+			const content: any[] = [];
+			for (const p of parts) {
+				const fr = p.functionResponse as any;
+				if (fr && fr.name) content.push(toolResult(fr));
+			}
+			if (content.length > 0) messages.push({ role: 'tool', content });
+		} else {
+			// user: may carry text and/or functionResponse parts (Gemini packs the
+			// tool result into a user message). Split them into separate messages.
+			const textParts: any[] = [];
+			const resultParts: any[] = [];
+			for (const p of parts) {
+				const fr = p.functionResponse as any;
+				if (fr && fr.name) resultParts.push(toolResult(fr));
+				else if (typeof p.text === 'string' && p.text.length > 0) textParts.push({ type: 'text', text: p.text });
+			}
+			if (textParts.length > 0) messages.push({ role: 'user', content: textParts });
+			if (resultParts.length > 0) messages.push({ role: 'tool', content: resultParts });
 		}
 	}
 
 	return { messages };
+}
+
+/**
+ * Convert native Gemini tool declarations to an AI SDK ToolSet so the model can
+ * invoke tools through the AI SDK provider.
+ * Gemini: { tools: [{ functionDeclarations: [{ name, description, parameters }] }] }
+ */
+function geminiToolsToAISDK(tools: unknown): Record<string, { description?: string; parameters?: unknown }> | undefined {
+	if (!Array.isArray(tools)) return undefined;
+	const result: Record<string, { description?: string; parameters?: unknown }> = {};
+	for (const block of tools) {
+		for (const fd of (block?.functionDeclarations as Array<any>) || []) {
+			if (fd?.name) result[fd.name] = {
+				description: typeof fd.description === 'string' ? fd.description : undefined,
+				parameters: fd.parameters ?? undefined,
+			};
+		}
+	}
+	return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Detect whether the native Gemini request replays a prior assistant function
+ * call in its history (which carries a Gemini thought_signature requirement).
+ */
+function hasGeminiToolCalls(body: Record<string, unknown>): boolean {
+	const contents = body.contents;
+	if (!Array.isArray(contents)) return false;
+	return contents.some((c: any) =>
+		Array.isArray(c?.parts) && c.parts.some((p: any) => !!(p && p.functionCall)),
+	);
 }
 
 /**
@@ -230,7 +348,7 @@ async function handleGeminiDirectStream(
 		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, clientKeyName));
-		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, code: 500 } }), {
+		return new Response(toJsonErrorBody(errText, `Upstream ${upstreamResponse.status}`), {
 			status: upstreamResponse.status,
 			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
 		});
@@ -450,7 +568,7 @@ async function handleGeminiDirectNonStream(
 		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
 			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, clientKeyName));
-		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
+		return new Response(toJsonErrorBody(errText, `Upstream ${upstreamResponse.status}`), {
 			status: upstreamResponse.status, headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
 		});
 	}
@@ -506,6 +624,7 @@ async function handleGeminiStream(
 		temperature: genConfig?.temperature as number | undefined,
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
+		tools: geminiToolsToAISDK(body.tools) as any,
 		headers: undefined,
 		abortSignal: anySignal(connectController.signal, clientSignal),
 	});
@@ -744,6 +863,7 @@ async function handleGeminiNonStream(
 		temperature: genConfig?.temperature as number | undefined,
 		topP: genConfig?.topP as number | undefined,
 		stopSequences: (genConfig?.stopSequences as string[]) || undefined,
+		tools: geminiToolsToAISDK(body.tools) as any,
 		headers: undefined,
 		abortSignal: anySignal(AbortSignal.timeout(120_000), clientSignal),
 	}).catch((err) => {
@@ -925,29 +1045,49 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 			const isLastAttempt = attempt === MAX_RETRIES && candidate === tryCandidates[tryCandidates.length - 1];
 			try {
 				const type = candidate.provider.type;
-				const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
+				// Google/Vertex tool-call history can't round-trip Gemini thought
+				// signatures through the OpenAI-compat passthrough (HTTP 400). Route
+				// those through the AI SDK provider (injects the sentinel) unless the
+				// operator opts into the lighter direct path via VEGA_GOOGLE_TOOL_MODE.
+				const googleWithTools =
+					(type === 'google_ai_studio' || type === 'vertex_ai') &&
+					hasGeminiToolCalls(body) &&
+					shouldUseAISDKForGoogleTools(c.env);
+				const useDirect =
+					type === 'openai' || ((type === 'google_ai_studio' || type === 'vertex_ai') && !googleWithTools);
 
 				let normModelId = modelId;
 				let directProvider: ProviderMatch = candidate;
 				let skipVersioning = false;
 
 				if (type === 'google_ai_studio') {
-					skipVersioning = true;
-					normModelId = modelId.replace(/^(google\/|models\/)+/, '');
-					directProvider = {
-						...candidate,
-						provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
-					};
+					const cleanedModel = modelId.replace(/^(google\/|models\/)+/, '');
+					normModelId = cleanedModel;
+					if (useDirect) {
+						skipVersioning = true;
+						directProvider = {
+							...candidate,
+							provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
+						};
+					} else {
+						directProvider = { ...candidate, matchedModel: cleanedModel, provider: candidate.provider };
+					}
 				} else if (type === 'vertex_ai') {
-					skipVersioning = true;
-					normModelId = normModelId.startsWith('google/') ? normModelId : 'google/' + normModelId;
 					const cfg = candidate.provider.config;
 					const loc = cfg.location || 'us-central1';
-					const vConfig: Record<string, string> = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
-					if (!isVertexApiKeyMode(cfg)) {
-						vConfig.apiKey = await getVertexAccessToken(cfg);
+					const cleanedModel = modelId.replace(/^google\//, '');
+					if (useDirect) {
+						skipVersioning = true;
+						normModelId = modelId.startsWith('google/') ? modelId : 'google/' + modelId;
+						const vConfig: Record<string, string> = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
+						if (!isVertexApiKeyMode(cfg)) {
+							vConfig.apiKey = await getVertexAccessToken(cfg);
+						}
+						directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
+					} else {
+						normModelId = cleanedModel;
+						directProvider = { ...candidate, matchedModel: cleanedModel, provider: candidate.provider };
 					}
-					directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
 				}
 
 				const response = isStream
@@ -960,8 +1100,9 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 
 				if (response.status >= 400) {
 					lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
+					// 400/401/403: deterministic client/request error — return immediately;
+					// not a provider-health problem, so don't count toward the circuit.
 					if (FATAL_4XX.has(response.status)) {
-						recordCBFailure(candidate.provider.id);
 						fatalResponse = response;
 						break;
 					}

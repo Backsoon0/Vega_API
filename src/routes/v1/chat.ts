@@ -15,6 +15,8 @@ import { recordUsage, extractCacheTokens, extractOpenAICacheTokens } from '../..
 import { getFailoverEnabled } from '../../config';
 import { getClientKeyName } from '../../middleware/auth';
 import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
+import { toJsonErrorBody } from '../../upstream-errors';
+import { shouldUseAISDKForGoogleTools } from '../../google-tool-mode';
 
 export const v1ChatRoutes = new Hono<{ Bindings: Env }>();
 
@@ -84,17 +86,83 @@ function extractSystem(messages: Array<{ role: string; content: unknown }>): str
 }
 
 /**
- * Convert OpenAI chat completions messages to AI SDK format.
- * OpenAI: { role, content: string | array<{ type, text/image_url }> }
- * AI SDK: { role, content: string | array<{ type, text/file }> }
+ * Convert OpenAI chat completions messages to AI SDK model-message format.
+ *
+ * OpenAI: { role, content: string | array<{ type, text/image_url }>, tool_calls?, tool_call_id? }
+ * AI SDK: { role, content: string | array<TextPart|FilePart|ReasoningPart|ToolCallPart|ToolResultPart> }
+ *
+ * This must round-trip tool calls (assistant `tool_calls`) and tool results
+ * (`role: 'tool'`) so the Google provider can replay them with a valid
+ * `thoughtSignature` (or inject the `skip_thought_signature_validator` sentinel
+ * for Gemini 3). Without this, Google OpenAI-compat proxies reject replayed
+ * function-call history with a 400 "Function call is missing a thought_signature".
  */
 function openaiToAISDKMessages(
-	openaiMessages: Array<{ role: string; content: unknown; name?: string }>,
-): Array<{ role: string; content: string | Array<{ type: string; text?: string; data?: string; mediaType?: string }> }> {
+	openaiMessages: Array<{ role: string; content: unknown; name?: string; tool_calls?: any; tool_call_id?: string; reasoning_content?: string }>,
+): Array<{ role: string; content: any }> {
+	// Map tool_call_id → tool name. OpenAI `tool` messages only carry the id,
+	// but the AI SDK tool-result part needs the tool name (from the prior
+	// assistant `tool_calls`).
+	const toolNameById = new Map<string, string>();
+	for (const msg of openaiMessages) {
+		if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
+			for (const tc of msg.tool_calls) {
+				if (tc && tc.id && tc.function?.name) toolNameById.set(tc.id, tc.function.name);
+			}
+		}
+	}
+
 	return openaiMessages.map((msg) => {
 		// Map `developer` role (OpenAI o1/O3) → `system` (AI SDK compatible)
 		const role = msg.role === 'developer' ? 'system' : msg.role;
 		const content = msg.content;
+
+		// Tool result → `tool` message with tool-result part(s).
+		if (role === 'tool') {
+			const toolCallId = typeof msg.tool_call_id === 'string' ? msg.tool_call_id : '';
+			const toolName = toolNameById.get(toolCallId) || msg.name || 'tool';
+			const text =
+				typeof content === 'string' ? content
+				: Array.isArray(content) ? content.map((p: any) => String(p?.text ?? '')).join('\n')
+				: String(content ?? '');
+			return { role: 'tool', content: [{ type: 'tool-result', toolCallId, toolName, output: { type: 'text', value: text } }] };
+		}
+
+		// Assistant message → text + tool-call parts.
+		// Note: `reasoning_content` is deliberately dropped here. Prior thoughts
+		// cannot be re-signed (Gemini thought_signature / Anthropic thinking
+		// signature) from OpenAI-compat history, so sending them back to the
+		// provider triggers a 400. The Google path strips them earlier anyway.
+		if (role === 'assistant') {
+			const parts: Array<any> = [];
+			if (typeof content === 'string' && content.length > 0) {
+				parts.push({ type: 'text', text: content });
+			} else if (Array.isArray(content)) {
+				for (const part of content) {
+					if (part?.type === 'text') {
+						if (String(part.text || '').length > 0) parts.push({ type: 'text', text: String(part.text) });
+					} else if (part?.type === 'image_url') {
+						const url = part.image_url?.url || '';
+						let mediaType = 'image/png';
+						const match = url.match(/^data:(image\/[a-zA-Z0-9.+-]+);/i);
+						if (match) mediaType = match[1];
+						parts.push({ type: 'file', data: url, mediaType });
+					}
+				}
+			}
+			if (Array.isArray(msg.tool_calls)) {
+				for (const tc of msg.tool_calls) {
+					let input: unknown = tc?.function?.arguments;
+					if (typeof input === 'string') {
+						try { input = JSON.parse(input); } catch { /* keep raw string */ }
+					}
+					parts.push({ type: 'tool-call', toolCallId: tc?.id, toolName: tc?.function?.name, input });
+				}
+			}
+			return { role: 'assistant', content: parts };
+		}
+
+		// System / user messages.
 		if (typeof content === 'string') {
 			return { role, content };
 		}
@@ -122,8 +190,64 @@ function openaiToAISDKMessages(
 				.filter((p) => p.type === 'text' ? (p.text?.length || 0) > 0 : true);
 			return { role, content: parts };
 		}
-		return { role, content: String(content) };
+		return { role, content: '' };
 	});
+}
+
+/**
+ * Detect whether the request replays a prior assistant tool call in its history.
+ * Google's OpenAI-compat endpoint cannot round-trip those without a Gemini
+ * thought signature, so such requests must go through the AI SDK provider.
+ */
+function hasReplayedToolCalls(body: Record<string, unknown>): boolean {
+	const messages = body.messages;
+	if (!Array.isArray(messages)) return false;
+	return messages.some(
+		(m: any) => m && m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length > 0,
+	);
+}
+
+/**
+ * Google OpenAI-compat rejects replayed assistant `reasoning_content` (thoughts)
+ * that aren't signed with a Gemini thought signature. Strip them from the
+ * message history forwarded to Google so the request isn't rejected. Tool calls
+ * are preserved (the AI SDK path, used when tool calls are present, injects the
+ * proper sentinel instead).
+ */
+function stripReasoningForGoogle(body: Record<string, unknown>): Record<string, unknown> {
+	const messages = body.messages;
+	if (!Array.isArray(messages)) return body;
+	const cleaned = messages.map((m: any) => {
+		if (m && m.role === 'assistant' && (m.reasoning_content !== undefined || m.reasoning !== undefined)) {
+			const copy = { ...m };
+			delete copy.reasoning_content;
+			delete copy.reasoning;
+			return copy;
+		}
+		return m;
+	});
+	return { ...body, messages: cleaned };
+}
+
+/**
+ * Convert OpenAI `tools` (function definitions) to an AI SDK ToolSet so the
+ * model can actually invoke tools through the AI SDK provider. OpenAI tool
+ * definitions are `{ type: 'function', function: { name, description, parameters } }`;
+ * the AI SDK ToolSet is `{ [name]: { description?, parameters? } }`.
+ */
+function openaiToolsToAISDK(tools: unknown): Record<string, { description?: string; parameters?: unknown }> | undefined {
+	if (!Array.isArray(tools)) return undefined;
+	const result: Record<string, { description?: string; parameters?: unknown }> = {};
+	for (const t of tools) {
+		if (t?.type === 'function' && t?.function?.name) {
+			const fn = t.function;
+			result[fn.name] = {
+				description: typeof fn.description === 'string' ? fn.description : undefined,
+				parameters: fn.parameters ?? undefined,
+			};
+		}
+	}
+	return Object.keys(result).length > 0 ? result : undefined;
 }
 
 /**
@@ -238,7 +362,7 @@ async function handleOpenAIDirectStream(
 				0, 0, clientKeyName,
 			));
 		}
-		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}`, type: 'server_error' } }), {
+		return new Response(toJsonErrorBody(errText, `Upstream ${upstreamResponse.status}`), {
 			status: upstreamResponse.status,
 			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
 		});
@@ -526,7 +650,7 @@ async function handleOpenAIDirectNonStream(
 				0, 0, clientKeyName,
 			));
 		}
-		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
+		return new Response(toJsonErrorBody(errText, `Upstream ${upstreamResponse.status}`), {
 			status: upstreamResponse.status,
 			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId }, upstreamResponse.status, upstreamResponse.headers),
 		});
@@ -624,6 +748,7 @@ async function handleOpenAIStream(
 		temperature: body.temperature as number | undefined,
 		topP: body.top_p as number | undefined,
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
+		tools: openaiToolsToAISDK(body.tools) as any,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
 		abortSignal: anySignal(connectController.signal, clientSignal),
@@ -910,6 +1035,7 @@ async function handleOpenAINonStream(
 		temperature: body.temperature as number | undefined,
 		topP: body.top_p as number | undefined,
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
+		tools: openaiToolsToAISDK(body.tools) as any,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
 		abortSignal: anySignal(AbortSignal.timeout(120_000), clientSignal),
@@ -1094,29 +1220,57 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 			const isLastAttempt = attempt === MAX_RETRIES && candidate === tryCandidates[tryCandidates.length - 1];
 			try {
 				const type = candidate.provider.type;
-				const useDirect = type === 'openai' || type === 'google_ai_studio' || type === 'vertex_ai';
+				// Google/Vertex replayed tool-call history cannot round-trip Gemini
+				// thought signatures through the OpenAI-compat passthrough (Google
+				// rejects it with HTTP 400 "Function call is missing a
+				// thought_signature"). Route those requests through the AI SDK google
+				// provider, which injects the documented `skip_thought_signature_validator`
+				// sentinel and round-trips tool calls correctly. Non-tool Google chats keep
+				// the fast direct passthrough.
+				const googleWithTools =
+					(type === 'google_ai_studio' || type === 'vertex_ai') &&
+					hasReplayedToolCalls(body) &&
+					shouldUseAISDKForGoogleTools(c.env);
+				const useDirect =
+					type === 'openai' || ((type === 'google_ai_studio' || type === 'vertex_ai') && !googleWithTools);
 
 				let directBody = body as Record<string, unknown>;
 				let directProvider: ProviderMatch = candidate;
 				let skipVersioning = false;
 
 				if (type === 'google_ai_studio') {
-					skipVersioning = true;
-					directBody = { ...body, model: String(body.model).replace(/^(google\/|models\/)+/, '') };
-					directProvider = {
-						...candidate,
-						provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
-					};
+					const cleanedModel = String(body.model).replace(/^(google\/|models\/)+/, '');
+					if (useDirect) {
+						skipVersioning = true;
+						directBody = stripReasoningForGoogle({ ...body, model: cleanedModel });
+						directProvider = {
+							...candidate,
+							provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
+						};
+					} else {
+						// AI SDK path (native Google API) — normalize model, keep original creds.
+						// Strip replayed thoughts: they can't be re-signed in OpenAI format,
+						// so Google rejects them (Gemini 2.5) or needs the sentinel (Gemini 3).
+						directBody = stripReasoningForGoogle(body);
+						directProvider = { ...candidate, matchedModel: cleanedModel, provider: candidate.provider };
+					}
 				} else if (type === 'vertex_ai') {
-					skipVersioning = true;
-					directBody = { ...body, model: String(body.model).startsWith('google/') ? body.model : 'google/' + body.model };
 					const cfg = candidate.provider.config;
 					const loc = cfg.location || 'us-central1';
-					const vConfig: Record<string, string> = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
-					if (!isVertexApiKeyMode(cfg)) {
-						vConfig.apiKey = await getVertexAccessToken(cfg);
+					if (useDirect) {
+						skipVersioning = true;
+						directBody = stripReasoningForGoogle({ ...body, model: String(body.model).startsWith('google/') ? body.model : 'google/' + body.model });
+						const vConfig: Record<string, string> = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
+						if (!isVertexApiKeyMode(cfg)) {
+							vConfig.apiKey = await getVertexAccessToken(cfg);
+						}
+						directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
+					} else {
+						// AI SDK path (native Vertex API) — keep original config, drop `google/` alias.
+						const cleanedModel = String(body.model).replace(/^google\//, '');
+						directBody = stripReasoningForGoogle(body);
+						directProvider = { ...candidate, matchedModel: cleanedModel, provider: candidate.provider };
 					}
-					directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
 				}
 
 				const response = isStream
@@ -1129,9 +1283,12 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 
 				if (response.status >= 400) {
 					lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
-					// 400/401/403: client error — won't be fixed by switching providers, return immediately
+					// 400/401/403: deterministic client/request error — won't be fixed by
+					// switching providers, so return immediately. These are NOT a provider
+					// health problem, so they must not count toward the circuit breaker
+					// (otherwise a handful of bad requests would open the circuit and
+					// block every later request until the cooldown elapses).
 					if (FATAL_4XX.has(response.status)) {
-						recordCBFailure(candidate.provider.id);
 						fatalResponse = response;
 						break;
 					}

@@ -15,6 +15,7 @@ import { recordUsage, extractCacheTokens } from '../../usage';
 import { getFailoverEnabled } from '../../config';
 import { getClientKeyName } from '../../middleware/auth';
 import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
+import { toJsonErrorBody } from '../../upstream-errors';
 
 export const anthropicMessagesRoutes = new Hono<{ Bindings: Env }>();
 
@@ -239,7 +240,7 @@ async function handleAnthropicDirectStream(
 		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, true,
 			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, clientKeyName));
-		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
+		return new Response(toJsonErrorBody(errText, `Upstream ${upstreamResponse.status}`), {
 			status: upstreamResponse.status,
 			headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' }, upstreamResponse.status, upstreamResponse.headers),
 		});
@@ -520,7 +521,7 @@ async function handleAnthropicDirectNonStream(
 		if (execCtx && (isLastAttempt || FATAL_4XX.has(upstreamResponse.status))) execCtx.waitUntil(recordUsage(env, provider.provider.id, rawModelId, ip,
 			{ prompt: 0, completion: 0 }, false, Date.now() - startMs, requestId, false,
 			{ errorType: 'upstream_error', errorMessage: errText.slice(0, 300) }, 0, 0, clientKeyName));
-		return new Response(errText || JSON.stringify({ error: { message: `Upstream ${upstreamResponse.status}` } }), {
+		return new Response(toJsonErrorBody(errText, `Upstream ${upstreamResponse.status}`), {
 			status: upstreamResponse.status, headers: buildErrorHeaders({ 'Content-Type': 'application/json', 'x-request-id': requestId, 'anthropic-version': '2023-06-01' }, upstreamResponse.status, upstreamResponse.headers),
 		});
 	}
@@ -1158,9 +1159,9 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 
 				if (response.status >= 400) {
 					lastError = `Provider ${candidate.provider.id}: HTTP ${response.status}`;
-					// 400/401/403: client error — won't be fixed by switching providers, return immediately
+					// 400/401/403: deterministic client/request error — return immediately;
+					// not a provider-health problem, so don't count toward the circuit.
 					if (FATAL_4XX.has(response.status)) {
-						recordCBFailure(candidate.provider.id);
 						fatalResponse = response;
 						break;
 					}

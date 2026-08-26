@@ -75,6 +75,8 @@ export interface Env {
 	ASSETS: { fetch: (request: Request) => Promise<Response> };
 	ENCRYPTION_KEY?: string;
 	OPENAI_API_KEY?: string;
+	/** Optional: "ai-sdk" (default) or "direct" — Google tool-call routing mode. */
+	VEGA_GOOGLE_TOOL_MODE?: string;
 }
 
 export interface ProviderHandler {

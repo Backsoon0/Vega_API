@@ -14,6 +14,8 @@
   - [Anthropic Messages 原生 (`/anthropic/*`)](#3-anthropic-messages-原生-anthropic)
   - [认证方式汇总](#认证方式汇总)
   - [参数透传 (Extra Body)](#参数透传-extra-body)
+- [环境变量](#环境变量)
+  - [`VEGA_GOOGLE_TOOL_MODE` — Google/Vertex 工具调用路由](#vega_google_tool_mode--googlevertex-工具调用路由)
 - [客户端 SDK 示例](#客户端-sdk-示例)
 - [API 路由参考](#api-路由参考)
   - [完整路由表](#完整路由表)
@@ -227,6 +229,42 @@ curl https://your-worker.workers.dev/anthropic/v1/messages \
     "extra_body": {"thinking": {"type": "disabled"}}
   }'
 ```
+
+## 环境变量
+
+以下为可选的 Worker 环境变量，均通过 `wrangler.jsonc` 的 `vars`、Cloudflare 控制台（Worker → Settings → Variables），或本地 `.dev.vars` 设置。
+
+### `VEGA_GOOGLE_TOOL_MODE` — Google/Vertex 工具调用路由
+
+控制 **Google/Vertex 模型在「回放历史 tool 调用」时的请求路径**，用于在「Gemini 工具调用正确性」与「Cloudflare 免费版 CPU 限额」之间权衡。
+
+| 取值 | 说明 | CPU 消耗 |
+|------|------|----------|
+| `ai-sdk`（默认） | tool 调用回放走 AI SDK 原生路径，自动注入 Gemini 3 的 `skip_thought_signature_validator` 哨兵，**Gemini 3 工具调用可用** | 较高 |
+| `direct` | 走轻量 OpenAI 兼容直连 + 剔除 reasoning，**CPU 最低**；`Gemini 2.5` 工具调用正常，但 **Gemini 3 会被 400 拒掉** | 低 |
+
+**背景**：Gemini 3（及部分开启思考的 Gemini 模型）要求每个回放的 `functionCall` 都带 `thought_signature`，否则返回 `Function call is missing a thought_signature`。这个签名只能在原生请求里由 AI SDK 注入，OpenAI 兼容直连做不到。而 AI SDK 原生路径会多耗一些 CPU（要对原生流做结构化解析），对免费版的 10ms CPU 限额可能有压力。
+
+**建议**：
+
+- 使用 **Gemini 2.5 Flash** 等模型 + 追求更低 CPU → 设为 `direct`。
+- 使用 **Gemini 3** 且必须用工具 → 保持默认（`ai-sdk`），并适当调小思考预算 / `max_tokens` 来压 CPU。
+
+**设置示例（`wrangler.jsonc`）**：
+
+```jsonc
+"vars": {
+  "VEGA_GOOGLE_TOOL_MODE": "direct"
+}
+```
+
+**本地开发（`.dev.vars`）**：
+
+```txt
+VEGA_GOOGLE_TOOL_MODE=direct
+```
+
+> 该变量只影响 tool 调用回放请求；普通（非 tool）的 Google 对话始终走轻量直连，不额外增加 CPU。
 
 ## 客户端 SDK 示例
 
