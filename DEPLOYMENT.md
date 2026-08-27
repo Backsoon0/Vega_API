@@ -51,7 +51,8 @@ npm run deploy             # build UI + deploy Worker + static assets
    - builds the admin UI via `pnpm --filter vega-api-admin run build` (pnpm resolves `vite`
      correctly for the workspace package; the repo's npm-based `build:ui` script is left
      untouched for the Cloudflare workflow),
-   - serves `admin-ui/build` as static assets,
+   - serves `admin-ui/build` as Vercel's `public/` static output (the `buildCommand` copies
+     `admin-ui/build` → `public/`; Vercel serves `public/` statically alongside `api/` functions),
    - deploys `api/index.ts` as a single **Node** serverless function (Vercel auto-detects
      the `@vercel/node` runtime; no manual `functions.runtime` pin needed),
    - rewrites the API routes (`/v1/*`, `/v1beta/*`, `/anthropic/*`, `/admin/*`, `/health`)
