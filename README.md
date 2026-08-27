@@ -485,7 +485,7 @@ npm run deploy
    - `ENCRYPTION_KEY` — **必填**，与 Cloudflare 使用**同一个** 64 位 hex 密钥（这样才能正确解密已有的 Provider 凭据）。
    - 可选：`OPENAI_API_KEY`、`VEGA_GOOGLE_TOOL_MODE`、`DEPLOYMENT_PLATFORM`。
 3. **Deploy**。`vercel.json` 会：
-   - 执行 `npm run build:ui`，把 `admin-ui/build` 作为静态资源输出；
+   - 用 `pnpm --filter vega-api-admin run build` 构建管理面板（pnpm 能正确解析 workspace 的 `vite`；仓库里给 Cloudflare 用的 `npm` 版 `build:ui` 脚本保持不变），把 `admin-ui/build` 作为静态资源输出；
    - 把 `api/index.ts` 部署为单个 **Node** Serverless 函数（Vercel 自动识别 `@vercel/node` 运行时，无需在 `vercel.json` 里手动固定 `functions.runtime`）；
    - 把 API 路径（`/v1/*`、`/v1beta/*`、`/anthropic/*`、`/admin/*`、`/health`）重写到该函数，其余请求回退到 `index.html`（SPA）。
    - 若需更长函数时长以支持长流式响应，可在 *Vercel → Project → Settings → Functions* 里调大 `maxDuration`。

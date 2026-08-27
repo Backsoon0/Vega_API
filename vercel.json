@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build:ui",
+  "buildCommand": "pnpm --filter vega-api-admin run build",
   "installCommand": "pnpm install --no-frozen-lockfile",
   "outputDirectory": "admin-ui/build",
   "rewrites": [
