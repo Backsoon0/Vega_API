@@ -94,14 +94,13 @@ function isWebRequest(req: any): req is Request {
 	return !!req && typeof req.url === 'string' && typeof req.method === 'string' && req.headers && typeof req.headers.get === 'function';
 }
 
-/** Convert a Node `IncomingMessage` body to a web `ReadableStream`. */
-function nodeBodyToStream(req: any): ReadableStream<Uint8Array> {
-	return new ReadableStream<Uint8Array>({
-		start(controller) {
-			req.on('data', (chunk: Uint8Array) => controller.enqueue(chunk));
-			req.on('end', () => controller.close());
-			req.on('error', (err: Error) => controller.error(err));
-		},
+/** Read a Node `IncomingMessage` body fully into a Buffer (more reliable than streaming). */
+function readNodeBody(req: any): Promise<Uint8Array> {
+	return new Promise((resolve, reject) => {
+		const chunks: Uint8Array[] = [];
+		req.on('data', (chunk: Uint8Array) => chunks.push(chunk));
+		req.on('end', () => resolve(Buffer.concat(chunks)));
+		req.on('error', reject);
 	});
 }
 
@@ -118,15 +117,11 @@ async function toWebRequest(req: any): Promise<Request> {
 	const host = headers.get('host') || 'localhost';
 	const url = `https://${host}${req.url || '/'}`;
 	const method = String(req.method || 'GET').toUpperCase();
-	let body: BodyInit | null = null;
-	if (method !== 'GET' && method !== 'HEAD' && typeof req.on === 'function') {
-		body = nodeBodyToStream(req);
-	}
+
 	const init: Record<string, unknown> = { method, headers };
-	if (body) {
-		init.body = body;
-		// Node's fetch requires `duplex: 'half'` when the request body is a stream.
-		init.duplex = 'half';
+	if (method !== 'GET' && method !== 'HEAD' && typeof req.on === 'function') {
+		// Buffer/Uint8Array body — no `duplex` needed (that's only for stream bodies).
+		init.body = await readNodeBody(req);
 	}
 	return new Request(url, init as RequestInit);
 }

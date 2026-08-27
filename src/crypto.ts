@@ -19,12 +19,25 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 async function getKey(env: Env): Promise<CryptoKey> {
-  const keyHex = env.ENCRYPTION_KEY;
+  const keyHex = (env.ENCRYPTION_KEY || '').trim();
   if (!keyHex) throw new Error('ENCRYPTION_KEY is not configured');
-  const rawKey = hexToBytes(keyHex);
+
+  if (!/^[0-9a-fA-F]+$/.test(keyHex)) {
+    throw new Error('ENCRYPTION_KEY must be a hex string (got non-hex characters).');
+  }
+  if (keyHex.length % 2 !== 0) {
+    throw new Error(`ENCRYPTION_KEY has an odd hex length (${keyHex.length} chars). It must be 64 hex chars = 32 bytes.`);
+  }
+  const bytes = hexToBytes(keyHex);
+  if (bytes.length !== 16 && bytes.length !== 24 && bytes.length !== 32) {
+    throw new Error(
+      `ENCRYPTION_KEY must be 16/24/32 bytes for AES-GCM (the project expects 64 hex chars = 32 bytes). Got ${bytes.length} bytes (${keyHex.length} chars). Regenerate with: openssl rand -hex 32`,
+    );
+  }
+
   return crypto.subtle.importKey(
     'raw',
-    rawKey,
+    bytes,
     { name: 'AES-GCM' },
     false,
     ['encrypt', 'decrypt']
