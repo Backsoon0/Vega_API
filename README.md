@@ -475,7 +475,7 @@ npm run deploy
 
 参考 [Waline 的 Vercel 部署](https://waline.js.org/guide/deploy/vercel.html) 思路：在 Vercel 上运行单个 Node Serverless 函数，数据库使用 Vercel 集成的 **Neon**。
 
-1. **导入项目**：把仓库推送到 GitHub，在 Vercel → Add New → Project 导入（Framework Preset 选 *Other*）。`vercel.json` 会自动构建管理面板并部署函数。
+1. **导入项目**：把仓库推送到 GitHub，在 Vercel → Add New → Project 导入。**请把 Framework Preset 设为 *Other***（Project → Settings → General → Framework Preset → Other）。不设为 Other 时，Vercel 会自动识别为 SvelteKit，把 `admin-ui/build` 当作服务端输出去找 `server/index` 入口，导致 `No entrypoint found in output directory` 报错。设为 Other 后，Vercel 会把 `public/` 作为静态资源、`api/index.ts` 作为函数，`vercel.json` 自动完成构建与路由。
 2. **配置环境变量**：在 *Vercel → Project → Settings → Environment Variables* 添加（命名参考 Waline 数据库规范）：
    - 引擎选择：`DATABASE=postgres`（`neon`/`pg` 亦可）。
    - 连接串（三选一）：

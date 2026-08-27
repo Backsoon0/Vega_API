@@ -8,14 +8,14 @@ import { sha256 } from '../../crypto';
 import { getAdminPasswordHash, setAdminPassword, getFailoverEnabled, setFailoverEnabled, getCircuitBreakerConfig, setCircuitBreakerConfig, getLogRetentionLimit, setLogRetentionLimit } from '../../config';
 import { updateConfig as updateCBConfig } from '../../circuit-breaker';
 import { pruneCallLogs } from '../../usage';
-import { rateLimitLogin, recordLoginFailure, resetLoginRate, getRateLimitConfig } from '../../rate-limit';
+import { rateLimitLogin, recordLoginFailure, resetLoginRate, getRateLimitConfig, type RateLimitVars } from '../../rate-limit';
 import { requireAdminAuth } from '../../middleware/auth';
 import { getRuntimeStatus } from '../../runtime';
 
-export const adminAuthRoutes = new Hono<{ Bindings: Env }>();
+export const adminAuthRoutes = new Hono<{ Bindings: Env; Variables: RateLimitVars }>();
 
 // POST /admin/auth — Login (rate-limited)
-adminAuthRoutes.post('/auth', rateLimitLogin, async (c: Context<{ Bindings: Env }>) => {
+adminAuthRoutes.post('/auth', rateLimitLogin, async (c: Context<{ Bindings: Env; Variables: RateLimitVars }>) => {
 	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
 	const password = String(body.password || '');
 	if (!password) return c.json({ error: 'Password is required' }, 400);
@@ -42,7 +42,7 @@ adminAuthRoutes.post('/auth', rateLimitLogin, async (c: Context<{ Bindings: Env 
 });
 
 // POST /admin/setup — Initial password setup (no auth required)
-adminAuthRoutes.post('/setup', async (c: Context<{ Bindings: Env }>) => {
+adminAuthRoutes.post('/setup', async (c: Context<{ Bindings: Env; Variables: RateLimitVars }>) => {
 	const storedHash = await getAdminPasswordHash(c.env);
 	if (storedHash) return c.json({ error: 'Password already set' }, 400);
 
@@ -58,18 +58,18 @@ adminAuthRoutes.post('/setup', async (c: Context<{ Bindings: Env }>) => {
 });
 
 // GET /admin/check — Auth status check
-adminAuthRoutes.get('/check', async (c: Context<{ Bindings: Env }>) => {
+adminAuthRoutes.get('/check', async (c: Context<{ Bindings: Env; Variables: RateLimitVars }>) => {
 	if (await requireAdminAuth(c)) return c.json({ authenticated: true });
 	return c.json({ error: 'Unauthorized' }, 401);
 });
 
 // GET /admin/fail2ban-config — Rate limit configuration
-adminAuthRoutes.get('/fail2ban-config', (c: Context<{ Bindings: Env }>) => {
+adminAuthRoutes.get('/fail2ban-config', (c: Context<{ Bindings: Env; Variables: RateLimitVars }>) => {
 	return c.json(getRateLimitConfig());
 });
 
 // POST /admin/change-password — Change admin password (requires auth)
-adminAuthRoutes.post('/change-password', async (c: Context<{ Bindings: Env }>) => {
+adminAuthRoutes.post('/change-password', async (c: Context<{ Bindings: Env; Variables: RateLimitVars }>) => {
 	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
 	const current = String(body.currentPassword || '');
 	const newPass = String(body.newPassword || '');
@@ -89,7 +89,7 @@ adminAuthRoutes.post('/change-password', async (c: Context<{ Bindings: Env }>) =
 });
 
 // GET /admin/settings — Get all settings
-adminAuthRoutes.get('/settings', async (c: Context<{ Bindings: Env }>) => {
+adminAuthRoutes.get('/settings', async (c: Context<{ Bindings: Env; Variables: RateLimitVars }>) => {
 	const failoverEnabled = await getFailoverEnabled(c.env);
 	const cbConfig = await getCircuitBreakerConfig(c.env);
 	const logRetentionLimit = await getLogRetentionLimit(c.env);
@@ -109,7 +109,7 @@ adminAuthRoutes.get('/settings', async (c: Context<{ Bindings: Env }>) => {
 });
 
 // PUT /admin/settings — Update settings
-adminAuthRoutes.put('/settings', async (c: Context<{ Bindings: Env }>) => {
+adminAuthRoutes.put('/settings', async (c: Context<{ Bindings: Env; Variables: RateLimitVars }>) => {
 	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
 	if (typeof body.failoverEnabled === 'boolean') {
 		await setFailoverEnabled(c.env, body.failoverEnabled);

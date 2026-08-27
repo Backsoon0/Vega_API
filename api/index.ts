@@ -64,9 +64,10 @@ function buildEnv(processEnv: Record<string, string | undefined>): Env {
 		OPENAI_API_KEY: processEnv.OPENAI_API_KEY || undefined,
 		VEGA_GOOGLE_TOOL_MODE: processEnv.VEGA_GOOGLE_TOOL_MODE || undefined,
 		// On Vercel the engine is always Neon — a NeonDBClient backs `env.DB`, so
-		// force the detected engine and trigger the Postgres schema path.
+		// force the detected engine (and the Postgres schema path) regardless of
+		// any stray `DATABASE` override.
 		DATABASE_PROVIDER: 'neon',
-		DATABASE: processEnv.DATABASE || 'postgres',
+		DATABASE: 'postgres',
 		DATABASE_URL,
 		DEPLOYMENT_PLATFORM: 'vercel',
 	};
@@ -94,10 +95,21 @@ function getEnv(): Env {
  * (The Hono `hono/vercel` adapter wraps the exact same `req → app.fetch(req)` contract.)
  */
 export default async function handler(request: Request): Promise<Response> {
-	const runtimeEnv = getEnv();
-	// One-time per-cold-start init: schema + circuit-breaker config.
-	await prepareRuntime(runtimeEnv);
-	return app.fetch(request, runtimeEnv, executionCtxShim as never);
+	try {
+		const runtimeEnv = getEnv();
+		// One-time per-cold-start init: schema + circuit-breaker config.
+		await prepareRuntime(runtimeEnv);
+		return await app.fetch(request, runtimeEnv, executionCtxShim as never);
+	} catch (err) {
+		// Surface the real error (e.g. missing env var, DB connection failure) so it's
+		// visible in the response instead of a generic 500.
+		console.error('Vercel handler error:', err);
+		const message = (err as Error)?.message || String(err);
+		return new Response(
+			JSON.stringify({ error: `Function error: ${message}` }, null, 2),
+			{ status: 500, headers: { 'Content-Type': 'application/json' } },
+		);
+	}
 }
 
 // Re-export so tools / tests can inspect the entry without side effects.

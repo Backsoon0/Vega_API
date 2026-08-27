@@ -34,7 +34,12 @@ npm run deploy             # build UI + deploy Worker + static assets
 
 ## Vercel + Neon
 
-1. Push this repo to GitHub and **import** it into Vercel (Framework Preset: *Other*).
+1. Push this repo to GitHub and **import** it into Vercel.
+   **Critically, set the Framework Preset to *Other*** (Project → Settings → General →
+   Framework Preset → Other). Vercel otherwise auto-detects SvelteKit and tries to build
+   `admin-ui/build` as a SvelteKit server app, which fails with
+   `No entrypoint found in output directory`. With *Other*, Vercel serves `public/` as
+   static and `api/index.ts` as a function.
 2. In *Vercel → Project → Settings → Environment Variables*, add the database config
    (names follow the [Waline database guide](https://waline.js.org/guide/database.html)):
    - Engine selector: `DATABASE=postgres` (Waline-style; `neon`/`pg` are also accepted).

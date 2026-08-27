@@ -31,7 +31,7 @@ export async function proxyRequest(
   }
 
   // For /chat/completions, strip google/ and models/ prefixes from model name
-  let body = request.body;
+  let body: BodyInit | null = request.body;
   if (suffix === '/chat/completions' && body) {
     try {
       const cloned = request.clone();

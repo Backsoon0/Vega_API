@@ -141,7 +141,7 @@ export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<st
 }
 
 /** Validate admin token (SHA-256 hash) for /admin/* routes. */
-export async function requireAdminAuth(c: Context<{ Bindings: Env }>): Promise<boolean> {
+export async function requireAdminAuth(c: Context<any>): Promise<boolean> {
 	const auth = c.req.header('Authorization') || '';
 	const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
 	if (!token) return false;

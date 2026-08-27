@@ -17,7 +17,13 @@ interface RateEntry {
   banned_until: number;
 }
 
-export async function rateLimitLogin(c: Context<{ Bindings: Env }>, next: Next) {
+/** Hono `Variables` carried on the request context during login rate limiting. */
+export interface RateLimitVars {
+  rateEntry: RateEntry;
+  rateKey: string;
+}
+
+export async function rateLimitLogin(c: Context<{ Bindings: Env; Variables: RateLimitVars }>, next: Next) {
   const ip = getClientIp(c);
   const key = `login:${ip}`;
   const now = Math.floor(Date.now() / 1000);
@@ -55,7 +61,7 @@ export async function rateLimitLogin(c: Context<{ Bindings: Env }>, next: Next) 
   await next();
 }
 
-export async function recordLoginFailure(c: Context<{ Bindings: Env }>) {
+export async function recordLoginFailure(c: Context<{ Bindings: Env; Variables: RateLimitVars }>) {
   const key = c.get('rateKey') as string;
   let entry = c.get('rateEntry') as RateEntry;
   const now = Math.floor(Date.now() / 1000);
@@ -91,7 +97,7 @@ export async function recordLoginFailure(c: Context<{ Bindings: Env }>) {
   );
 }
 
-export async function resetLoginRate(c: Context<{ Bindings: Env }>) {
+export async function resetLoginRate(c: Context<{ Bindings: Env; Variables: RateLimitVars }>) {
   const key = c.get('rateKey') as string;
   if (key) {
     await c.env.DB

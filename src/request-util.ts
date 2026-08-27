@@ -2,7 +2,6 @@
 // Portable request helpers shared by Cloudflare Workers and Vercel.
 
 import type { Context } from 'hono';
-import type { Env } from './types';
 
 /**
  * Resolve the client IP across deployment platforms:
@@ -10,7 +9,7 @@ import type { Env } from './types';
  *   - Vercel:     `x-forwarded-for` (first entry) or `x-real-ip`
  * Falls back to "unknown".
  */
-export function getClientIp(c: Context<{ Bindings: Env }>): string {
+export function getClientIp(c: Context<any>): string {
 	const cfIp = c.req.header('CF-Connecting-IP');
 	if (cfIp) return cfIp;
 
