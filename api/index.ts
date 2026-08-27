@@ -122,7 +122,13 @@ async function toWebRequest(req: any): Promise<Request> {
 	if (method !== 'GET' && method !== 'HEAD' && typeof req.on === 'function') {
 		body = nodeBodyToStream(req);
 	}
-	return new Request(url, { method, headers, body });
+	const init: Record<string, unknown> = { method, headers };
+	if (body) {
+		init.body = body;
+		// Node's fetch requires `duplex: 'half'` when the request body is a stream.
+		init.duplex = 'half';
+	}
+	return new Request(url, init as RequestInit);
 }
 
 /** Write a web `Response` to a Node `ServerResponse` (streaming-safe). */
