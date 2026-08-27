@@ -55,9 +55,9 @@ export async function recordUsage(
         `INSERT INTO usage_daily (date, provider_id, model, calls, prompt_tokens, completion_tokens)
          VALUES (?, ?, ?, 1, ?, ?)
          ON CONFLICT(date, provider_id, model) DO UPDATE SET
-           calls = calls + 1,
-           prompt_tokens = prompt_tokens + ?,
-           completion_tokens = completion_tokens + ?`
+           calls = usage_daily.calls + 1,
+           prompt_tokens = usage_daily.prompt_tokens + ?,
+           completion_tokens = usage_daily.completion_tokens + ?`
       )
       .bind(today, providerId, model, usage.prompt, usage.completion, usage.prompt, usage.completion)
       .run();
