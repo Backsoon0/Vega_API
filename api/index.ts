@@ -2,8 +2,7 @@
 // Vercel Serverless entry — runs the shared Hono app (src/app.ts) on Vercel's
 // Node runtime, backed by Neon (Postgres) instead of Cloudflare D1.
 //
-// Environment variables (Vercel → Project → Settings → Environment Variables).
-// Follows the Waline database convention (see https://waline.js.org/guide/database.html):
+// Environment variables (Vercel → Project → Settings → Environment Variables):
 //   DATABASE  — engine selector: "postgres"/"neon"/"pg" → Neon, "d1"/"sqlite" → D1.
 //   PGURL     — full Postgres connection string (Waline-style). Overrides the libpq vars.
 //   PGHOST / PGDATABASE / PGUSER / PGPASSWORD / PGPORT — libpq-style split connection.
@@ -58,7 +57,7 @@ function buildEnv(processEnv: Record<string, string | undefined>): Env {
 
 	return {
 		DB: new NeonDBClient(DATABASE_URL),
-		// Vercel serves the SvelteKit SPA statically, so ASSETS is an inert stub here.
+		// Vercel serves the SvelteKit SPA statically (via public/), so ASSETS is an inert stub here.
 		ASSETS: { fetch: async () => new Response('Not Found', { status: 404 }) },
 		ENCRYPTION_KEY: processEnv.ENCRYPTION_KEY || undefined,
 		OPENAI_API_KEY: processEnv.OPENAI_API_KEY || undefined,
@@ -75,8 +74,6 @@ function buildEnv(processEnv: Record<string, string | undefined>): Env {
 
 // A minimal execution-context shim — Vercel has no waitUntil, so usage recording
 // is fire-and-forget (it still executes, but isn't awaited past the response).
-// The `run_args` are typed loosely so Vercel's bundler never needs the
-// Cloudflare-only `ExecutionContext` type.
 const executionCtxShim = {
 	waitUntil: (promise: Promise<unknown>) => {
 		Promise.resolve(promise).catch((err) => console.error('waitUntil error:', err));
@@ -90,25 +87,90 @@ function getEnv(): Env {
 	return env;
 }
 
+// ---- Vercel request/response bridging (Node `(req, res)` ↔ web Request/Response) ----
+
+/** True when the first arg is already a web `Request` (Vercel web-handler mode). */
+function isWebRequest(req: any): req is Request {
+	return !!req && typeof req.url === 'string' && typeof req.method === 'string' && req.headers && typeof req.headers.get === 'function';
+}
+
+/** Convert a Node `IncomingMessage` body to a web `ReadableStream`. */
+function nodeBodyToStream(req: any): ReadableStream<Uint8Array> {
+	return new ReadableStream<Uint8Array>({
+		start(controller) {
+			req.on('data', (chunk: Uint8Array) => controller.enqueue(chunk));
+			req.on('end', () => controller.close());
+			req.on('error', (err: Error) => controller.error(err));
+		},
+	});
+}
+
+/** Build a web `Request` from a Vercel/Node request (web Request or IncomingMessage). */
+async function toWebRequest(req: any): Promise<Request> {
+	if (isWebRequest(req)) return req as Request;
+
+	// Node IncomingMessage path.
+	const headers = new Headers();
+	const rawHeaders = (req.headers as Record<string, string | string[] | undefined>) || {};
+	for (const [k, v] of Object.entries(rawHeaders)) {
+		if (v != null) headers.set(k, Array.isArray(v) ? v.join(', ') : String(v));
+	}
+	const host = headers.get('host') || 'localhost';
+	const url = `https://${host}${req.url || '/'}`;
+	const method = String(req.method || 'GET').toUpperCase();
+	let body: BodyInit | null = null;
+	if (method !== 'GET' && method !== 'HEAD' && typeof req.on === 'function') {
+		body = nodeBodyToStream(req);
+	}
+	return new Request(url, { method, headers, body });
+}
+
+/** Write a web `Response` to a Node `ServerResponse` (streaming-safe). */
+async function writeResponseToNode(res: any, response: Response): Promise<void> {
+	res.statusCode = response.status;
+	for (const [k, v] of response.headers) res.setHeader(k, v);
+	if (response.body) {
+		const reader = response.body.getReader();
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			res.write(value);
+		}
+	}
+	res.end();
+}
+
 /**
- * Vercel Node handler. Vercel calls it with a web `Request` and expects a `Response`.
- * (The Hono `hono/vercel` adapter wraps the exact same `req → app.fetch(req)` contract.)
+ * Vercel Node handler. Vercel may call it with either a web `Request` (return a
+ * `Response`) or the classic Node `(req, res)` pair (write to `res`). Both are
+ * supported, so the Hono app always receives a standard web `Request`.
  */
-export default async function handler(request: Request): Promise<Response> {
+export default async function handler(req: any, res?: any): Promise<Response | void> {
 	try {
 		const runtimeEnv = getEnv();
 		// One-time per-cold-start init: schema + circuit-breaker config.
 		await prepareRuntime(runtimeEnv);
-		return await app.fetch(request, runtimeEnv, executionCtxShim as never);
+		const request = await toWebRequest(req);
+		const response = await app.fetch(request, runtimeEnv, executionCtxShim as never);
+
+		if (res && typeof res.statusCode === 'number') {
+			await writeResponseToNode(res, response);
+			return;
+		}
+		return response;
 	} catch (err) {
 		// Surface the real error (e.g. missing env var, DB connection failure) so it's
 		// visible in the response instead of a generic 500.
 		console.error('Vercel handler error:', err);
 		const message = (err as Error)?.message || String(err);
-		return new Response(
-			JSON.stringify({ error: `Function error: ${message}` }, null, 2),
-			{ status: 500, headers: { 'Content-Type': 'application/json' } },
-		);
+		const body = JSON.stringify({ error: `Function error: ${message}` }, null, 2);
+		if (res && typeof res.statusCode === 'number') {
+			res.statusCode = 500;
+			res.setHeader('content-type', 'application/json');
+			res.end(body);
+			return;
+		}
+		return new Response(body, { status: 500, headers: { 'content-type': 'application/json' } });
 	}
 }
 
