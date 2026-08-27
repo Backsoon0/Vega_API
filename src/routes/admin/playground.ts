@@ -138,7 +138,7 @@ async function buildDirectRequest(
 			break;
 		case 'vertex_ai': {
 			const cfg = provider.config;
-			const loc = cfg.location || 'us-central1';
+			const loc = cfg.location || 'global';
 			baseUrl = `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi`;
 			headers['x-goog-user-project'] = cfg.projectId;
 			if (isVertexApiKeyMode(cfg)) {

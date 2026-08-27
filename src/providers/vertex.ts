@@ -128,7 +128,7 @@ function isJwtMode(config: Record<string, string>): boolean {
 function buildUpstreamUrl(config: Record<string, string>): string {
   const { projectId, location } = config;
   if (!projectId) throw new Error('Vertex AI: Missing projectId');
-  const loc = location || 'us-central1';
+  const loc = location || 'global';
   return `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${loc}/endpoints/openapi`;
 }
 

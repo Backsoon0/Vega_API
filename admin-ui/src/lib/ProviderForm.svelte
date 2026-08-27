@@ -24,7 +24,7 @@
   // Vertex AI fields
   let vAuthMode = $state("service_account");
   let vProjectId = $state("");
-  let vLocation = $state("us-central1");
+  let vLocation = $state("global");
   let vSaEmail = $state("");
   let vPrivateKey = $state("");
   let vApiKey = $state("");
@@ -59,7 +59,7 @@
       const cfg = editing.config || {};
       if (editing.type === "vertex_ai") {
         vProjectId = cfg.projectId || "";
-        vLocation = cfg.location || "us-central1";
+        vLocation = cfg.location || "global";
         vSaEmail = cfg.serviceAccountEmail || "";
         vPrivateKey = "";
         vApiKey = "";
@@ -85,7 +85,7 @@
     weight = 1;
     vAuthMode = "service_account";
     vProjectId = "";
-    vLocation = "us-central1";
+    vLocation = "global";
     vSaEmail = "";
     vPrivateKey = "";
     vApiKey = "";
@@ -100,7 +100,7 @@
     if (type === "vertex_ai") {
       const cfg: Record<string, string> = {
         projectId: vProjectId.trim(),
-        location: vLocation.trim() || "us-central1",
+        location: vLocation.trim() || "global",
       };
       if (vAuthMode === "api_key") {
         cfg.apiKey = vApiKey.trim();
@@ -259,7 +259,7 @@
         </div>
         <div class="field" style="margin-bottom:0">
           <label for="pf-loc">区域</label>
-          <input id="pf-loc" type="text" class="input" style="font-family:var(--font-mono)" bind:value={vLocation} placeholder="us-central1" />
+          <input id="pf-loc" type="text" class="input" style="font-family:var(--font-mono)" bind:value={vLocation} placeholder="global" />
         </div>
       </div>
 

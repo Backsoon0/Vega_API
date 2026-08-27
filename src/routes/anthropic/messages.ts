@@ -1141,7 +1141,7 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 					skipVersioning = true;
 					normModelId = normModelId.startsWith('google/') ? normModelId : 'google/' + normModelId;
 					const cfg = candidate.provider.config;
-					const loc = cfg.location || 'us-central1';
+					const loc = cfg.location || 'global';
 					const vConfig: Record<string, string> = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
 					if (!isVertexApiKeyMode(cfg)) {
 						vConfig.apiKey = await getVertexAccessToken(cfg);

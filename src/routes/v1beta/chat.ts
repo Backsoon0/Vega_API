@@ -1074,8 +1074,8 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 					}
 				} else if (type === 'vertex_ai') {
 					const cfg = candidate.provider.config;
-					const loc = cfg.location || 'us-central1';
-					const cleanedModel = modelId.replace(/^google\//, '');
+					const loc = cfg.location || 'global';
+					const cleanedModel = modelId.replace(/^(google\/|models\/)+/, '');
 					if (useDirect) {
 						skipVersioning = true;
 						normModelId = modelId.startsWith('google/') ? modelId : 'google/' + modelId;
@@ -1085,7 +1085,7 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 						}
 						directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
 					} else {
-						normModelId = cleanedModel;
+						// AI SDK path (native Vertex API) — drop aliases, keep original config.
 						directProvider = { ...candidate, matchedModel: cleanedModel, provider: candidate.provider };
 					}
 				}

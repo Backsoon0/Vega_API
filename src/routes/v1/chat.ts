@@ -230,6 +230,25 @@ function stripReasoningForGoogle(body: Record<string, unknown>): Record<string, 
 }
 
 /**
+ * Normalize thinking config for Google/Vertex into `thinking_config` with
+ * `includeThoughts: true`, so the OpenAI-compat passthrough (which forwards the
+ * body verbatim) and the AI SDK path both enable thinking AND surface the raw
+ * reasoning text. Gemini 3.x hides the chain of thought unless includeThoughts.
+ */
+function normalizeGoogleThinking(body: Record<string, unknown>): Record<string, unknown> {
+	const t = body.thinking as Record<string, unknown> | undefined;
+	const tc = body.thinking_config as Record<string, unknown> | undefined;
+	if (t && typeof t === 'object' && t.type === 'enabled') {
+		const budget = typeof t.budget_tokens === 'number' ? t.budget_tokens : ((tc?.thinkingBudget as number) ?? 8192);
+		return { ...body, thinking_config: { ...(tc || {}), thinkingBudget: budget, includeThoughts: true } };
+	}
+	if (tc && typeof tc === 'object') {
+		return { ...body, thinking_config: { ...tc, includeThoughts: tc.includeThoughts ?? true } };
+	}
+	return body;
+}
+
+/**
  * Convert OpenAI `tools` (function definitions) to an AI SDK ToolSet so the
  * model can actually invoke tools through the AI SDK provider. OpenAI tool
  * definitions are `{ type: 'function', function: { name, description, parameters } }`;
@@ -248,6 +267,30 @@ function openaiToolsToAISDK(tools: unknown): Record<string, { description?: stri
 		}
 	}
 	return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Convert OpenAI `tool_choice` to an AI SDK toolChoice so the model can be
+ * told whether to call tools (or a specific one).
+ *
+ * OpenAI: "auto" | "none" | "required" | "any" | { type: "function", function: { name } }
+ * AI SDK:  "auto" | "none" | "required" | { type: "tool", toolName }
+ * (Gemini's `any` mode is expressed as AI SDK `required`; `validated` is a
+ * Gemini-native mode OpenAI-compatible clients don't send.)
+ */
+function buildToolChoice(toolChoice: unknown): unknown {
+	if (typeof toolChoice === 'string') {
+		if (toolChoice === 'auto' || toolChoice === 'none') return toolChoice;
+		// "required" (OpenAI) and "any" (Gemini-style) both mean "force a tool call".
+		if (toolChoice === 'required' || toolChoice === 'any') return 'required';
+		return undefined;
+	}
+	if (toolChoice && typeof toolChoice === 'object') {
+		const tc = toolChoice as Record<string, any>;
+		if (tc.type === 'function' && tc.function?.name) return { type: 'tool', toolName: String(tc.function.name) };
+		if (tc.name) return { type: 'tool', toolName: String(tc.name) };
+	}
+	return undefined;
 }
 
 /**
@@ -280,18 +323,23 @@ function buildProviderOptions(body: Record<string, unknown>): Record<string, Rec
 		const t = body.thinking as Record<string, unknown>;
 		// Anthropic format: { thinking: { type: "disabled" } } or { thinking: { type: "enabled", budget_tokens: 4000 } }
 		opts.anthropic = { thinking: t };
-		// Map to Google format
+		// Map to Google format. `includeThoughts: true` surfaces the raw reasoning
+		// text so clients see the chain of thought (Gemini 3.x hides it otherwise).
 		if (t.type === 'disabled') {
 			opts.google = { thinkingConfig: { thinkingBudget: 0 } };
 		} else if (t.type === 'enabled') {
 			const budget = typeof t.budget_tokens === 'number' ? t.budget_tokens : 8192;
-			opts.google = { thinkingConfig: { thinkingBudget: budget } };
+			opts.google = { thinkingConfig: { thinkingBudget: budget, includeThoughts: true } };
 		}
 	}
 
 	// Google direct format: { thinking_config: { thinkingBudget: 8192 } }
 	if (body.thinking_config && typeof body.thinking_config === 'object' && body.thinking_config !== null) {
-		opts.google = { ...(opts.google || {}), thinkingConfig: body.thinking_config };
+		const tc = body.thinking_config as Record<string, unknown>;
+		opts.google = {
+			...(opts.google || {}),
+			thinkingConfig: { ...tc, includeThoughts: tc.includeThoughts ?? true },
+		};
 	}
 
 	// OpenAI reasoning format: { reasoning_effort: "medium" }
@@ -749,6 +797,7 @@ async function handleOpenAIStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		tools: openaiToolsToAISDK(body.tools) as any,
+		toolChoice: buildToolChoice(body.tool_choice) as any,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
 		abortSignal: anySignal(connectController.signal, clientSignal),
@@ -826,6 +875,9 @@ async function handleOpenAIStream(
 			let streamErrorMsg = '';
 			let lastPromptTokens = 0;
 			let lastCompletionTokens = 0;
+			// Index for parallel tool calls within one assistant response, so two
+			// calls in the same response don't collide on index 0 in the client.
+			let toolCallIndex = 0;
 
 			// SSE heartbeat: send comment every 15s to keep connection alive
 			const HEARTBEAT_MS = 15_000;
@@ -873,6 +925,7 @@ async function handleOpenAIStream(
 								),
 							);
 							controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+							toolCallIndex = 0; // next assistant turn starts fresh
 							break;
 						}
 
@@ -910,7 +963,7 @@ async function handleOpenAIStream(
 										index: 0,
 										delta: {
 											tool_calls: [{
-												index: 0,
+												index: toolCallIndex++,
 												id: part.toolCallId,
 												type: 'function',
 												function: {
@@ -1036,6 +1089,7 @@ async function handleOpenAINonStream(
 		topP: body.top_p as number | undefined,
 		stopSequences: (typeof body.stop === 'string' ? [body.stop] : body.stop) as string[] | undefined,
 		tools: openaiToolsToAISDK(body.tools) as any,
+		toolChoice: buildToolChoice(body.tool_choice) as any,
 		providerOptions: buildProviderOptions(body),
 		headers: undefined,
 		abortSignal: anySignal(AbortSignal.timeout(120_000), clientSignal),
@@ -1242,7 +1296,7 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 					const cleanedModel = String(body.model).replace(/^(google\/|models\/)+/, '');
 					if (useDirect) {
 						skipVersioning = true;
-						directBody = stripReasoningForGoogle({ ...body, model: cleanedModel });
+						directBody = normalizeGoogleThinking(stripReasoningForGoogle({ ...body, model: cleanedModel }));
 						directProvider = {
 							...candidate,
 							provider: { ...candidate.provider, config: { ...candidate.provider.config, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' } },
@@ -1251,24 +1305,24 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 						// AI SDK path (native Google API) — normalize model, keep original creds.
 						// Strip replayed thoughts: they can't be re-signed in OpenAI format,
 						// so Google rejects them (Gemini 2.5) or needs the sentinel (Gemini 3).
-						directBody = stripReasoningForGoogle(body);
+						directBody = normalizeGoogleThinking(stripReasoningForGoogle(body));
 						directProvider = { ...candidate, matchedModel: cleanedModel, provider: candidate.provider };
 					}
 				} else if (type === 'vertex_ai') {
 					const cfg = candidate.provider.config;
-					const loc = cfg.location || 'us-central1';
+					const loc = cfg.location || 'global';
 					if (useDirect) {
 						skipVersioning = true;
-						directBody = stripReasoningForGoogle({ ...body, model: String(body.model).startsWith('google/') ? body.model : 'google/' + body.model });
+						directBody = normalizeGoogleThinking(stripReasoningForGoogle({ ...body, model: String(body.model).startsWith('google/') ? body.model : 'google/' + body.model }));
 						const vConfig: Record<string, string> = { ...cfg, baseUrl: `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi` };
 						if (!isVertexApiKeyMode(cfg)) {
 							vConfig.apiKey = await getVertexAccessToken(cfg);
 						}
 						directProvider = { ...candidate, provider: { ...candidate.provider, config: vConfig } };
 					} else {
-						// AI SDK path (native Vertex API) — keep original config, drop `google/` alias.
-						const cleanedModel = String(body.model).replace(/^google\//, '');
-						directBody = stripReasoningForGoogle(body);
+						// AI SDK path (native Vertex API) — keep original config, drop `google/`/`models/` aliases.
+						const cleanedModel = String(body.model).replace(/^(google\/|models\/)+/, '');
+						directBody = normalizeGoogleThinking(stripReasoningForGoogle(body));
 						directProvider = { ...candidate, matchedModel: cleanedModel, provider: candidate.provider };
 					}
 				}
