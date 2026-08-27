@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build:ui",
+  "installCommand": "pnpm install --no-frozen-lockfile",
   "outputDirectory": "admin-ui/build",
   "rewrites": [
     { "source": "/health", "destination": "/api" },

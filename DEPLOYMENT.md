@@ -67,9 +67,10 @@ npm run deploy             # build UI + deploy Worker + static assets
   `julianday()` → `EXTRACT(EPOCH ...) / 86400`).
 - Usage `recordUsage` is fire-and-forget via a `waitUntil` shim (Vercel has no
   `waitUntil`), so call logging may be slightly less reliable than on Cloudflare.
-- After cloning, run `npm install` once in a normal shell so `@neondatabase/serverless`
-  is added to `package-lock.json` (this sandbox/npm cache can block a full install).
-  Vercel's default `npm install` reconciles the lockfile automatically.
+- This project is a **pnpm** workspace (`pnpm-lock.yaml`). Running `vercel build` with
+  a stale lockfile fails, so it uses `installCommand: pnpm install --no-frozen-lockfile`
+  in `vercel.json` to reconcile the lockfile on build. Locally, install with:
+  `pnpm install`.
 - You can keep both deployments in the same repo: Cloudflare uses `src/index.ts`
   (D1), Vercel uses `api/index.ts` (Neon). The `PGURL`/`DATABASE_URL` env var toggles the
   database engine, and the admin **设置 → 部署与数据库** card shows the detected

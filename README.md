@@ -426,7 +426,7 @@ Workflow 文件：`.github/workflows/deploy.yml`
 
 ```bash
 git clone <repo-url> && cd vega-api
-npm install
+pnpm install
 ```
 
 ##### 2. 创建 D1 数据库
@@ -527,7 +527,7 @@ vega-api-db
 ## 开发
 
 ```bash
-npm install              # 安装所有依赖（npm workspaces）
+pnpm install              # 安装所有依赖（pnpm workspace）
 npm run dev              # Worker 开发服务器
 npm run dev:ui           # 前端开发服务器
 npm test                 # 运行测试

@@ -14,7 +14,7 @@ npm run db:migrate   # Apply D1 migrations to remote database
 npm run db:migrate:local  # Apply D1 migrations to local database
 ```
 
-This project uses **npm workspaces**. The root `package.json` manages the Worker (`wrangler`, `vitest`, `hono`) and `admin-ui/` workspace (SvelteKit). A single `npm install` at root installs everything.
+This project is a **pnpm workspace** (a `pnpm-lock.yaml` is committed). The root `package.json` manages the Worker (`wrangler`, `vitest`, `hono`) and `admin-ui/` workspace (SvelteKit). A single `pnpm install` at root installs everything (the root scripts invoke npm for the workspace build, but install must use `pnpm`).
 
 ## Architecture
 
