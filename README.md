@@ -1,6 +1,6 @@
 # Vega API
 
-基于 Cloudflare Workers (Hono + TypeScript) 的**多接口 AI API 网关**，使用 Vercel AI SDK 统一后端，同时提供 OpenAI (`/v1/*`)、Google Gemini (`/v1beta/*`)、Anthropic Messages (`/anthropic/*`) 三种原生 API 接口。管理面板使用 SvelteKit + Tailwind CSS v4 构建。
+基于 Hono + TypeScript 的**多接口 AI API 网关**，使用 Vercel AI SDK 统一后端，同时提供 OpenAI (`/v1/*`)、Google Gemini (`/v1beta/*`)、Anthropic Messages (`/anthropic/*`) 三种原生 API 接口。同一套应用既可部署在 **Cloudflare Workers**（数据库 **D1**），也可部署在 **Vercel**（数据库 **Neon PostgreSQL**），通过环境变量自动切换。管理面板使用 SvelteKit + Tailwind CSS v4 构建。
 
 ## 目录
 
@@ -21,9 +21,9 @@
   - [完整路由表](#完整路由表)
   - [管理 API](#管理-api)
 - [管理面板页面](#管理面板页面)
-- [快速部署](#快速部署)
-  - [自动化部署 (GitHub Actions)](#自动化部署-github-actions)
-  - [手动部署](#手动部署)
+- [部署](#部署)
+  - [部署到 Cloudflare Workers（D1）](#部署到-cloudflare-workersd1)
+  - [部署到 Vercel（Neon）](#部署到-vercelneon)
 - [安全设计](#安全设计)
 - [D1 数据结构](#d1-数据结构)
 - [开发](#开发)
@@ -55,7 +55,7 @@
 |----|------|
 | 框架 | Hono (TypeScript) |
 | AI 后端 | Vercel AI SDK v5 (`ai` + `@ai-sdk/openai` + `@ai-sdk/google` + `@ai-sdk/anthropic`) |
-| 数据库 | Cloudflare D1 |
+| 数据库 | Cloudflare D1 / Vercel Neon (PostgreSQL) |
 | 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons (Code Dark 主题) |
 | 加密 | Web Crypto API (AES-256-GCM、SHA-256) |
 | 测试 | Vitest + @cloudflare/vitest-pool-workers |
@@ -95,6 +95,8 @@
 ```
 
 所有 provider 通过 AI SDK 统一调用，格式转换由 AI SDK 自动处理。
+
+> **双平台可移植**：上面的 Worker 与 `src/app.ts` 是同一份 Hono 应用。Cloudflare 入口为 `src/index.ts`（数据库走 D1 绑定 `DB`）；Vercel 入口为 `api/index.ts`（数据库走 `@neondatabase/serverless` 包装的 Neon，SQL 自动从 SQLite 译为 PostgreSQL）。管理面板「设置 → 部署与数据库」会显示当前部署平台与数据库引擎。
 
 ## 支持的 Provider
 
@@ -232,7 +234,21 @@ curl https://your-worker.workers.dev/anthropic/v1/messages \
 
 ## 环境变量
 
-以下为可选的 Worker 环境变量，均通过 `wrangler.jsonc` 的 `vars`、Cloudflare 控制台（Worker → Settings → Variables），或本地 `.dev.vars` 设置。
+关键部署变量（命名参考 [Waline 数据库环境变量](https://waline.js.org/guide/database.html)，详见[部署](#部署)与 [DEPLOYMENT.md](./DEPLOYMENT.md)）：
+
+| 变量 | 用途 | 平台 |
+|------|------|------|
+| `ENCRYPTION_KEY` | AES-256-GCM 密钥（`openssl rand -hex 32`），**两个平台必须一致** | 必填（两个平台） |
+| `DATABASE` | 引擎选择器（Waline 风格）：`postgres`/`neon`/`pg` → Neon，`d1`/`sqlite` → D1 | 可选 |
+| `PGURL` | Postgres/Neon 连接串（Waline 风格）；`DATABASE_URL`/`POSTGRES_URL` 亦可用 | **Vercel 必填之一** |
+| `DATABASE_PROVIDER` | `neon` / `d1`（`DATABASE` 的别名） | 可选 |
+| `DEPLOYMENT_PLATFORM` | `vercel` / `cloudflare` 显式指定部署平台 | 可选 |
+| `OPENAI_API_KEY` | 兜底客户端 API Key | 可选 |
+| `VEGA_GOOGLE_TOOL_MODE` | Google/Vertex 工具调用路由（见下） | 可选 |
+
+> Vercel 也可使用 libpq 拆分变量 `PGHOST` / `PGDATABASE` / `PGUSER` / `PGPASSWORD` / `PGPORT` 连接 Neon（Waline 支持两种方式）。
+
+以下为可选的运行时环境变量，均通过 `wrangler.jsonc` 的 `vars`、Cloudflare 控制台（Worker → Settings → Variables）、Vercel 控制台（Project → Settings → Environment Variables）或本地 `.dev.vars` 设置。
 
 ### `VEGA_GOOGLE_TOOL_MODE` — Google/Vertex 工具调用路由
 
@@ -368,14 +384,29 @@ response = client.messages.create(
 - **保留上限** — 在设置页配置调用记录最多保留多少条（默认 10000，100–1,000,000 可调），修改后立即生效
 - **一键清空** — 调用记录页一键删除全部记录（仅清空明细，不影响用量统计）
 
-## 快速部署
+## 部署
+
+> 同一套代码可部署到两个平台，互不影响：
+>
+> | 平台 | 运行环境 | 数据库 | 入口 |
+> |------|----------|--------|------|
+> | **Cloudflare Workers** | Worker (`wrangler`) | **D1** (`binding: DB`) | `src/index.ts` |
+> | **Vercel** | Node Serverless (`nodejs20.x`) | **Neon** (PostgreSQL) | `api/index.ts` |
+>
+> - 数据库引擎自动选择：设置了 `PGURL` / `DATABASE_URL` / `POSTGRES_URL`（或 libpq `PG*`）→ **Neon**，否则 → **D1**；也可用 `DATABASE`（或 `DATABASE_PROVIDER`）显式指定（`postgres`/`neon`/`pg` → Neon，`d1`/`sqlite` → D1）。命名参考 [Waline 数据库规范](https://waline.js.org/guide/database.html)。
+> - 部署平台自动识别（也可用 `DEPLOYMENT_PLATFORM=vercel|cloudflare` 覆盖）。
+> - 管理面板「设置 → 部署与数据库」会显示当前部署平台与数据库（含 Neon 主机名）。
+> - 详细说明见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
 
 ### 前提条件
 
-- [Cloudflare 账号](https://dash.cloudflare.com/)
+- [Cloudflare 账号](https://dash.cloudflare.com/)（含 D1 权限）
+- [Vercel 账号](https://vercel.com/)（部署到 Vercel 时需要）
 - [Node.js](https://nodejs.org/) 18+
 
-### 自动化部署 (GitHub Actions)
+### 部署到 Cloudflare Workers（D1）
+
+#### 自动化部署 (GitHub Actions)
 
 1. Fork 或克隆本仓库到 GitHub
 2. 在 Cloudflare Dashboard 创建 D1 数据库
@@ -389,16 +420,16 @@ response = client.messages.create(
 
 Workflow 文件：`.github/workflows/deploy.yml`
 
-### 手动部署
+#### 手动部署
 
-### 1. 克隆并安装
+##### 1. 克隆并安装
 
 ```bash
 git clone <repo-url> && cd vega-api
 npm install
 ```
 
-### 2. 创建 D1 数据库
+##### 2. 创建 D1 数据库
 
 ```bash
 npx wrangler d1 create vega-api-db
@@ -406,37 +437,65 @@ npx wrangler d1 create vega-api-db
 
 将输出的 `database_id` 填入 `wrangler.jsonc` 中的 `d1_databases.database_id`。
 
-### 3. 运行数据库迁移
+##### 3. 运行数据库迁移
 
 ```bash
 npm run db:migrate -- --remote   # 生产环境
 npm run db:migrate:local         # 本地开发
 ```
 
-### 4. 生成加密密钥
+##### 4. 生成加密密钥
 
 ```bash
 openssl rand -hex 32
 ```
 
-### 5. 设置加密密钥
+##### 5. 设置加密密钥
 
 ```bash
 npx wrangler secret put ENCRYPTION_KEY
 ```
 
-### 6. 构建前端并部署
+##### 6. 构建前端并部署
 
 ```bash
 npm run deploy
 ```
 
-### 7. 初始化配置
+##### 7. 初始化配置
 
 浏览器访问 `https://your-worker.workers.dev/`：
 1. 首次访问输入管理密码（≥6 位）
 2. API 设置页 → 添加提供商
 3. API 设置页 → 新建密钥 → 输入名称 → 生成/设置
+
+> 在 Cloudflare 上**不要**设置 `DATABASE_URL`，保持默认即用 D1（这样管理面板会显示 `Cloudflare Workers` / `Cloudflare D1`）。
+
+### 部署到 Vercel（Neon）
+
+参考 [Waline 的 Vercel 部署](https://waline.js.org/guide/deploy/vercel.html) 思路：在 Vercel 上运行单个 Node Serverless 函数，数据库使用 Vercel 集成的 **Neon**。
+
+1. **导入项目**：把仓库推送到 GitHub，在 Vercel → Add New → Project 导入（Framework Preset 选 *Other*）。`vercel.json` 会自动构建管理面板并部署函数。
+2. **配置环境变量**：在 *Vercel → Project → Settings → Environment Variables* 添加（命名参考 Waline 数据库规范）：
+   - 引擎选择：`DATABASE=postgres`（`neon`/`pg` 亦可）。
+   - 连接串（三选一）：
+     - `PGURL` — **Neon** Postgres 连接串（Waline 风格）。
+     - `DATABASE_URL` / `POSTGRES_URL` — 别名（Vercel Neon Integration 通常会注入 `DATABASE_URL`）。
+     - libpq 拆分：`PGHOST` / `PGDATABASE` / `PGUSER` / `PGPASSWORD` / `PGPORT`。
+   - `ENCRYPTION_KEY` — **必填**，与 Cloudflare 使用**同一个** 64 位 hex 密钥（这样才能正确解密已有的 Provider 凭据）。
+   - 可选：`OPENAI_API_KEY`、`VEGA_GOOGLE_TOOL_MODE`、`DEPLOYMENT_PLATFORM`。
+3. **Deploy**。`vercel.json` 会：
+   - 执行 `npm run build:ui`，把 `admin-ui/build` 作为静态资源输出；
+   - 把 `api/index.ts` 部署为单个 `nodejs20.x` Serverless 函数；
+   - 把 API 路径（`/v1/*`、`/v1beta/*`、`/anthropic/*`、`/admin/*`、`/health`）重写到该函数，其余请求回退到 `index.html`（SPA）。
+
+部署后：
+- 管理面板：`https://<你的域名>/`，首次访问设置管理员密码。
+- 健康检查：`https://<你的域名>/health`。
+- 首次冷启动会自动创建 Neon 表结构（Postgres `SERIAL` + `IF NOT EXISTS`），**无需手动迁移**。
+- 管理面板「设置 → 部署与数据库」显示 `Vercel Serverless (Node)` / `Neon Postgres` + Neon 主机名。
+
+> 同一仓库可同时保持两套部署：Cloudflare 用 `src/index.ts`（D1），Vercel 用 `api/index.ts`（Neon），互不影响。
 
 ## 安全设计
 
@@ -462,6 +521,8 @@ vega-api-db
 └── rate_limits    — 登录限流数据
 ```
 
+> 部署到 **Vercel/Neon** 时使用**相同的数据结构**，但底层是 PostgreSQL：`id` 用 `SERIAL`（等价于 D1 的 `AUTOINCREMENT`），建表用 `IF NOT EXISTS`，首次冷启动自动创建，无需手动迁移。
+
 ## 开发
 
 ```bash
@@ -481,18 +542,25 @@ npm run deploy           # 构建 + 部署到 Cloudflare
 │   └── deploy.yml
 ├── package.json              # npm workspaces root
 ├── wrangler.jsonc            # Workers 配置 (D1 + Assets + run_worker_first)
+├── vercel.json               # Vercel 配置 (build + 单函数 + SPA 重写)
 ├── migrations/               # D1 数据库迁移
 │   ├── 0001_init.sql         # 核心表
 │   ├── 0002_call_logs.sql    # 调用记录表
 │   ├── 0007_api_keys.sql     # 多密钥表
 │   └── 0008_call_logs_enhance.sql # 缓存追踪 + 密钥名
+├── api/                      # Vercel 入口 + Neon 适配器
+│   ├── index.ts              # Vercel 函数 (构造 env → app.fetch)
+│   └── neon.ts               # D1 兼容客户端 (SQL SQLite→Postgres 翻译)
 ├── src/                      # Worker 源码 (TypeScript)
-│   ├── index.ts              # Hono 入口: CORS, 路由挂载, 健康检查
+│   ├── index.ts              # Cloudflare 入口: prepareRuntime + app.fetch
+│   ├── app.ts                # 共享 Hono 应用 (双平台复用)
+│   ├── runtime.ts            # 平台/数据库自动检测
+│   ├── request-util.ts       # 跨平台请求工具 (客户端 IP 等)
 │   ├── ai-providers.ts       # AI SDK Provider 工厂 + Vertex JWT 管理
 │   ├── router.ts             # 模型路由: 缓存, Provider 查找, 模型聚合
-│   ├── types.ts              # 共享类型定义
-│   ├── db.ts                 # D1 schema 初始化 + 运行时迁移
-│   ├── config.ts             # D1 配置 CRUD + 多密钥管理 + 故障转移
+│   ├── types.ts              # 共享类型定义 (DBClient / Env)
+│   ├── db.ts                 # schema 初始化 (D1 SQLite / Neon Postgres 分支)
+│   ├── config.ts             # 配置 CRUD + 多密钥管理 + 故障转移
 │   ├── crypto.ts             # AES-GCM + SHA-256 + 密钥哈希
 │   ├── rate-limit.ts         # 登录限流
 │   ├── usage.ts              # 用量追踪 + 调用记录 + 缓存提取

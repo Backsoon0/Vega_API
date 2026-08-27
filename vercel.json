@@ -1,0 +1,22 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build:ui",
+  "outputDirectory": "admin-ui/build",
+  "functions": {
+    "api/index.ts": {
+      "runtime": "nodejs20.x",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/health", "destination": "/api" },
+    { "source": "/v1beta/:path*", "destination": "/api" },
+    { "source": "/v1/:path*", "destination": "/api" },
+    { "source": "/anthropic/:path*", "destination": "/api" },
+    { "source": "/admin/:path*", "destination": "/api" },
+    {
+      "source": "/((?!api/|.*\\.).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

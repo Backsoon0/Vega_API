@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { changePassword, getSettings, updateSettings } from "$lib/api";
-	import { ToggleLeft, Columns, Shield, Database, Lock, Eye, EyeOff } from "lucide-svelte";
+	import { ToggleLeft, Columns, Shield, Database, Lock, Eye, EyeOff, Server, HardDrive } from "lucide-svelte";
 	import Alert from "$lib/Alert.svelte";
 	import Spinner from "$lib/Spinner.svelte";
 	import { toasts } from "$lib/toast-store";
@@ -29,6 +29,13 @@
 	// ---- Call log retention state ----
 	let logRetention = $state(10000);
 	let retentionSaving = $state(false);
+
+	// ---- Deployment / database state (read-only display) ----
+	let platform = $state('');
+	let database = $state('');
+	let databaseHost = $state('');
+	let deploymentModel = $state('');
+	let nodeVersion = $state('');
 
 	// ---- Column visibility ----
 	const ALL_COLUMNS = [
@@ -77,6 +84,11 @@
 			cbThreshold = s.circuitBreakerThreshold || 5;
 			cbCooldown = s.circuitBreakerCooldownSeconds || 30;
 			logRetention = s.logRetentionLimit || 10000;
+			platform = s.platform || '';
+			database = s.database || '';
+			databaseHost = s.databaseHost || '';
+			deploymentModel = s.deploymentModel || '';
+			nodeVersion = s.nodeVersion || '';
 		}).catch(() => {}).finally(() => {
 			settingsLoading = false;
 		});
@@ -165,6 +177,33 @@
 </div>
 
 <div class="grid-2 settings-grid">
+	<!-- Deployment & database (read-only runtime info) -->
+	{#if deploymentModel}
+		<div class="card card-pad rise" style="--d:10ms;grid-column:1 / -1">
+			<h2 style="font-size:14px;display:flex;gap:8px;align-items:center;margin-bottom:14px">
+				<Server class="w-4 h-4" style="color:var(--cta)" stroke-width={1.5} />
+				部署与数据库
+			</h2>
+			<div class="row" style="flex-wrap:wrap;gap:12px">
+				<div class="deploy-chip">
+					<span class="deploy-label"><HardDrive class="w-3 h-3" stroke-width={1.6} /> 部署平台</span>
+					<span class="deploy-value">{deploymentModel}{platform === 'vercel' && nodeVersion ? ` · Node ${nodeVersion}` : ''}</span>
+				</div>
+				<div class="deploy-chip">
+					<span class="deploy-label"><Database class="w-3 h-3" stroke-width={1.6} /> 数据库</span>
+					<span class="deploy-value" style="color:{database === 'neon' ? 'var(--accent)' : 'var(--warning)'}">
+						{database === 'neon' ? 'Neon Postgres' : 'Cloudflare D1'}
+					</span>
+				</div>
+				{#if databaseHost}
+					<div class="deploy-chip">
+						<span class="deploy-label">数据库主机</span>
+						<span class="deploy-value">{databaseHost}</span>
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
 	<!-- Failover toggle -->
 	<div class="card card-pad rise" style="--d:40ms">
 		<div class="between" style="align-items:flex-start;gap:12px">
@@ -297,3 +336,31 @@
 		</button>
 	</form>
 </div>
+
+<style>
+	.deploy-chip {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 10px 14px;
+		border: 1px solid var(--color-border, rgba(255, 255, 255, 0.08));
+		border-radius: 10px;
+		background: var(--color-surface, rgba(255, 255, 255, 0.03));
+		min-width: 180px;
+	}
+	.deploy-label {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 11px;
+		color: var(--color-muted, var(--muted));
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	.deploy-value {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--color-primary, var(--primary));
+		font-family: var(--font-mono, 'JetBrains Mono', monospace);
+	}
+</style>

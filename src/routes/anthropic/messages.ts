@@ -16,6 +16,7 @@ import { getFailoverEnabled } from '../../config';
 import { getClientKeyName } from '../../middleware/auth';
 import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
 import { toJsonErrorBody } from '../../upstream-errors';
+import { getClientIp } from '../../request-util';
 
 export const anthropicMessagesRoutes = new Hono<{ Bindings: Env }>();
 
@@ -1094,7 +1095,7 @@ anthropicMessagesRoutes.post('/v1/messages', async (c: Context<{ Bindings: Env }
 		);
 	}
 
-	const ip = c.req.header('CF-Connecting-IP') || 'unknown';
+	const ip = getClientIp(c);
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();

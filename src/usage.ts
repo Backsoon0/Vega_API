@@ -157,7 +157,7 @@ export async function getCallLogs(
         .prepare(`SELECT COUNT(*) as cnt FROM call_logs ${whereClauses}`)
         .bind(...params)
         .first<{ cnt: number }>();
-      total = countRow?.cnt || 0;
+      total = Number(countRow?.cnt) || 0;
     } catch {
       // COUNT failed — total stays 0, pagination falls back to hasMore
     }
@@ -264,23 +264,27 @@ export async function getUsage(
       }>();
 
     for (const r of rows.results || []) {
-      total.calls += r.calls;
-      total.promptTokens += r.prompt_tokens;
-      total.completionTokens += r.completion_tokens;
+      const calls = Number(r.calls) || 0;
+      const prompt = Number(r.prompt_tokens) || 0;
+      const completion = Number(r.completion_tokens) || 0;
+
+      total.calls += calls;
+      total.promptTokens += prompt;
+      total.completionTokens += completion;
 
       if (!byProvider[r.provider_id]) {
         byProvider[r.provider_id] = { calls: 0, promptTokens: 0, completionTokens: 0 };
       }
-      byProvider[r.provider_id].calls += r.calls;
-      byProvider[r.provider_id].promptTokens += r.prompt_tokens;
-      byProvider[r.provider_id].completionTokens += r.completion_tokens;
+      byProvider[r.provider_id].calls += calls;
+      byProvider[r.provider_id].promptTokens += prompt;
+      byProvider[r.provider_id].completionTokens += completion;
 
       if (!daily[r.date]) {
         daily[r.date] = { calls: 0, promptTokens: 0, completionTokens: 0 };
       }
-      daily[r.date].calls += r.calls;
-      daily[r.date].promptTokens += r.prompt_tokens;
-      daily[r.date].completionTokens += r.completion_tokens;
+      daily[r.date].calls += calls;
+      daily[r.date].promptTokens += prompt;
+      daily[r.date].completionTokens += completion;
     }
   } catch (err) {
     console.error('Usage query error:', (err as Error).message);
@@ -307,9 +311,9 @@ export async function getUsageTotals(env: Env): Promise<Record<string, UsageReco
       }>();
     for (const r of rows.results || []) {
       result[r.provider_id] = {
-        calls: r.calls,
-        promptTokens: r.prompt_tokens,
-        completionTokens: r.completion_tokens,
+        calls: Number(r.calls) || 0,
+        promptTokens: Number(r.prompt_tokens) || 0,
+        completionTokens: Number(r.completion_tokens) || 0,
       };
     }
   } catch (err) {

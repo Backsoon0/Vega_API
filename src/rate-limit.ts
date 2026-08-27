@@ -5,6 +5,7 @@
 
 import type { Context, Next } from 'hono';
 import type { Env } from './types';
+import { getClientIp } from './request-util';
 
 const MAX_ATTEMPTS = 5;
 const WINDOW_SECONDS = 300;       // 5 minutes
@@ -17,7 +18,7 @@ interface RateEntry {
 }
 
 export async function rateLimitLogin(c: Context<{ Bindings: Env }>, next: Next) {
-  const ip = c.req.header('CF-Connecting-IP') || 'unknown';
+  const ip = getClientIp(c);
   const key = `login:${ip}`;
   const now = Math.floor(Date.now() / 1000);
 

@@ -10,6 +10,7 @@ import { updateConfig as updateCBConfig } from '../../circuit-breaker';
 import { pruneCallLogs } from '../../usage';
 import { rateLimitLogin, recordLoginFailure, resetLoginRate, getRateLimitConfig } from '../../rate-limit';
 import { requireAdminAuth } from '../../middleware/auth';
+import { getRuntimeStatus } from '../../runtime';
 
 export const adminAuthRoutes = new Hono<{ Bindings: Env }>();
 
@@ -92,11 +93,18 @@ adminAuthRoutes.get('/settings', async (c: Context<{ Bindings: Env }>) => {
 	const failoverEnabled = await getFailoverEnabled(c.env);
 	const cbConfig = await getCircuitBreakerConfig(c.env);
 	const logRetentionLimit = await getLogRetentionLimit(c.env);
+	const runtime = getRuntimeStatus(c.env);
 	return c.json({
 		failoverEnabled,
 		circuitBreakerThreshold: cbConfig.threshold,
 		circuitBreakerCooldownSeconds: Math.round(cbConfig.cooldownMs / 1000),
 		logRetentionLimit,
+		// Runtime/deployment info for the control panel display
+		platform: runtime.platform,
+		database: runtime.database,
+		databaseHost: runtime.databaseHost,
+		deploymentModel: runtime.deploymentModel,
+		nodeVersion: runtime.nodeVersion ?? null,
 	});
 });
 

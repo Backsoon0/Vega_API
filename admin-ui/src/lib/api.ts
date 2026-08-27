@@ -315,7 +315,17 @@ export async function* playgroundChat(
 export async function getSettings() {
 	const { ok, data } = await request('GET', '/settings');
 	if (!ok) throw new Error(data.error || '获取设置失败');
-	return data as { failoverEnabled: boolean; circuitBreakerThreshold: number; circuitBreakerCooldownSeconds: number; logRetentionLimit: number };
+	return data as {
+		failoverEnabled: boolean;
+		circuitBreakerThreshold: number;
+		circuitBreakerCooldownSeconds: number;
+		logRetentionLimit: number;
+		platform?: string;
+		database?: string;
+		databaseHost?: string;
+		deploymentModel?: string;
+		nodeVersion?: string | null;
+	};
 }
 
 export async function updateSettings(settings: { failoverEnabled?: boolean; circuitBreakerThreshold?: number; circuitBreakerCooldownSeconds?: number; logRetentionLimit?: number }) {

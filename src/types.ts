@@ -70,13 +70,59 @@ export interface ApiKeyInfo {
 	lastUsedAt: string | null;
 }
 
+/**
+ * A minimal, D1-shaped database client abstraction so the same data-access code
+ * runs on Cloudflare Workers (D1) and Vercel (Neon Postgres). Cloudflare's real
+ * `D1Database` satisfies this structurally; `@neondatabase/serverless` is wrapped
+ * by a Neon adapter in the Vercel entry point.
+ */
+export interface DBMeta {
+	changes: number;
+	last_row_id: number;
+}
+
+export interface DBResult<T> {
+	results: T[];
+	success: boolean;
+	meta: DBMeta;
+}
+
+export interface DBPrepared {
+	/** Bind positional/parameterized values. Returns this for chaining. */
+	bind(...values: unknown[]): DBPrepared;
+	/** Run and return all rows. */
+	all<T = Record<string, unknown>>(): Promise<DBResult<T>>;
+	/** Run and return the first row, or null. */
+	first<T = Record<string, unknown>>(): Promise<T | null>;
+	/** Run the statement (e.g. INSERT/UPDATE/DELETE) and return affected-row metadata. */
+	run(): Promise<DBResult<Record<string, unknown>>>;
+}
+
+export interface DBClient {
+	prepare(sql: string): DBPrepared;
+}
+
 export interface Env {
-	DB: D1Database;
+	/** Database + config/usage storage. D1 on Cloudflare, Neon on Vercel. */
+	DB: DBClient;
+	// Cloudflare static assets binding. On Vercel this is an inert fallback stub.
 	ASSETS: { fetch: (request: Request) => Promise<Response> };
 	ENCRYPTION_KEY?: string;
 	OPENAI_API_KEY?: string;
 	/** Optional: "ai-sdk" (default) or "direct" — Google tool-call routing mode. */
 	VEGA_GOOGLE_TOOL_MODE?: string;
+	/** Optional: "neon" or "d1" — overrides automatic database platform detection. */
+	DATABASE_PROVIDER?: string;
+	/** Optional: Waline-style engine selector — "neon"/"postgres" → Neon, "d1"/"sqlite" → D1. */
+	DATABASE?: string;
+	/** Optional: Neon Postgres connection string (sets database to "neon"). */
+	DATABASE_URL?: string;
+	/** Optional: Waline-style Postgres connection string (alias of DATABASE_URL). */
+	PGURL?: string;
+	/** Optional: Postgres connection string alias (commonly injected by Neon/Vercel integrations). */
+	POSTGRES_URL?: string;
+	/** Optional: "vercel" or "cloudflare" — overrides automatic deployment detection. */
+	DEPLOYMENT_PLATFORM?: string;
 }
 
 export interface ProviderHandler {

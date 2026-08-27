@@ -18,6 +18,7 @@ import { getClientKeyName } from '../../middleware/auth';
 import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
 import { toJsonErrorBody } from '../../upstream-errors';
 import { shouldUseAISDKForGoogleTools } from '../../google-tool-mode';
+import { getClientIp } from '../../request-util';
 
 export const v1betaChatRoutes = new Hono<{ Bindings: Env }>();
 
@@ -1017,7 +1018,7 @@ v1betaChatRoutes.post('/models/:modelAndAction{.+}', async (c: Context<{ Binding
 		);
 	}
 
-	const ip = c.req.header('CF-Connecting-IP') || 'unknown';
+	const ip = getClientIp(c);
 	const requestId = crypto.randomUUID();
 	const execCtx = (c as any).executionCtx;
 	const startMs = Date.now();
