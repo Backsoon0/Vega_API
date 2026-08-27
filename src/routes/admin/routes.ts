@@ -3,9 +3,9 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env } from '../../types';
-import { getRouteTopology } from '../../router';
-import { getCircuitState } from '../../circuit-breaker';
+import type { Env } from '../../types.js';
+import { getRouteTopology } from '../../router.js';
+import { getCircuitState } from '../../circuit-breaker.js';
 
 export const adminRouteTopologyRoutes = new Hono<{ Bindings: Env }>();
 

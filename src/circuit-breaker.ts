@@ -7,8 +7,8 @@
 // Config (threshold, cooldown) is loaded from D1 ONCE on first use, then cached in memory.
 // Admin panel writes to D1 AND calls updateConfig() to sync the in-memory copy immediately.
 
-import type { Env } from './types';
-import { getConfig as getD1Config } from './config';
+import type { Env } from './types.js';
+import { getConfig as getD1Config } from './config.js';
 
 interface CircuitState {
 	failures: number;

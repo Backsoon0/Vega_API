@@ -3,8 +3,8 @@
 // Call logs persisted in D1 with configurable retention limit (default 10000 rows,
 // editable in the admin panel via config key `log_retention_limit`)
 
-import type { Env, UsageRecord } from './types';
-import { getLogRetentionLimit } from './config';
+import type { Env, UsageRecord } from './types.js';
+import { getLogRetentionLimit } from './config.js';
 
 function isoDate(): string {
   return new Date().toISOString().slice(0, 10);

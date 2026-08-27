@@ -3,7 +3,7 @@
 // Auth: Bearer token (API key)
 // Default upstream: https://api.openai.com/v1
 
-import type { Env, Provider, Model } from '../types';
+import type { Env, Provider, Model } from '../types.js';
 
 const DEFAULT_UPSTREAM = 'https://api.openai.com/v1';
 

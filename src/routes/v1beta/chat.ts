@@ -8,17 +8,17 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { streamText, generateText } from 'ai';
-import type { Env } from '../../types';
-import type { ProviderMatch } from '../../router';
-import { findProviderForModel } from '../../router';
-import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers';
-import { recordUsage, extractCacheTokens } from '../../usage';
-import { getFailoverEnabled } from '../../config';
-import { getClientKeyName } from '../../middleware/auth';
-import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker';
-import { toJsonErrorBody } from '../../upstream-errors';
-import { shouldUseAISDKForGoogleTools } from '../../google-tool-mode';
-import { getClientIp } from '../../request-util';
+import type { Env } from '../../types.js';
+import type { ProviderMatch } from '../../router.js';
+import { findProviderForModel } from '../../router.js';
+import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers.js';
+import { recordUsage, extractCacheTokens } from '../../usage.js';
+import { getFailoverEnabled } from '../../config.js';
+import { getClientKeyName } from '../../middleware/auth.js';
+import { isProviderAllowed, recordFailure as recordCBFailure, recordSuccess as recordCBSuccess } from '../../circuit-breaker.js';
+import { toJsonErrorBody } from '../../upstream-errors.js';
+import { shouldUseAISDKForGoogleTools } from '../../google-tool-mode.js';
+import { getClientIp } from '../../request-util.js';
 
 export const v1betaChatRoutes = new Hono<{ Bindings: Env }>();
 

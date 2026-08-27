@@ -2,8 +2,8 @@
 // Cloudflare Worker entry — Vega API
 // Multi-interface AI API: OpenAI (/v1/*), Gemini (/v1beta/*), Anthropic (/anthropic/*)
 
-import type { Env } from './types';
-import { app, prepareRuntime } from './app';
+import type { Env } from './types.js';
+import { app, prepareRuntime } from './app.js';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

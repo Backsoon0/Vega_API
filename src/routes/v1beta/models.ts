@@ -5,8 +5,8 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env } from '../../types';
-import { getAggregatedModels } from '../../router';
+import type { Env } from '../../types.js';
+import { getAggregatedModels } from '../../router.js';
 
 export const v1betaModelRoutes = new Hono<{ Bindings: Env }>();
 

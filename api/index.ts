@@ -19,9 +19,9 @@
 // The Cloudflare Worker deployment is unaffected: this file is only compiled by
 // Vercel (`main` in wrangler.jsonc still points to src/index.ts).
 
-import type { Env } from '../src/types';
-import { app, prepareRuntime } from '../src/app';
-import { NeonDBClient } from './neon';
+import type { Env } from '../src/types.js';
+import { app, prepareRuntime } from '../src/app.js';
+import { NeonDBClient } from './neon.js';
 
 // ---- Resolve the Postgres/Neon connection string (Waline-style names) ----
 

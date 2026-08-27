@@ -3,8 +3,8 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env } from '../../types';
-import { getUsage, getUsageTotals, getCallLogs } from '../../usage';
+import type { Env } from '../../types.js';
+import { getUsage, getUsageTotals, getCallLogs } from '../../usage.js';
 
 export const adminUsageRoutes = new Hono<{ Bindings: Env }>();
 

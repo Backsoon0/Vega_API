@@ -14,14 +14,14 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { streamText, generateText } from 'ai';
-import type { Env, Provider } from '../../types';
-import { getProvider } from '../../config';
+import type { Env, Provider } from '../../types.js';
+import { getProvider } from '../../config.js';
 import {
 	createModelFromProvider,
 	getVertexAccessToken,
 	isVertexApiKeyMode,
-} from '../../ai-providers';
-import { PROVIDER_HANDLERS, withTimeout } from '../../router';
+} from '../../ai-providers.js';
+import { PROVIDER_HANDLERS, withTimeout } from '../../router.js';
 
 export const adminPlaygroundRoutes = new Hono<{ Bindings: Env }>();
 

@@ -3,7 +3,7 @@
 // Uses OpenAI-compatible endpoint at generativelanguage.googleapis.com
 // Auth: Bearer token (API key)
 
-import type { Env, Provider, Model } from '../types';
+import type { Env, Provider, Model } from '../types.js';
 
 const UPSTREAM_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
 

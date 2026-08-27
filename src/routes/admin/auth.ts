@@ -3,14 +3,14 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env } from '../../types';
-import { sha256 } from '../../crypto';
-import { getAdminPasswordHash, setAdminPassword, getFailoverEnabled, setFailoverEnabled, getCircuitBreakerConfig, setCircuitBreakerConfig, getLogRetentionLimit, setLogRetentionLimit } from '../../config';
-import { updateConfig as updateCBConfig } from '../../circuit-breaker';
-import { pruneCallLogs } from '../../usage';
-import { rateLimitLogin, recordLoginFailure, resetLoginRate, getRateLimitConfig, type RateLimitVars } from '../../rate-limit';
-import { requireAdminAuth } from '../../middleware/auth';
-import { getRuntimeStatus } from '../../runtime';
+import type { Env } from '../../types.js';
+import { sha256 } from '../../crypto.js';
+import { getAdminPasswordHash, setAdminPassword, getFailoverEnabled, setFailoverEnabled, getCircuitBreakerConfig, setCircuitBreakerConfig, getLogRetentionLimit, setLogRetentionLimit } from '../../config.js';
+import { updateConfig as updateCBConfig } from '../../circuit-breaker.js';
+import { pruneCallLogs } from '../../usage.js';
+import { rateLimitLogin, recordLoginFailure, resetLoginRate, getRateLimitConfig, type RateLimitVars } from '../../rate-limit.js';
+import { requireAdminAuth } from '../../middleware/auth.js';
+import { getRuntimeStatus } from '../../runtime.js';
 
 export const adminAuthRoutes = new Hono<{ Bindings: Env; Variables: RateLimitVars }>();
 

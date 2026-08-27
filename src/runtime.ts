@@ -5,7 +5,7 @@
 // (it only inspects `env` / `process.env`), so it is safe for both Cloudflare
 // and Vercel entry points.
 
-import type { Env } from './types';
+import type { Env } from './types.js';
 
 export type PlatformKind = 'cloudflare' | 'vercel';
 export type DatabaseKind = 'd1' | 'neon';

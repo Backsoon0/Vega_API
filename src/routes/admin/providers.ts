@@ -3,13 +3,13 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env } from '../../types';
+import type { Env } from '../../types.js';
 import {
 	listProvidersMasked,
 	getProviderMasked,
 	saveProvider,
 	deleteProvider,
-} from '../../config';
+} from '../../config.js';
 
 export const adminProviderRoutes = new Hono<{ Bindings: Env }>();
 

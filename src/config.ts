@@ -1,8 +1,8 @@
 // src/config.ts
 // D1-based configuration CRUD for providers, admin password, client API key
 
-import type { Env, Provider, ProviderRow, ApiKeyInfo } from './types';
-import { encrypt, decrypt, hashKey } from './crypto';
+import type { Env, Provider, ProviderRow, ApiKeyInfo } from './types.js';
+import { encrypt, decrypt, hashKey } from './crypto.js';
 
 // ---- Config table helpers ----
 

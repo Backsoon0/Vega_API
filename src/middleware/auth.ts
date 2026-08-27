@@ -2,9 +2,9 @@
 // Client and admin authentication middleware
 
 import type { Context, MiddlewareHandler } from 'hono';
-import type { Env } from '../types';
-import { getClientApiKey, getAdminPasswordHash, findApiKeyNameByHash, hasAnyApiKeys } from '../config';
-import { hashKey } from '../crypto';
+import type { Env } from '../types.js';
+import { getClientApiKey, getAdminPasswordHash, findApiKeyNameByHash, hasAnyApiKeys } from '../config.js';
+import { hashKey } from '../crypto.js';
 
 // ---- In-memory cache for hot-path auth lookups ----
 // Avoids D1 reads on every request. TTL balances freshness vs latency.

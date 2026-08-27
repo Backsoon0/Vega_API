@@ -11,7 +11,7 @@
 //   * `julianday(x)`             → `(EXTRACT(EPOCH FROM (x)::timestamptz) / 86400.0)`
 
 import { neon } from '@neondatabase/serverless';
-import type { DBClient, DBPrepared, DBResult } from '../src/types';
+import type { DBClient, DBPrepared, DBResult } from '../src/types.js';
 
 // ---- SQL translation (D1/SQLite → Postgres) ----
 

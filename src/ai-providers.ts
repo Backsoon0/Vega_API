@@ -5,7 +5,7 @@
 
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import type { Env, Provider } from './types';
+import type { Env, Provider } from './types.js';
 
 // ---- Vertex AI JWT helpers (from providers/vertex.ts) ----
 // Re-exported for use in ai-providers.ts

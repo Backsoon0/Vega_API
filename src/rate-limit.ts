@@ -4,8 +4,8 @@
 // Uses dedicated rate_limits table (not config table)
 
 import type { Context, Next } from 'hono';
-import type { Env } from './types';
-import { getClientIp } from './request-util';
+import type { Env } from './types.js';
+import { getClientIp } from './request-util.js';
 
 const MAX_ATTEMPTS = 5;
 const WINDOW_SECONDS = 300;       // 5 minutes

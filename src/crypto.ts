@@ -2,7 +2,7 @@
 // AES-256-GCM encryption + SHA-256 hashing (Web Crypto API)
 // TypeScript port of crypto.js
 
-import type { Env } from './types';
+import type { Env } from './types.js';
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);

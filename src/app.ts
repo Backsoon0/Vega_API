@@ -9,29 +9,29 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { Env } from './types';
-import { initSchema } from './db';
-import { ensureConfigLoaded } from './circuit-breaker';
-import { getRuntimeStatus } from './runtime';
+import type { Env } from './types.js';
+import { initSchema } from './db.js';
+import { ensureConfigLoaded } from './circuit-breaker.js';
+import { getRuntimeStatus } from './runtime.js';
 
 // Middleware
-import { clientAuthMiddleware, adminAuthMiddleware } from './middleware/auth';
+import { clientAuthMiddleware, adminAuthMiddleware } from './middleware/auth.js';
 
 // Route modules
-import { adminAuthRoutes } from './routes/admin/auth';
-import { adminProviderRoutes } from './routes/admin/providers';
-import { adminApiKeyRoutes } from './routes/admin/client-key';
-import { adminUsageRoutes } from './routes/admin/usage';
-import { adminPlaygroundRoutes } from './routes/admin/playground';
-import { adminRouteTopologyRoutes } from './routes/admin/routes';
-import { v1ModelRoutes } from './routes/v1/models';
-import { v1ChatRoutes } from './routes/v1/chat';
-import { v1betaModelRoutes } from './routes/v1beta/models';
-import { v1betaChatRoutes } from './routes/v1beta/chat';
-import { anthropicMessagesRoutes } from './routes/anthropic/messages';
+import { adminAuthRoutes } from './routes/admin/auth.js';
+import { adminProviderRoutes } from './routes/admin/providers.js';
+import { adminApiKeyRoutes } from './routes/admin/client-key.js';
+import { adminUsageRoutes } from './routes/admin/usage.js';
+import { adminPlaygroundRoutes } from './routes/admin/playground.js';
+import { adminRouteTopologyRoutes } from './routes/admin/routes.js';
+import { v1ModelRoutes } from './routes/v1/models.js';
+import { v1ChatRoutes } from './routes/v1/chat.js';
+import { v1betaModelRoutes } from './routes/v1beta/models.js';
+import { v1betaChatRoutes } from './routes/v1beta/chat.js';
+import { anthropicMessagesRoutes } from './routes/anthropic/messages.js';
 
 // Router utilities
-import { loadProviders } from './router';
+import { loadProviders } from './router.js';
 
 export const app = new Hono<{ Bindings: Env }>();
 

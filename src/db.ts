@@ -9,8 +9,8 @@
 // which is satisfied by Cloudflare's real D1 binding on Workers and by the Neon
 // adapter on Vercel, so data-access code stays identical across platforms.
 
-import type { Env } from './types';
-import { detectDatabase } from './runtime';
+import type { Env } from './types.js';
+import { detectDatabase } from './runtime.js';
 
 // ---------------------------------------------------------------------------
 // D1 (SQLite) schema — original single-line statements.

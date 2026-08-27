@@ -1,13 +1,13 @@
 // src/router.ts
 // Model routing: cache management, provider lookup, model aggregation
 
-import type { Env, Provider, Model, ProviderHandler } from './types';
-import { listProviders, getFailoverEnabled } from './config';
-import { getConfigVersion } from './config';
-import { getCircuitState } from './circuit-breaker';
-import * as VertexProvider from './providers/vertex';
-import * as AiStudioProvider from './providers/ai-studio';
-import * as OpenAIProvider from './providers/openai';
+import type { Env, Provider, Model, ProviderHandler } from './types.js';
+import { listProviders, getFailoverEnabled } from './config.js';
+import { getConfigVersion } from './config.js';
+import { getCircuitState } from './circuit-breaker.js';
+import * as VertexProvider from './providers/vertex.js';
+import * as AiStudioProvider from './providers/ai-studio.js';
+import * as OpenAIProvider from './providers/openai.js';
 
 export const PROVIDER_HANDLERS: Record<string, ProviderHandler> = {
 	vertex_ai: VertexProvider,

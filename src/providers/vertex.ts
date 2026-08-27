@@ -2,7 +2,7 @@
 // Google Vertex AI backend proxy — OpenAI-compatible pass-through
 // Supports JWT (service account) and API Key auth modes
 
-import type { Env, Provider, Model } from '../types';
+import type { Env, Provider, Model } from '../types.js';
 
 const ACCESS_TOKEN_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 const TOKEN_CACHE_SKEW_SECONDS = 60;

@@ -3,9 +3,9 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env } from '../../types';
-import { listApiKeys, createApiKey, deleteApiKey, renameApiKey, migrateLegacyApiKey, getClientApiKey, setClientApiKey } from '../../config';
-import { invalidateAuthCache } from '../../middleware/auth';
+import type { Env } from '../../types.js';
+import { listApiKeys, createApiKey, deleteApiKey, renameApiKey, migrateLegacyApiKey, getClientApiKey, setClientApiKey } from '../../config.js';
+import { invalidateAuthCache } from '../../middleware/auth.js';
 
 export const adminApiKeyRoutes = new Hono<{ Bindings: Env }>();
 
