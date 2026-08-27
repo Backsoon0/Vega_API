@@ -5,7 +5,7 @@ Vega API runs the **same Hono application** on two platforms:
 | Platform | Runtime | Database | Entry point |
 |----------|---------|----------|-------------|
 | Cloudflare Workers | Worker (`wrangler`) | **D1** (`binding: DB`) | `src/index.ts` |
-| Vercel | Node Serverless (`nodejs20.x`) | **Neon** (Postgres) | `api/index.ts` |
+| Vercel | Node Serverless (`@vercel/node` runtime) | **Neon** (Postgres) | `api/index.ts` |
 
 The shared Hono app lives in `src/app.ts`. Both entries call `prepareRuntime(env)`
 (one-time schema init + circuit-breaker config load) then `app.fetch(request, env, ctx)`.
@@ -49,9 +49,14 @@ npm run deploy             # build UI + deploy Worker + static assets
    - Optional: `OPENAI_API_KEY`, `VEGA_GOOGLE_TOOL_MODE`, `DEPLOYMENT_PLATFORM`.
 3. Deploy. `vercel.json`:
    - builds the admin UI (`npm run build:ui`), serves `admin-ui/build` as static assets,
-   - deploys `api/index.ts` as a single `nodejs20.x` serverless function,
+   - deploys `api/index.ts` as a single **Node** serverless function (Vercel auto-detects
+     the `@vercel/node` runtime; no manual `functions.runtime` pin needed),
    - rewrites the API routes (`/v1/*`, `/v1beta/*`, `/anthropic/*`, `/admin/*`, `/health`)
      to the function, and falls back to `index.html` for SPA client routes.
+
+   > If you need a longer function duration for long streaming responses, set
+   > `maxDuration` in *Vercel → Project → Settings → Functions* (or re-add a
+   > `functions` entry with a valid runtime string).
 
 ### Notes
 

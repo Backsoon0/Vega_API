@@ -391,7 +391,7 @@ response = client.messages.create(
 > | 平台 | 运行环境 | 数据库 | 入口 |
 > |------|----------|--------|------|
 > | **Cloudflare Workers** | Worker (`wrangler`) | **D1** (`binding: DB`) | `src/index.ts` |
-> | **Vercel** | Node Serverless (`nodejs20.x`) | **Neon** (PostgreSQL) | `api/index.ts` |
+> | **Vercel** | Node Serverless (`@vercel/node` runtime) | **Neon** (PostgreSQL) | `api/index.ts` |
 >
 > - 数据库引擎自动选择：设置了 `PGURL` / `DATABASE_URL` / `POSTGRES_URL`（或 libpq `PG*`）→ **Neon**，否则 → **D1**；也可用 `DATABASE`（或 `DATABASE_PROVIDER`）显式指定（`postgres`/`neon`/`pg` → Neon，`d1`/`sqlite` → D1）。命名参考 [Waline 数据库规范](https://waline.js.org/guide/database.html)。
 > - 部署平台自动识别（也可用 `DEPLOYMENT_PLATFORM=vercel|cloudflare` 覆盖）。
@@ -486,8 +486,9 @@ npm run deploy
    - 可选：`OPENAI_API_KEY`、`VEGA_GOOGLE_TOOL_MODE`、`DEPLOYMENT_PLATFORM`。
 3. **Deploy**。`vercel.json` 会：
    - 执行 `npm run build:ui`，把 `admin-ui/build` 作为静态资源输出；
-   - 把 `api/index.ts` 部署为单个 `nodejs20.x` Serverless 函数；
+   - 把 `api/index.ts` 部署为单个 **Node** Serverless 函数（Vercel 自动识别 `@vercel/node` 运行时，无需在 `vercel.json` 里手动固定 `functions.runtime`）；
    - 把 API 路径（`/v1/*`、`/v1beta/*`、`/anthropic/*`、`/admin/*`、`/health`）重写到该函数，其余请求回退到 `index.html`（SPA）。
+   - 若需更长函数时长以支持长流式响应，可在 *Vercel → Project → Settings → Functions* 里调大 `maxDuration`。
 
 部署后：
 - 管理面板：`https://<你的域名>/`，首次访问设置管理员密码。
