@@ -4,12 +4,23 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../../types.js';
-import { listApiKeys, createApiKey, deleteApiKey, renameApiKey, migrateLegacyApiKey, getClientApiKey, setClientApiKey } from '../../config.js';
+import { listApiKeys, createApiKey, deleteApiKey, renameApiKey, updateApiKeyQuota, migrateLegacyApiKey, getClientApiKey, setClientApiKey } from '../../config.js';
 import { invalidateAuthCache } from '../../middleware/auth.js';
 
 export const adminApiKeyRoutes = new Hono<{ Bindings: Env }>();
 
-// GET /admin/api-keys — List all keys (info only, no secrets)
+/** Parse a quota limit field: empty/undefined → null (unlimited), non-negative int otherwise. */
+function parseQuotaNum(v: unknown): number | null {
+	if (v === undefined || v === null || v === '') return null;
+	const n = Math.floor(Number(v));
+	return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function parseQuotaPeriod(v: unknown): 'day' | 'month' {
+	return v === 'month' ? 'month' : 'day';
+}
+
+// GET /admin/api-keys — List all keys (info only, no secrets) + current usage
 adminApiKeyRoutes.get('/api-keys', async (c: Context<{ Bindings: Env }>) => {
 	const keys = await listApiKeys(c.env);
 	// Also include legacy key status
@@ -20,7 +31,7 @@ adminApiKeyRoutes.get('/api-keys', async (c: Context<{ Bindings: Env }>) => {
 	});
 });
 
-// POST /admin/api-keys — Create a new key with a name
+// POST /admin/api-keys — Create a new key with a name (+ optional quota)
 adminApiKeyRoutes.post('/api-keys', async (c: Context<{ Bindings: Env }>) => {
 	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
 	const name = String(body.name || '').trim();
@@ -33,7 +44,11 @@ adminApiKeyRoutes.post('/api-keys', async (c: Context<{ Bindings: Env }>) => {
 	}
 	if (key.length < 8) return c.json({ error: 'API key 至少需要 8 个字符' }, 400);
 
-	const info = await createApiKey(c.env, name, key);
+	const info = await createApiKey(c.env, name, key, {
+		quotaCalls: parseQuotaNum(body.quotaCalls),
+		quotaTokens: parseQuotaNum(body.quotaTokens),
+		quotaPeriod: parseQuotaPeriod(body.quotaPeriod),
+	});
 	invalidateAuthCache(); // new key must be enforceable immediately
 	return c.json({
 		ok: true,
@@ -43,17 +58,35 @@ adminApiKeyRoutes.post('/api-keys', async (c: Context<{ Bindings: Env }>) => {
 	});
 });
 
-// PUT /admin/api-keys/:id — Rename a key
+// PUT /admin/api-keys/:id — Rename a key and/or update its quota
 adminApiKeyRoutes.put('/api-keys/:id', async (c: Context<{ Bindings: Env }>) => {
 	const id = parseInt(c.req.param('id') || '0');
 	if (!id) return c.json({ error: '无效的密钥 ID' }, 400);
 	const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+
+	let updated = false;
+
+	// Rename (backwards compatible)
 	const name = String(body.name || '').trim();
-	if (!name) return c.json({ error: '密钥名称不能为空' }, 400);
-	const updated = await renameApiKey(c.env, id, name);
+	if (body.name !== undefined) {
+		if (!name) return c.json({ error: '密钥名称不能为空' }, 400);
+		updated = await renameApiKey(c.env, id, name) || updated;
+	}
+
+	// Quota update — the admin panel always sends the full triple
+	if (body.quota !== undefined) {
+		updated = await updateApiKeyQuota(c.env, id, {
+			quotaCalls: parseQuotaNum(body.quota?.quotaCalls),
+			quotaTokens: parseQuotaNum(body.quota?.quotaTokens),
+			quotaPeriod: parseQuotaPeriod(body.quota?.quotaPeriod),
+		}) || updated;
+	}
+
 	if (!updated) return c.json({ error: '密钥不存在' }, 404);
-	invalidateAuthCache(); // cached key→name mapping is now stale
-	return c.json({ ok: true, message: `密钥已重命名为 "${name}"` });
+	invalidateAuthCache(); // cached key→record mapping is now stale
+	const fresh = await listApiKeys(c.env).catch(() => []);
+	const key = fresh.find((k) => k.id === id);
+	return c.json({ ok: true, message: '密钥已更新', key });
 });
 
 // POST /admin/api-keys/legacy/migrate — Migrate legacy key to a named key

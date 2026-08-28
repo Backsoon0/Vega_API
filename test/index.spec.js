@@ -6,6 +6,7 @@ import {
 } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import worker from "../src";
+import { hashKey } from "../src/crypto.js";
 
 describe("Vega API", () => {
   // Apply D1 migrations before tests run
@@ -22,7 +23,8 @@ describe("Vega API", () => {
       "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON call_logs(timestamp)",
       "CREATE INDEX IF NOT EXISTS idx_logs_provider ON call_logs(provider_id)",
       "CREATE INDEX IF NOT EXISTS idx_call_logs_request_id ON call_logs(request_id)",
-      "CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT)",
+      "CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT, quota_calls INTEGER, quota_tokens INTEGER, quota_period TEXT NOT NULL DEFAULT 'day')",
+      "CREATE TABLE IF NOT EXISTS key_usage_daily (key_name TEXT NOT NULL, date TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(key_name, date))",
     ];
     for (const stmt of migrations) {
       await env.DB.exec(stmt);
@@ -133,5 +135,62 @@ describe("Vega API", () => {
     await waitOnExecutionContext(ctx);
     // May succeed (first setup) or fail (already set)
     expect([200, 400]).toContain(response.status);
+  });
+
+  // ---- Per-key quota ----
+  // NOTE: this test must stay last — inserting an api_keys row turns off public
+  // mode, so the earlier unauthenticated tests must already have run.
+  it("allows requests under the quota and blocks with 429 once exceeded", async () => {
+    const keyValue = "sk-quota-test-key-123456789";
+    const hash = await hashKey(keyValue);
+    await env.DB.prepare(
+      "INSERT INTO api_keys (name, key_hash, encrypted_key, created_at, quota_calls) VALUES ('quota-key', ?, 'x', ?, 2)"
+    )
+      .bind(hash, new Date().toISOString())
+      .run();
+
+    // 1. Under quota → allowed
+    let request = new Request("http://example.com/v1/models", {
+      headers: { Authorization: `Bearer ${keyValue}` },
+    });
+    let ctx = createExecutionContext();
+    let response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(200);
+
+    // 2. Simulate 2 calls already recorded today → quota reached
+    const today = new Date().toISOString().slice(0, 10);
+    await env.DB.prepare(
+      "INSERT INTO key_usage_daily (key_name, date, calls, prompt_tokens, completion_tokens) VALUES ('quota-key', ?, 2, 100, 50)"
+    )
+      .bind(today)
+      .run();
+
+    request = new Request("http://example.com/v1/models", {
+      headers: { Authorization: `Bearer ${keyValue}` },
+    });
+    ctx = createExecutionContext();
+    response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(429);
+    const data = await response.json();
+    expect(data.error.type).toBe("insufficient_quota");
+    expect(response.headers.get("Retry-After")).toBe("86400");
+
+    // 3. A different key (no quota) is unaffected
+    const otherValue = "sk-quota-other-key-123456789";
+    const otherHash = await hashKey(otherValue);
+    await env.DB.prepare(
+      "INSERT INTO api_keys (name, key_hash, encrypted_key, created_at) VALUES ('other-key', ?, 'x', ?)"
+    )
+      .bind(otherHash, new Date().toISOString())
+      .run();
+    request = new Request("http://example.com/v1/models", {
+      headers: { Authorization: `Bearer ${otherValue}` },
+    });
+    ctx = createExecutionContext();
+    response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(200);
   });
 });

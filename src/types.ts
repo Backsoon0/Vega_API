@@ -61,6 +61,9 @@ export interface ApiKeyRecord {
 	encrypted_key: string;
 	created_at: string;
 	last_used_at: string | null;
+	quota_calls: number | null;
+	quota_tokens: number | null;
+	quota_period: string;
 }
 
 export interface ApiKeyInfo {
@@ -68,6 +71,34 @@ export interface ApiKeyInfo {
 	name: string;
 	createdAt: string;
 	lastUsedAt: string | null;
+	/** Max calls per quota period (null = unlimited). */
+	quotaCalls: number | null;
+	/** Max tokens (prompt + completion) per quota period (null = unlimited). */
+	quotaTokens: number | null;
+	/** "day" | "month" */
+	quotaPeriod: 'day' | 'month';
+	/** Calls recorded in the current quota period (for the admin panel). */
+	usageCalls: number;
+	/** Tokens recorded in the current quota period. */
+	usageTokens: number;
+}
+
+export interface ApiKeyQuota {
+	quotaCalls: number | null;
+	quotaTokens: number | null;
+	quotaPeriod: 'day' | 'month';
+}
+
+/**
+ * The client key record attributed to a request (auth middleware). Backs the
+ * per-key quota enforcement and key-name attribution for usage recording.
+ */
+export interface ClientKeyRecord {
+	id: number;
+	name: string;
+	quotaCalls: number | null;
+	quotaTokens: number | null;
+	quotaPeriod: 'day' | 'month';
 }
 
 /**

@@ -19,6 +19,8 @@
 	import { getRouteStats, formatLatency, type RouteStatsResponse } from "$lib/route-stats";
 	import Spinner from "$lib/Spinner.svelte";
 	import CustomSelect from "$lib/CustomSelect.svelte";
+	import EChart from "$lib/EChart.svelte";
+	import { chartPalette, chartAxes, SERIES_COLORS } from "$lib/chart-theme";
 	import { RefreshCw, Search, ChevronDown, ChevronRight, ListTree, BarChart3, Activity } from "lucide-svelte";
 
 	let models = $state<RouteTopologyModel[]>([]);
@@ -99,7 +101,6 @@
 			.sort((a, b) => b.requestCount - a.requestCount)
 			.slice(0, 10),
 	);
-	const maxRequests = $derived(Math.max(1, ...barProviders.map((provider) => provider.requestCount)));
 	const chartProviders = $derived(
 		[...(routeStats?.providers || [])]
 			.filter((provider) => provider.averageLatencyMs != null && Number.isFinite(provider.averageLatencyMs))
@@ -107,40 +108,50 @@
 			.slice(0, 6),
 	);
 	const chartPoints = $derived(routeStats?.latency.points || []);
-	const maxLatency = $derived(Math.max(
-		1,
-		...chartPoints.flatMap((point) =>
-			Object.values(point.providers).filter((value): value is number => value != null && Number.isFinite(value)),
-		),
-	));
 
-	function xFor(index: number) {
-		return chartPoints.length <= 1 ? 50 : (index / (chartPoints.length - 1)) * 100;
-	}
-	function yFor(value: number) {
-		return 100 - (value / maxLatency) * 82 - 8;
-	}
-	function lineSegments(providerId: string) {
-		const segments: string[] = [];
-		let current: string[] = [];
-		for (let i = 0; i < chartPoints.length; i++) {
-			const value = chartPoints[i].providers[providerId];
-			if (value == null || !Number.isFinite(value)) {
-				if (current.length > 1) segments.push(current.join(" "));
-				current = [];
-				continue;
-			}
-			current.push(`${xFor(i)},${yFor(value)}`);
-		}
-		if (current.length > 1) segments.push(current.join(" "));
-		return segments;
-	}
-	function pointValues(providerId: string) {
-		return chartPoints.map((point, index) => {
-			const value = point.providers[providerId];
-			return value == null || !Number.isFinite(value) ? null : { x: xFor(index), y: yFor(value), value };
-		}).filter(Boolean) as Array<{ x: number; y: number; value: number }>;
-	}
+	// ---- ECharts options (Code Dark themed) ----
+	const pal = $derived(chartPalette());
+	const axes = $derived(chartAxes(pal));
+
+	const barOption = $derived({
+		...axes,
+		color: [pal.cta],
+		tooltip: { ...axes.tooltip, trigger: "axis", axisPointer: { type: "shadow" } },
+		grid: { left: 8, right: 24, top: 8, bottom: 4, containLabel: true },
+		xAxis: { ...axes.xAxis, type: "value", minInterval: 1 },
+		yAxis: { ...axes.yAxis, type: "category", inverse: true, data: barProviders.map((p) => p.name) },
+		series: [
+			{
+				name: "请求量",
+				type: "bar",
+				barMaxWidth: 14,
+				itemStyle: { borderRadius: [0, 4, 4, 0] },
+				data: barProviders.map((p) => p.requestCount),
+			},
+		],
+	});
+
+	const latencyOption = $derived({
+		...axes,
+		color: SERIES_COLORS,
+		tooltip: { ...axes.tooltip, trigger: "axis" },
+		legend: { ...axes.legend, type: "scroll", data: chartProviders.map((p) => p.name) },
+		xAxis: { ...axes.xAxis, type: "category", boundaryGap: false, data: chartPoints.map((pt) => pt.timestamp.slice(11, 16)) },
+		yAxis: { ...axes.yAxis, type: "value", name: "ms", nameTextStyle: { color: pal.muted, fontSize: 10 } },
+		series: chartProviders.map((provider) => ({
+			name: provider.name,
+			type: "line",
+			connectNulls: true,
+			showSymbol: false,
+			smooth: 0.2,
+			lineStyle: { width: 2 },
+			data: chartPoints.map((pt) => {
+				const v = pt.providers[provider.id];
+				return v != null && Number.isFinite(v) ? v : null;
+			}),
+		})),
+	});
+
 	function typeLabel(type: string) {
 		return type === "vertex_ai" ? "Vertex" : type === "google_ai_studio" ? "Studio" : type === "anthropic" ? "Anthropic" : "OpenAI";
 	}
@@ -168,14 +179,6 @@
 		weighted: "chip-accent",
 		priority: "chip-muted",
 	};
-	const CHART_COLORS = [
-		"var(--color-cta)",
-		"var(--color-accent)",
-		"var(--color-warning)",
-		"var(--color-danger)",
-		"#a78bfa",
-		"#38bdf8",
-	];
 
 	// ---- Custom dropdown option lists (native <select> popups render light) ----
 	const periodOptions = [
@@ -268,17 +271,7 @@
 				{:else if barProviders.length === 0}
 					<div class="empty" style="padding:30px">暂无数据</div>
 				{:else}
-					{#each barProviders as provider}
-						<div style="margin-bottom:14px">
-							<div class="between" style="font-size:12px;margin-bottom:6px">
-								<span style="color:var(--fg-2)">{provider.name}</span>
-								<span class="mono">{provider.requestCount.toLocaleString()}</span>
-							</div>
-							<div style="height:8px;border-radius:6px;background:var(--surface-3);overflow:hidden">
-								<div style="height:100%;border-radius:6px;background:linear-gradient(90deg,var(--cta),color-mix(in srgb,var(--cta) 70%,transparent));transform-origin:left;transition:width .6s var(--ease);width:{Math.round((provider.requestCount / maxRequests) * 100)}%"></div>
-							</div>
-						</div>
-					{/each}
+					<EChart option={barOption} height={Math.min(320, Math.max(160, barProviders.length * 30 + 30))} />
 				{/if}
 			</div>
 		</div>
@@ -296,26 +289,7 @@
 				{#if !routeStats || chartProviders.length === 0 || chartPoints.length === 0}
 					<div class="empty" style="padding:30px">暂无数据</div>
 				{:else}
-					<div style="overflow-x:auto">
-						<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:180px;min-width:520px;border-radius:10px;background:var(--surface-2)">
-							{#each [0.25, 0.5, 0.75] as t}
-								<line x1="0" y1={t * 100} x2="100" y2={t * 100} stroke="var(--b-def)" vector-effect="non-scaling-stroke" />
-							{/each}
-							{#each chartProviders as provider, providerIndex}
-								{#each lineSegments(provider.id) as segment}
-									<polyline points={segment} fill="none" stroke={CHART_COLORS[providerIndex % CHART_COLORS.length]} stroke-width="0.9" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" />
-								{/each}
-								{#each pointValues(provider.id) as point}
-									<circle cx={point.x} cy={point.y} r="1.1" fill={CHART_COLORS[providerIndex % CHART_COLORS.length]} />
-								{/each}
-							{/each}
-						</svg>
-					</div>
-					<div class="legend" id="latLegend">
-						{#each chartProviders as provider, providerIndex}
-							<span><span class="sw" style="background:{CHART_COLORS[providerIndex % CHART_COLORS.length]}"></span>{provider.name}</span>
-						{/each}
-					</div>
+					<EChart option={latencyOption} height={200} />
 				{/if}
 			</div>
 		</div>

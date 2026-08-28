@@ -121,8 +121,8 @@ config load) then `app.fetch(request, env, ctx)`.
 | [src/routes/anthropic/messages.ts](src/routes/anthropic/messages.ts) | Anthropic-native Messages API (SSE streaming) |
 | [src/routes/admin/auth.ts](src/routes/admin/auth.ts) | Admin auth (setup, login, check, change-password) |
 | [src/routes/admin/providers.ts](src/routes/admin/providers.ts) | Provider CRUD (supports all 4 types) |
-| [src/routes/admin/client-key.ts](src/routes/admin/client-key.ts) | Client API key management (multi-key + legacy migration) |
-| [src/routes/admin/usage.ts](src/routes/admin/usage.ts) | Usage stats, call logs, settings (failover/circuit-breaker/retention) |
+| [src/routes/admin/client-key.ts](src/routes/admin/client-key.ts) | Client API key management (multi-key + legacy migration + per-key quota `calls`/`tokens`/`period`) |
+| [src/routes/admin/usage.ts](src/routes/admin/usage.ts) | Usage stats, call logs, settings (failover/circuit-breaker/retention), `GET /admin/usage/report?days=` usage-report series for ECharts |
 | [src/routes/admin/playground.ts](src/routes/admin/playground.ts) | Model playground (AI SDK streamText/generateText) |
 | [src/routes/admin/routes.ts](src/routes/admin/routes.ts) | Route-topology statistics (per-route usage/errors, chart data) |
 | [test/index.spec.js](test/index.spec.js) | Integration tests (`cloudflare:test` Vitest pool) |
@@ -146,20 +146,21 @@ is mutually compatible; mixing major generations breaks typing at build time.
 | [admin-ui/src/lib/sidebar-state.ts](admin-ui/src/lib/sidebar-state.ts) | Svelte writable store for sidebar collapsed state (localStorage) |
 | [admin-ui/src/lib/Sidebar.svelte](admin-ui/src/lib/Sidebar.svelte) | Collapsible sidebar navigation (6 pages, mobile overlay drawer) |
 | [admin-ui/src/lib/route-topology.ts](admin-ui/src/lib/route-topology.ts) / [route-stats.ts](admin-ui/src/lib/route-stats.ts) | Route-topology chart data + helpers |
+| [admin-ui/src/lib/EChart.svelte](admin-ui/src/lib/EChart.svelte) / [chart-theme.ts](admin-ui/src/lib/chart-theme.ts) | Apache ECharts wrapper (tree-shaken `echarts/core`, SVGRenderer, ResizeObserver) + Code Dark chart theme reading CSS vars |
 | [admin-ui/src/lib/CallLogTable.svelte](admin-ui/src/lib/CallLogTable.svelte) | Call log table with search/filter, desktop table + mobile cards |
 | [admin-ui/src/lib/LogDetailModal.svelte](admin-ui/src/lib/LogDetailModal.svelte) | Call-log detail modal (tokens, cache, errors, request id) |
 | [admin-ui/src/lib/ProviderCard.svelte](admin-ui/src/lib/ProviderCard.svelte) | Provider card: always-visible actions on mobile, hover-reveal on desktop |
 | [admin-ui/src/lib/ProviderForm.svelte](admin-ui/src/lib/ProviderForm.svelte) | Add/edit provider form. Vertex AI: auth mode toggle (JWT/JSON import / API key) |
-| [admin-ui/src/lib/ApiKeyList.svelte](admin-ui/src/lib/ApiKeyList.svelte) | Client API key management (create, name, rename, delete, reveal) |
+| [admin-ui/src/lib/ApiKeyList.svelte](admin-ui/src/lib/ApiKeyList.svelte) | Client API key management (create, name, rename, delete, reveal, per-key quota editor) |
 | [admin-ui/src/lib/Markdown.svelte](admin-ui/src/lib/Markdown.svelte) | Markdown + KaTeX rendering (playground output) |
 | other lib components | `Alert.svelte`, `CustomSelect.svelte`, `Modal.svelte`, `Spinner.svelte`, `Toast.svelte`, `toast-store.ts`, `utils.ts` |
 | [admin-ui/src/routes/+layout.svelte](admin-ui/src/routes/+layout.svelte) | Auth guard + sidebar shell |
 | [admin-ui/src/routes/+page.svelte](admin-ui/src/routes/+page.svelte) | Login page (password show/hide toggle) |
-| [admin-ui/src/routes/dashboard/+page.svelte](admin-ui/src/routes/dashboard/+page.svelte) | Overview: stat cards + provider status + charts |
+| [admin-ui/src/routes/dashboard/+page.svelte](admin-ui/src/routes/dashboard/+page.svelte) | Overview: KPI cards + 用量报表 (ECharts line by day, bars by model/key, CSV export) + provider status |
 | [admin-ui/src/routes/dashboard/playground/+page.svelte](admin-ui/src/routes/dashboard/playground/+page.svelte) | 模型调试: model playground |
-| [admin-ui/src/routes/dashboard/routes/+page.svelte](admin-ui/src/routes/dashboard/routes/+page.svelte) | 路由拓扑: per-route statistics + charts |
+| [admin-ui/src/routes/dashboard/routes/+page.svelte](admin-ui/src/routes/dashboard/routes/+page.svelte) | 路由拓扑: per-route statistics + ECharts bar/latency charts |
 | [admin-ui/src/routes/dashboard/logs/+page.svelte](admin-ui/src/routes/dashboard/logs/+page.svelte) | 调用记录: DB-backed log table + search + provider filter + clear |
-| [admin-ui/src/routes/dashboard/api-settings/+page.svelte](admin-ui/src/routes/dashboard/api-settings/+page.svelte) | API 设置: endpoint copy + provider CRUD + client API keys |
+| [admin-ui/src/routes/dashboard/api-settings/+page.svelte](admin-ui/src/routes/dashboard/api-settings/+page.svelte) | API 设置: endpoint copy + provider CRUD + client API keys (with per-key quota editor) |
 | [admin-ui/src/routes/dashboard/settings/+page.svelte](admin-ui/src/routes/dashboard/settings/+page.svelte) | 设置: failover, circuit breaker, log retention, column prefs, password, 部署与数据库 |
 
 ## AI SDK Provider Layer
@@ -190,8 +191,14 @@ table/column layout (Postgres uses `SERIAL` for auto-increment ids).
 | `providers` | `id TEXT PK, type, name, enabled, config, models, weight` | AI provider configuration (4 types) |
 | `usage_daily` | `date, provider_id, model (unique), calls, prompt_tokens, completion_tokens` | Per-model daily aggregate usage |
 | `call_logs` | `id, timestamp, ip, provider_id, model, prompt/completion_tokens, duration_ms, success, request_id, is_stream, extra, cache_read/creation_input_tokens, api_key_name` | Detailed request log (retention configurable, default 10000 rows) |
-| `api_keys` | `id, name, key_hash UNIQUE, encrypted_key, created_at, last_used_at` | Multi-key client API keys (SHA-256 hash for fast match) |
+| `api_keys` | `id, name, key_hash UNIQUE, encrypted_key, created_at, last_used_at, quota_calls, quota_tokens, quota_period` | Multi-key client API keys (SHA-256 hash for fast match); `quota_calls`/`quota_tokens` `NULL` = unlimited, `quota_period` `'day'` (default) or `'month'` |
+| `key_usage_daily` | `key_name, date (unique), calls, prompt_tokens, completion_tokens` | Per-key daily usage, upserted by `recordUsage`; drives quota checks + `/admin/usage/report` by-key series. **Keyed by key name** (not id): duplicate names share quota; renaming orphans old-name stats |
 | `rate_limits` | `key PK, attempts, reset_at, banned_until` | Login rate limiting |
+
+Quota enforcement: `clientAuthMiddleware` (after auth) → `checkKeyQuota` →
+`429 insufficient_quota` + `Retry-After` (86400 day / 2592000 month) +
+`x-should-retry: false`. Legacy/env/public keys (no api_keys record) are never
+quota-limited.
 
 Sensitive fields (`apiKey`, `privateKey`) in `providers.config` are `enc:`
 prefixed (AES-256-GCM). Editing without changing a field preserves the encrypted
@@ -227,14 +234,21 @@ Vertex AI auth mode auto-detects: `config.apiKey` → API Key mode;
 
 ## Migrations
 
-D1 migrations in `migrations/` (0001–0008):
+D1 migrations in `migrations/` (0001–0009):
 `0001_init`, `0002_call_logs`, `0003_duration`, `0004_rate_limits_banned_until`,
 `0005_call_logs_enhance`, `0006_provider_types` (adds `'anthropic'` CHECK),
-`0007_api_keys`, `0008_call_logs_enhance` (cache tokens + key name).
+`0007_api_keys`, `0008_call_logs_enhance` (cache tokens + key name),
+`0009_api_key_quota` (api_keys quota columns + `key_usage_daily`).
 
-Apply: `npm run db:migrate` (remote) or `npm run db:migrate:local`. On **Neon**
-(Vercel) the schema is created automatically on first cold start by
-`prepareRuntime`; no D1-style migration step is needed there.
+**Both platforms self-heal at cold start — migrations are optional.** Every
+request path calls `prepareRuntime` → `initSchema` (`src/db.ts`), which creates
+missing tables/indexes (`IF NOT EXISTS`) and adds missing columns on both
+engines: Neon via Postgres `ADD COLUMN IF NOT EXISTS`, D1 via a
+`PRAGMA table_info()` existence check before each ALTER (SQLite lacks
+`IF NOT EXISTS` for ALTER). So a fresh database or an old one with new columns
+syncs automatically on first request — `npm run db:migrate` (remote) /
+`db:migrate:local` exist only as the manual/ready-made fallback and for local
+dev seeding.
 
 ## Key Constraints
 

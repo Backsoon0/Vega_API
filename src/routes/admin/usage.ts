@@ -4,7 +4,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../../types.js';
-import { getUsage, getUsageTotals, getCallLogs } from '../../usage.js';
+import { getUsage, getUsageTotals, getCallLogs, getUsageReport } from '../../usage.js';
 
 export const adminUsageRoutes = new Hono<{ Bindings: Env }>();
 
@@ -18,6 +18,13 @@ adminUsageRoutes.get('/usage', async (c: Context<{ Bindings: Env }>) => {
 	}
 	const data = await getUsage(c.env, from, to, null);
 	return c.json(data);
+});
+
+// GET /admin/usage/report?days=7 — 用量报表: daily series + byModel + byKey
+adminUsageRoutes.get('/usage/report', async (c: Context<{ Bindings: Env }>) => {
+	const days = parseInt(c.req.query('days') || '7');
+	const report = await getUsageReport(c.env, days);
+	return c.json(report);
 });
 
 // GET /admin/logs — Call logs from D1 (with search, filter, pagination)

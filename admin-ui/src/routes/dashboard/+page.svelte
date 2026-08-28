@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { getProviders, getUsage, getCallLogs, type Provider, type UsageData, type LogEntry } from "$lib/api";
+  import { getProviders, getCallLogs, getUsageReport, type Provider, type LogEntry, type UsageReport } from "$lib/api";
   import { getRouteStats, formatLatency, type RouteStatsResponse } from "$lib/route-stats";
   import { formatNumber, formatDuration, formatTime } from "$lib/utils";
   import CustomSelect from "$lib/CustomSelect.svelte";
+  import EChart from "$lib/EChart.svelte";
+  import { chartPalette, chartAxes, SERIES_COLORS, type ChartPalette } from "$lib/chart-theme";
 
   let providers = $state<Provider[]>([]);
-  let usage = $state<UsageData | null>(null);
+  let report = $state<UsageReport | null>(null);
   let routeStats = $state<RouteStatsResponse | null>(null);
   let recent = $state<LogEntry[]>([]);
   let loading = $state(true);
@@ -34,24 +36,18 @@
     anthropic: "tag-anthropic",
   };
 
-  function toDateStr(d: Date) {
-    return d.toISOString().slice(0, 10);
-  }
-
   async function loadAll() {
     loading = true;
     error = "";
-    const from = toDateStr(new Date(Date.now() - rangeDays * 86400000));
-    const to = toDateStr(new Date());
     try {
-      const [p, u, rs, logs] = await Promise.all([
+      const [p, r, rs, logs] = await Promise.all([
         getProviders().catch(() => [] as Provider[]),
-        getUsage(from, to).catch(() => null as UsageData | null),
+        getUsageReport(rangeDays).catch(() => null as UsageReport | null),
         getRouteStats(rangeHours).catch(() => null as RouteStatsResponse | null),
         getCallLogs(new URLSearchParams({ limit: "6" })).catch(() => ({ logs: [] as LogEntry[], total: 0, hasMore: false })),
       ]);
       providers = p;
-      usage = u;
+      report = r;
       routeStats = rs;
       recent = logs.logs || [];
     } catch (err: any) {
@@ -66,67 +62,122 @@
   });
 
   // ---- Derived metrics ----
-  const totalCalls = $derived(usage?.total?.calls || 0);
-  const totalTokens = $derived((usage?.total?.promptTokens || 0) + (usage?.total?.completionTokens || 0));
+  const totalCalls = $derived(report?.series.reduce((s, d) => s + d.calls, 0) || 0);
+  const totalTokens = $derived(report?.series.reduce((s, d) => s + d.tokens, 0) || 0);
   const enabledCount = $derived(providers.filter((p) => p.enabled).length);
   const latencyMs = $derived(routeStats?.overview?.averageLatencyMs ?? null);
 
-  // ---- Daily series for the chart ----
-  interface DayPoint { date: string; calls: number; tokens: number; }
-  function buildDaily(u: UsageData | null): DayPoint[] {
-    const d = u?.daily || {};
-    return Object.entries(d)
-      .map(([date, v]) => ({ date, calls: v.calls || 0, tokens: (v.promptTokens || 0) + (v.completionTokens || 0) }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+  // ---- ECharts options (Code Dark themed) ----
+  const pal = $derived(chartPalette());
+  const axes = $derived(chartAxes(pal));
+  const series = report?.series || [];
+  const hasChart = $derived(series.length > 1);
+
+  const trendOption = $derived({
+    ...axes,
+    color: [pal.cta, pal.success],
+    tooltip: { ...axes.tooltip, trigger: "axis" },
+    legend: { ...axes.legend, data: ["调用次数", "Token"] },
+    grid: { left: 8, right: 12, top: 30, bottom: 4, containLabel: true },
+    xAxis: {
+      ...axes.xAxis,
+      type: "category",
+      data: series.map((d) => d.date.slice(5)),
+    },
+    yAxis: [{ ...axes.yAxis, type: "value", minInterval: 1 }, { ...axes.yAxis, type: "value", splitLine: { show: false } }],
+    series: [
+      {
+        name: "调用次数",
+        type: "line",
+        smooth: 0.25,
+        showSymbol: false,
+        lineStyle: { width: 2.5 },
+        areaStyle: { opacity: 0.12 },
+        data: series.map((d) => d.calls),
+      },
+      {
+        name: "Token",
+        type: "line",
+        yAxisIndex: 1,
+        smooth: 0.25,
+        showSymbol: false,
+        lineStyle: { width: 2 },
+        areaStyle: { opacity: 0.1 },
+        data: series.map((d) => d.tokens),
+      },
+    ],
+  });
+
+  // 按模型分布 — horizontal bar, top 12
+  const byModel = report?.byModel || [];
+  const modelOption = $derived({
+    ...axes,
+    color: [pal.cta],
+    tooltip: { ...axes.tooltip, trigger: "axis", axisPointer: { type: "shadow" } },
+    grid: { left: 8, right: 24, top: 8, bottom: 4, containLabel: true },
+    xAxis: { ...axes.xAxis, type: "value", minInterval: 1 },
+    yAxis: { ...axes.yAxis, type: "category", inverse: true, data: byModel.map((m) => m.model) },
+    series: [
+      {
+        name: "调用次数",
+        type: "bar",
+        barMaxWidth: 14,
+        itemStyle: { borderRadius: [0, 4, 4, 0] },
+        data: byModel.map((m) => m.calls),
+      },
+    ],
+  });
+
+  // 按密钥用量 — horizontal bar, 调用数（配额密钥可显示超限状态）
+  const byKey = report?.byKey || [];
+  const keyOption = $derived({
+    ...axes,
+    color: [pal.accent],
+    tooltip: { ...axes.tooltip, trigger: "axis", axisPointer: { type: "shadow" } },
+    grid: { left: 8, right: 24, top: 8, bottom: 4, containLabel: true },
+    xAxis: { ...axes.xAxis, type: "value", minInterval: 1 },
+    yAxis: { ...axes.yAxis, type: "category", inverse: true, data: byKey.map((k) => k.keyName) },
+    series: [
+      {
+        name: "调用次数",
+        type: "bar",
+        barMaxWidth: 14,
+        itemStyle: { borderRadius: [0, 4, 4, 0] },
+        data: byKey.map((k) => k.calls),
+      },
+    ],
+  });
+
+  // ---- CSV 导出 ----
+  function exportCsv() {
+    if (!report) return;
+    const lines: string[] = [];
+    lines.push("日期,调用次数,Token");
+    for (const d of report.series) lines.push(`${d.date},${d.calls},${d.tokens}`);
+    lines.push("");
+    lines.push("模型,调用次数,Token");
+    for (const m of report.byModel) lines.push(`${m.model},${m.calls},${m.tokens}`);
+    lines.push("");
+    lines.push("密钥名称,调用次数,Token");
+    for (const k of report.byKey) lines.push(`${k.keyName},${k.calls},${k.tokens}`);
+    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `vega-usage-report-${rangeDays}d.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
-  const daily = $derived(buildDaily(usage));
-  const hasChart = $derived(daily.length > 1);
-
-  // ---- Chart geometry (viewBox 600x210) ----
-  const W = 600, H = 210, PAD = 10, BASE = H - 34;
-  const maxC = $derived(Math.max(1, ...daily.map((d) => d.calls)));
-  const maxT = $derived(Math.max(1, ...daily.map((d) => d.tokens)));
-  function cx(i: number) { return PAD + (i / Math.max(1, daily.length - 1)) * (W - PAD * 2); }
-  function cyC(v: number) { return BASE - (v / maxC) * (H - 52); }
-  function cyT(v: number) { return BASE - (v / maxT) * (H - 52); }
-  const lineC = $derived(daily.map((d, i) => `${cx(i)},${cyC(d.calls)}`).join(" "));
-  const lineT = $derived(daily.map((d, i) => `${cx(i)},${cyT(d.tokens)}`).join(" "));
-  const pathC = $derived(daily.map((d, i) => (i ? "L " : "M ") + cx(i) + " " + cyC(d.calls)).join(" "));
-  const pathT = $derived(daily.map((d, i) => (i ? "L " : "M ") + cx(i) + " " + cyT(d.tokens)).join(" "));
-  const areaC = $derived(`${pathC} L ${W - PAD} ${BASE} L ${PAD} ${BASE} Z`);
-  const areaT = $derived(`${pathT} L ${W - PAD} ${BASE} L ${PAD} ${BASE} Z`);
-
-  let chartBox = $state<HTMLDivElement>();
-  let chartSvg = $state<SVGSVGElement>();
-  let tipOn = $state(false);
-  let tipLeft = $state(0);
-  let tipTop = $state(0);
-  let tipIdx = $state(0);
-
-  function onChartMove(e: MouseEvent) {
-    if (!chartSvg || daily.length < 2) return;
-    const rect = chartSvg.getBoundingClientRect();
-    const parentRect = chartBox?.getBoundingClientRect() || rect;
-    const mx = ((e.clientX - rect.left) / rect.width) * W;
-    let idx = 0, best = Infinity;
-    daily.forEach((_, i) => { const dx = Math.abs(cx(i) - mx); if (dx < best) { best = dx; idx = i; } });
-    tipIdx = idx;
-    let px = (cx(idx) / W) * rect.width + (rect.left - parentRect.left);
-    const py = (cyC(daily[idx].calls) / H) * rect.height + (rect.top - parentRect.top);
-    const half = 64;
-    if (px < half) px = half;
-    if (px > parentRect.width - half) px = parentRect.width - half;
-    tipLeft = px;
-    tipTop = py;
-    tipOn = true;
-  }
-  function onChartLeave() { tipOn = false; }
 
   // ---- Refresh ----
   let refreshing = $state(false);
   function refresh() {
     refreshing = true;
     loadAll().finally(() => { refreshing = false; });
+  }
+
+  // Chart height handles (consumed by markup)
+  function chartHeight(days: number): number {
+    return days <= 7 ? 190 : days <= 30 ? 200 : 210;
   }
 </script>
 
@@ -135,7 +186,7 @@
 <div class="page-head">
   <div>
     <h1>概览</h1>
-    <p class="lead">网关实时运行状态与用量总览</p>
+    <p class="lead">网关实时运行状态与用量报表</p>
   </div>
   <div class="actions">
     <CustomSelect options={rangeOptions} bind:value={rangeHours} onchange={() => loadAll()} />
@@ -211,7 +262,7 @@
   </div>
 
   <div class="grid grid-2 mb-lg">
-    <!-- Requests trend -->
+    <!-- Requests trend (ECharts) -->
     <div class="card rise" style="--d:230ms">
       <div class="card-head">
         <div>
@@ -223,52 +274,11 @@
         </div>
         <span class="chip chip-cta">{rangeDays}d</span>
       </div>
-      <div style="padding:18px 20px 14px;position:relative">
+      <div style="padding:18px 20px 14px">
         {#if !hasChart}
           <div class="empty" style="padding:40px 0">暂无用法数据</div>
         {:else}
-          <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
-          <div bind:this={chartBox} style="position:relative" onmousemove={onChartMove} onmouseleave={onChartLeave}>
-            <svg
-              bind:this={chartSvg}
-              viewBox="0 0 600 210"
-              preserveAspectRatio="none"
-              style="width:100%;height:190px;cursor:crosshair"
-            >
-              <defs>
-                <linearGradient id="gC" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="var(--cta)" stop-opacity=".30" />
-                  <stop offset="1" stop-color="var(--cta)" stop-opacity="0" />
-                </linearGradient>
-                <linearGradient id="gT" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="var(--success)" stop-opacity=".26" />
-                  <stop offset="1" stop-color="var(--success)" stop-opacity="0" />
-                </linearGradient>
-              </defs>
-              {#each [0.25, 0.5, 0.75] as t}
-                <line class="grid-line" x1={PAD} y1={BASE - (H - 52) * t - 14} x2={W - PAD} y2={BASE - (H - 52) * t - 14} stroke-width="1" />
-              {/each}
-              <path d={areaC} fill="url(#gC)" />
-              <path d={areaT} fill="url(#gT)" />
-              <polyline points={lineC} fill="none" stroke="var(--cta)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
-              <polyline points={lineT} fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-              {#each daily as d, i (d.date)}
-                <circle class="chart-dot" cx={cx(i)} cy={cyC(d.calls)} r="2.6" fill="var(--cta)" />
-                <text x={cx(i)} y={H - 16} text-anchor="middle" font-size="10" fill="var(--muted)" font-family="var(--font-mono)">{d.date.slice(5)}</text>
-              {/each}
-            </svg>
-            {#if tipOn}
-              <div class="chart-tip on" style:left={tipLeft + "px"} style:top={tipTop + "px"}>
-                <div class="t">{daily[tipIdx].date}</div>
-                <div class="r"><span class="lb">调用</span><span class="v-c">{formatNumber(daily[tipIdx].calls)}</span></div>
-                <div class="r"><span class="lb">Token</span><span class="v-t">{formatNumber(daily[tipIdx].tokens)}</span></div>
-              </div>
-            {/if}
-          </div>
-          <div class="legend">
-            <span><span class="sw" style="background:var(--cta)"></span>调用次数</span>
-            <span><span class="sw" style="background:var(--success)"></span>Token</span>
-          </div>
+          <EChart option={trendOption} height={chartHeight(rangeDays)} />
         {/if}
       </div>
     </div>
@@ -298,6 +308,38 @@
         {/each}
         {#if providers.length === 0}
           <p style="font-size:13px;color:var(--muted);text-align:center;padding:20px">暂无提供商，请到 API 设置页面添加</p>
+        {/if}
+      </div>
+    </div>
+  </div>
+
+  <!-- 用量报表 (ECharts) -->
+  <div class="card rise mb-lg" style="--d:300ms">
+    <div class="card-head">
+      <div>
+        <h2>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18" /><path d="M7 15l4-5 3 3 5-6" /></svg>
+          用量报表
+        </h2>
+        <div class="sub">按模型 / 密钥分组 · {rangeLabel}</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick={exportCsv} disabled={!report || totalCalls === 0}>导出 CSV</button>
+    </div>
+    <div class="grid grid-2" style="gap:8px">
+      <div style="padding:10px 16px 16px">
+        <div style="font-size:12px;color:var(--muted);margin:4px 0 10px">按模型分布（调用次数 Top 12）</div>
+        {#if byModel.length === 0}
+          <div class="empty" style="padding:30px 0">暂无数据</div>
+        {:else}
+          <EChart option={modelOption} height={Math.min(320, Math.max(160, byModel.length * 26 + 40))} />
+        {/if}
+      </div>
+      <div style="padding:10px 16px 16px">
+        <div style="font-size:12px;color:var(--muted);margin:4px 0 10px">按密钥用量（调用次数）</div>
+        {#if byKey.length === 0}
+          <div class="empty" style="padding:30px 0">暂无命名密钥用量</div>
+        {:else}
+          <EChart option={keyOption} height={Math.min(320, Math.max(160, byKey.length * 26 + 40))} />
         {/if}
       </div>
     </div>

@@ -1,7 +1,7 @@
 // src/config.ts
 // D1-based configuration CRUD for providers, admin password, client API key
 
-import type { Env, Provider, ProviderRow, ApiKeyInfo } from './types.js';
+import type { Env, Provider, ProviderRow, ApiKeyInfo, ApiKeyQuota } from './types.js';
 import { encrypt, decrypt, hashKey } from './crypto.js';
 
 // ---- Config table helpers ----
@@ -246,31 +246,116 @@ export async function setClientApiKey(env: Env, key: string | null): Promise<voi
 
 // ---- API Keys (multi-key) ----
 
-export async function listApiKeys(env: Env): Promise<ApiKeyInfo[]> {
-	const rows = await env.DB
-		.prepare('SELECT id, name, created_at, last_used_at FROM api_keys ORDER BY id')
-		.all<{ id: number; name: string; created_at: string; last_used_at: string | null }>();
-	return (rows.results || []).map((r) => ({
-		id: r.id,
-		name: r.name,
-		createdAt: r.created_at,
-		lastUsedAt: r.last_used_at,
-	}));
+/** ISO date (`YYYY-MM-DD`, UTC) where the current quota period starts. */
+function quotaPeriodStart(period: 'day' | 'month'): string {
+	const now = new Date();
+	if (period === 'month') {
+		return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+	}
+	return now.toISOString().slice(0, 10);
 }
 
-export async function createApiKey(env: Env, name: string, key: string): Promise<ApiKeyInfo> {
+/**
+ * Current-period usage for one key name, from `key_usage_daily`.
+ * Same lookup the auth middleware uses for quota enforcement, so counts agree.
+ */
+export async function getKeyUsageByName(
+	env: Env,
+	name: string,
+	period: 'day' | 'month',
+): Promise<{ calls: number; tokens: number }> {
+	try {
+		const from = quotaPeriodStart(period);
+		const row = await env.DB
+			.prepare(
+				'SELECT SUM(calls) as calls, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens FROM key_usage_daily WHERE key_name = ? AND date >= ?',
+			)
+			.bind(name, from)
+			.first<{ calls: number | null; prompt_tokens: number | null; completion_tokens: number | null }>();
+		const calls = Number(row?.calls) || 0;
+		const tokens = (Number(row?.prompt_tokens) || 0) + (Number(row?.completion_tokens) || 0);
+		return { calls, tokens };
+	} catch {
+		return { calls: 0, tokens: 0 };
+	}
+}
+
+function normalizePeriod(p: string | null | undefined): 'day' | 'month' {
+	return p === 'month' ? 'month' : 'day';
+}
+
+async function rowToApiKeyInfo(
+	env: Env,
+	row: { id: number; name: string; created_at: string; last_used_at: string | null; quota_calls: number | null; quota_tokens: number | null; quota_period: string | null },
+): Promise<ApiKeyInfo> {
+	const period = normalizePeriod(row.quota_period);
+	const usage = await getKeyUsageByName(env, row.name, period);
+	return {
+		id: row.id,
+		name: row.name,
+		createdAt: row.created_at,
+		lastUsedAt: row.last_used_at,
+		quotaCalls: row.quota_calls ?? null,
+		quotaTokens: row.quota_tokens ?? null,
+		quotaPeriod: period,
+		usageCalls: usage.calls,
+		usageTokens: usage.tokens,
+	};
+}
+
+const API_KEY_INFO_COLS =
+	'id, name, created_at, last_used_at, quota_calls, quota_tokens, quota_period';
+
+type ApiKeyRow = {
+	id: number;
+	name: string;
+	created_at: string;
+	last_used_at: string | null;
+	quota_calls: number | null;
+	quota_tokens: number | null;
+	quota_period: string | null;
+};
+
+export async function listApiKeys(env: Env): Promise<ApiKeyInfo[]> {
+	const rows = await env.DB
+		.prepare(`SELECT ${API_KEY_INFO_COLS} FROM api_keys ORDER BY id`)
+		.all<ApiKeyRow>();
+	const out: ApiKeyInfo[] = [];
+	for (const r of rows.results || []) {
+		out.push(await rowToApiKeyInfo(env, r));
+	}
+	return out;
+}
+
+export async function createApiKey(
+	env: Env,
+	name: string,
+	key: string,
+	quota?: Partial<ApiKeyQuota>,
+): Promise<ApiKeyInfo> {
 	const hash = await hashKey(key);
 	const encrypted = await encrypt(env, key);
 	const now = new Date().toISOString();
 	await env.DB
-		.prepare('INSERT INTO api_keys (name, key_hash, encrypted_key, created_at) VALUES (?, ?, ?, ?)')
-		.bind(name, hash, encrypted, now)
+		.prepare(
+			'INSERT INTO api_keys (name, key_hash, encrypted_key, created_at, quota_calls, quota_tokens, quota_period) VALUES (?, ?, ?, ?, ?, ?, ?)',
+		)
+		.bind(
+			name,
+			hash,
+			encrypted,
+			now,
+			quota?.quotaCalls ?? null,
+			quota?.quotaTokens ?? null,
+			quota?.quotaPeriod || 'day',
+		)
 		.run();
 	const row = await env.DB
-		.prepare('SELECT id, name, created_at, last_used_at FROM api_keys WHERE key_hash = ?')
+		.prepare(`SELECT ${API_KEY_INFO_COLS} FROM api_keys WHERE key_hash = ?`)
 		.bind(hash)
-		.first<{ id: number; name: string; created_at: string; last_used_at: string | null }>();
-	return { id: row!.id, name: row!.name, createdAt: row!.created_at, lastUsedAt: row!.last_used_at };
+		.first<ApiKeyRow>();
+	if (!row) throw new Error('Failed to read back created API key');
+	return await rowToApiKeyInfo(env, row);
 }
 
 export async function deleteApiKey(env: Env, id: number): Promise<boolean> {
@@ -285,6 +370,28 @@ export async function renameApiKey(env: Env, id: number, name: string): Promise<
 	const result = await env.DB
 		.prepare('UPDATE api_keys SET name = ? WHERE id = ?')
 		.bind(name, id)
+		.run();
+	return result.meta.changes > 0;
+}
+
+/**
+ * Update the quota of a named key. `undefined` fields are written as NULL
+ * (unlimited) — the admin panel always sends the full {quotaCalls, quotaTokens,
+ * quotaPeriod} triple. Throws nothing; returns false when the key doesn't exist.
+ */
+export async function updateApiKeyQuota(
+	env: Env,
+	id: number,
+	quota: Partial<ApiKeyQuota>,
+): Promise<boolean> {
+	const result = await env.DB
+		.prepare('UPDATE api_keys SET quota_calls = ?, quota_tokens = ?, quota_period = ? WHERE id = ?')
+		.bind(
+			quota.quotaCalls === undefined ? null : quota.quotaCalls,
+			quota.quotaTokens === undefined ? null : quota.quotaTokens,
+			quota.quotaPeriod || 'day',
+			id,
+		)
 		.run();
 	return result.meta.changes > 0;
 }
@@ -310,7 +417,17 @@ export async function migrateLegacyApiKey(env: Env, name: string): Promise<ApiKe
 		// Key already migrated — just update the name and delete legacy
 		await renameApiKey(env, existing.id, name);
 		await setClientApiKey(env, null);
-		return { id: existing.id, name, createdAt: now, lastUsedAt: null };
+		return {
+			id: existing.id,
+			name,
+			createdAt: now,
+			lastUsedAt: null,
+			quotaCalls: null,
+			quotaTokens: null,
+			quotaPeriod: 'day',
+			usageCalls: 0,
+			usageTokens: 0,
+		};
 	}
 
 	await env.DB
@@ -322,11 +439,11 @@ export async function migrateLegacyApiKey(env: Env, name: string): Promise<ApiKe
 	await setClientApiKey(env, null);
 
 	const row = await env.DB
-		.prepare('SELECT id, name, created_at, last_used_at FROM api_keys WHERE key_hash = ?')
+		.prepare(`SELECT ${API_KEY_INFO_COLS} FROM api_keys WHERE key_hash = ?`)
 		.bind(hash)
-		.first<{ id: number; name: string; created_at: string; last_used_at: string | null }>();
+		.first<ApiKeyRow>();
 	if (!row) return null;
-	return { id: row.id, name: row.name, createdAt: row.created_at, lastUsedAt: row.last_used_at };
+	return await rowToApiKeyInfo(env, row);
 }
 
 export async function updateApiKeyLastUsed(env: Env, keyHash: string): Promise<void> {
@@ -352,17 +469,26 @@ export async function hasAnyApiKeys(env: Env): Promise<boolean> {
 }
 
 /**
- * Look up an API key by its hash. Returns the key name if found, null otherwise.
- * Also updates last_used_at on successful lookup.
+ * Look up an API key by its hash, including quota config. Returns null when the
+ * hash doesn't match. Also updates last_used_at on successful lookup.
  */
-export async function findApiKeyNameByHash(env: Env, keyHash: string): Promise<{ id: number; name: string } | null> {
+export async function findApiKeyNameByHash(
+	env: Env,
+	keyHash: string,
+): Promise<{ id: number; name: string; quotaCalls: number | null; quotaTokens: number | null; quotaPeriod: 'day' | 'month' } | null> {
 	const row = await env.DB
-		.prepare('SELECT id, name FROM api_keys WHERE key_hash = ?')
+		.prepare('SELECT id, name, quota_calls, quota_tokens, quota_period FROM api_keys WHERE key_hash = ?')
 		.bind(keyHash)
-		.first<{ id: number; name: string }>();
+		.first<{ id: number; name: string; quota_calls: number | null; quota_tokens: number | null; quota_period: string | null }>();
 	if (!row) return null;
 	await updateApiKeyLastUsed(env, keyHash);
-	return { id: row.id, name: row.name };
+	return {
+		id: row.id,
+		name: row.name,
+		quotaCalls: row.quota_calls ?? null,
+		quotaTokens: row.quota_tokens ?? null,
+		quotaPeriod: normalizePeriod(row.quota_period),
+	};
 }
 
 // ---- Failover config ----

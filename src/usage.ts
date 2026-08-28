@@ -79,6 +79,25 @@ export async function recordUsage(
       )
       .run();
 
+    // Per-key daily aggregate (quota enforcement + per-key report charts).
+    // Keyed by key NAME (the only attribution available at every call site);
+    // the auth middleware enforces quotas with the same lookup, so counts agree.
+    if (apiKeyName) {
+      const p = usage.prompt || 0;
+      const co = usage.completion || 0;
+      await env.DB
+        .prepare(
+          `INSERT INTO key_usage_daily (key_name, date, calls, prompt_tokens, completion_tokens)
+           VALUES (?, ?, 1, ?, ?)
+           ON CONFLICT(key_name, date) DO UPDATE SET
+             calls = key_usage_daily.calls + 1,
+             prompt_tokens = key_usage_daily.prompt_tokens + ?,
+             completion_tokens = key_usage_daily.completion_tokens + ?`
+        )
+        .bind(apiKeyName, today, p, co, p, co)
+        .run();
+    }
+
     // Probabilistic cleanup: ~1% of calls. Retention limit is read from D1 config
     // (configurable in the admin panel), defaulting to 10000 rows.
     if (Math.random() < 0.01) {
@@ -320,6 +339,81 @@ export async function getUsageTotals(env: Env): Promise<Record<string, UsageReco
     console.error('Usage totals error:', (err as Error).message);
   }
   return result;
+}
+
+/**
+ * Report payload for the admin "用量报表": daily series + per-model breakdown
+ * (from usage_daily) + per-key breakdown (from key_usage_daily).
+ */
+export async function getUsageReport(env: Env, days: number): Promise<{
+	days: number;
+	series: Array<{ date: string; calls: number; tokens: number }>;
+	byModel: Array<{ model: string; calls: number; tokens: number }>;
+	byKey: Array<{ keyName: string; calls: number; tokens: number }>;
+}> {
+	const n = Number.isFinite(days) ? Math.min(Math.max(Math.floor(days), 1), 365) : 7;
+	const from = new Date(Date.now() - (n - 1) * 86400000).toISOString().slice(0, 10);
+
+	const series: Array<{ date: string; calls: number; tokens: number }> = [];
+	const byModel: Array<{ model: string; calls: number; tokens: number }> = [];
+	const byKey: Array<{ keyName: string; calls: number; tokens: number }> = [];
+
+	try {
+		// Daily series — reuse the date-range query shape.
+		const dailyRows = await env.DB
+			.prepare(
+				'SELECT date, SUM(calls) as calls, SUM(prompt_tokens) as pt, SUM(completion_tokens) as ct FROM usage_daily WHERE date >= ? GROUP BY date ORDER BY date',
+			)
+			.bind(from)
+			.all<{ date: string; calls: number; pt: number; ct: number }>();
+		for (const r of dailyRows.results || []) {
+			series.push({
+				date: r.date,
+				calls: Number(r.calls) || 0,
+				tokens: (Number(r.pt) || 0) + (Number(r.ct) || 0),
+			});
+		}
+	} catch (err) {
+		console.error('Usage report series error:', (err as Error).message);
+	}
+
+	try {
+		const modelRows = await env.DB
+			.prepare(
+				'SELECT model, SUM(calls) as calls, SUM(prompt_tokens) as pt, SUM(completion_tokens) as ct FROM usage_daily WHERE date >= ? GROUP BY model ORDER BY calls DESC LIMIT 12',
+			)
+			.bind(from)
+			.all<{ model: string; calls: number; pt: number; ct: number }>();
+		for (const r of modelRows.results || []) {
+			byModel.push({
+				model: r.model,
+				calls: Number(r.calls) || 0,
+				tokens: (Number(r.pt) || 0) + (Number(r.ct) || 0),
+			});
+		}
+	} catch (err) {
+		console.error('Usage report byModel error:', (err as Error).message);
+	}
+
+	try {
+		const keyRows = await env.DB
+			.prepare(
+				'SELECT key_name, SUM(calls) as calls, SUM(prompt_tokens) as pt, SUM(completion_tokens) as ct FROM key_usage_daily WHERE date >= ? GROUP BY key_name ORDER BY calls DESC LIMIT 12',
+			)
+			.bind(from)
+			.all<{ key_name: string; calls: number; pt: number; ct: number }>();
+		for (const r of keyRows.results || []) {
+			byKey.push({
+				keyName: r.key_name,
+				calls: Number(r.calls) || 0,
+				tokens: (Number(r.pt) || 0) + (Number(r.ct) || 0),
+			});
+		}
+	} catch (err) {
+		console.error('Usage report byKey error:', (err as Error).message);
+	}
+
+	return { days: n, series, byModel, byKey };
 }
 
 /** Coerce a token count from number/string/undefined — returns 0 for invalid values. */

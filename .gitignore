@@ -200,3 +200,25 @@ docs/superpowers/
 
 #skill
 skills/
+
+# Package manager store/caches (pnpm; npm custom caches like .npm-cache-echarts)
+.pnpm/
+.pnpm-store/
+.pnpm-cache/
+.npm-cache-*/
+
+# Temp / vendoring dirs used by tooling
+.tmp-*/
+.tmp-vendor/
+
+# Vercel local output (build copies admin-ui/build -> public/)
+.vercel/
+public/
+
+# Miniflare / workerd local state (vitest-pool-workers can create these)
+.mf/
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini

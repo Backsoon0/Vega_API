@@ -2,43 +2,53 @@
 // Client and admin authentication middleware
 
 import type { Context, MiddlewareHandler } from 'hono';
-import type { Env } from '../types.js';
-import { getClientApiKey, getAdminPasswordHash, findApiKeyNameByHash, hasAnyApiKeys } from '../config.js';
+import type { Env, ClientKeyRecord } from '../types.js';
+import { getClientApiKey, getAdminPasswordHash, findApiKeyNameByHash, hasAnyApiKeys, getKeyUsageByName } from '../config.js';
 import { hashKey } from '../crypto.js';
 
 // ---- In-memory cache for hot-path auth lookups ----
 // Avoids D1 reads on every request. TTL balances freshness vs latency.
 
 const AUTH_CACHE_TTL_MS = 60_000;
-const authCache = new Map<string, { name: string; expiresAt: number }>();
+const authCache = new Map<string, { record: ClientKeyRecord; expiresAt: number }>();
 let anyKeysCached: boolean | null = null;
 let anyKeysExpiresAt = 0;
 
-// Request-scoped key attribution: middleware stores the matched key name keyed by
-// the raw Request, so the route handlers can read it without mutating the shared
-// `env` object (which would leak values across concurrent requests on one isolate).
-const clientKeyNames = new WeakMap<Request, string>();
+// Request-scoped key attribution: middleware stores the matched key record keyed
+// by the raw Request, so route handlers can read the name (and, for quota, the
+// record) without mutating the shared `env` object (which would leak values
+// across concurrent requests on one isolate).
+const clientKeyRecords = new WeakMap<Request, ClientKeyRecord>();
 
 /** Read the client key name attributed to this request ('' if public/unknown). */
 export function getClientKeyName(request: Request): string {
-	return clientKeyNames.get(request) ?? '';
+	return clientKeyRecords.get(request)?.name ?? '';
 }
 
-function getCachedKeyName(hash: string): string | null {
+/**
+ * Read the full matched client key record (id, name, quota config) attributed to
+ * this request. Returns null for legacy/env/public keys (no per-key quota).
+ */
+export function getClientKeyRecord(request: Request): ClientKeyRecord | null {
+	return clientKeyRecords.get(request) ?? null;
+}
+
+function getCachedKeyRecord(hash: string): ClientKeyRecord | null {
 	const entry = authCache.get(hash);
 	if (!entry) return null;
 	if (Date.now() > entry.expiresAt) {
 		authCache.delete(hash);
 		return null;
 	}
-	return entry.name;
+	return entry.record;
 }
 
 /**
  * Invalidate the in-memory auth caches. Called by admin routes after any
- * client API key mutation (create/delete/rename/migrate) so that:
+ * client API key mutation (create/delete/rename/migrate/quota) so that:
  *   - deleted keys stop authenticating immediately (no 60s stale window)
  *   - newly created first key takes effect immediately (no 60s public-mode window)
+ *   - quota changes are enforced immediately
  */
 export function invalidateAuthCache(): void {
 	authCache.clear();
@@ -46,7 +56,7 @@ export function invalidateAuthCache(): void {
 	anyKeysExpiresAt = 0;
 }
 
-function setCachedKeyName(hash: string, name: string) {
+function setCachedKeyRecord(hash: string, record: ClientKeyRecord) {
 	// Probabilistic eviction: ~5% chance of cleaning expired entries on write
 	if (Math.random() < 0.05) {
 		const now = Date.now();
@@ -54,7 +64,7 @@ function setCachedKeyName(hash: string, name: string) {
 			if (now > v.expiresAt) authCache.delete(k);
 		}
 	}
-	authCache.set(hash, { name, expiresAt: Date.now() + AUTH_CACHE_TTL_MS });
+	authCache.set(hash, { record, expiresAt: Date.now() + AUTH_CACHE_TTL_MS });
 	// Keep cache from growing unbounded (max 5000 entries ~= ~500KB)
 	if (authCache.size > 5000) {
 		const oldest = [...authCache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
@@ -64,12 +74,13 @@ function setCachedKeyName(hash: string, name: string) {
 	}
 }
 
-async function cachedFindApiKeyNameByHash(env: Env, keyHash: string): Promise<{ id: number; name: string } | null> {
-	const cached = getCachedKeyName(keyHash);
-	if (cached !== null) return { id: 0, name: cached };
+async function cachedFindApiKeyByHash(env: Env, keyHash: string): Promise<ClientKeyRecord | null> {
+	const cached = getCachedKeyRecord(keyHash);
+	if (cached) return cached;
 
 	const result = await findApiKeyNameByHash(env, keyHash);
-	if (result) setCachedKeyName(keyHash, result.name);
+	// Note: `findApiKeyNameByHash` already refreshed `last_used_at` on a hit.
+	if (result) setCachedKeyRecord(keyHash, result);
 	return result;
 }
 
@@ -81,15 +92,16 @@ async function cachedHasAnyApiKeys(env: Env): Promise<boolean> {
 	return result;
 }
 
-/** Validate client API key for all API routes.
+/**
+ * Validate client API key for all API routes.
  * Checks Authorization: Bearer, x-api-key (Anthropic), x-goog-api-key (Google), and ?key= query parameter.
  * Falls back to env.OPENAI_API_KEY. If neither is set, all requests pass.
  * Supports legacy single key (config.client_api_key) and multi-key (api_keys table).
  *
- * @returns the matched key name ('' in public mode) on success, or null when auth fails.
- * NOTE: never mutates `env` — the name is returned and stored request-scoped by the
- * middleware (mutating `env` leaks values across requests sharing the same isolate). */
-export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<string | null> {
+ * @returns the matched key attribution { name, record } on success, or null when auth fails.
+ * NOTE: never mutates `env` — the attribution is stored request-scoped by the
+ * middleware (mutating `env` leaks values across requests sharing one isolate). */
+export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<{ name: string; record: ClientKeyRecord | null } | null> {
 	const env = c.env;
 
 	// Extract the provided key from headers/query
@@ -108,15 +120,15 @@ export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<st
 	// 1. Check legacy single key (config.client_api_key)
 	const kvKey = await getClientApiKey(env);
 	if (kvKey && providedKey === kvKey) {
-		return '(默认密钥)';
+		return { name: '(默认密钥)', record: null };
 	}
 
 	// 2. Check multi-key table (api_keys) — hash-based lookup
 	if (providedKey) {
 		const keyHash = await hashKey(providedKey);
-		const match = await cachedFindApiKeyNameByHash(env, keyHash);
+		const match = await cachedFindApiKeyByHash(env, keyHash);
 		if (match) {
-			return match.name;
+			return { name: match.name, record: match };
 		}
 	}
 
@@ -131,13 +143,13 @@ export async function checkClientAuth(c: Context<{ Bindings: Env }>): Promise<st
 	if (env.OPENAI_API_KEY) {
 		const auth = c.req.header('Authorization') || '';
 		if (auth === `Bearer ${env.OPENAI_API_KEY}`) {
-			return '(环境变量密钥)';
+			return { name: '(环境变量密钥)', record: null };
 		}
 		return null;
 	}
 
 	// 5. No keys configured — public mode (no key attribution)
-	return '';
+	return { name: '', record: null };
 }
 
 /** Validate admin token (SHA-256 hash) for /admin/* routes. */
@@ -149,15 +161,59 @@ export async function requireAdminAuth(c: Context<any>): Promise<boolean> {
 	return !!(storedHash && token === storedHash);
 }
 
-/** Hono middleware: returns 401 if client auth fails. Stores the matched key
- * name keyed by the raw Request (WeakMap) — never on the shared env object. */
+/**
+ * Enforce the per-key quota (if configured) for the current request.
+ * Uses the same `key_usage_daily` lookup as `recordUsage` writes, so counts
+ * agree. Returns a 429 Response when exceeded, null when allowed.
+ */
+async function checkKeyQuota(c: Context<{ Bindings: Env }>, record: ClientKeyRecord): Promise<Response | null> {
+	const { quotaCalls, quotaTokens, quotaPeriod, name } = record;
+	if (!quotaCalls && !quotaTokens) return null;
+
+	const usage = await getKeyUsageByName(c.env, name, quotaPeriod);
+
+	if (
+		(quotaCalls != null && usage.calls >= quotaCalls) ||
+		(quotaTokens != null && usage.tokens >= quotaTokens)
+	) {
+		const retryAfter = quotaPeriod === 'month' ? '2592000' : '86400';
+		return c.json(
+			{
+				error: {
+					message: `API 密钥 "${name}" 的配额已用尽（insufficient_quota）：调用 ${usage.calls}${quotaCalls != null ? `/${quotaCalls}` : ''}，Token ${usage.tokens}${quotaTokens != null ? `/${quotaTokens}` : ''}（${quotaPeriod === 'month' ? '本月' : '今日'}）。请升级配额或等待周期重置。`,
+					type: 'insufficient_quota',
+					quota: {
+						period: quotaPeriod,
+						calls: usage.calls,
+						limitCalls: quotaCalls,
+						tokens: usage.tokens,
+						limitTokens: quotaTokens,
+					},
+				},
+			},
+			429,
+			{ 'Retry-After': retryAfter, 'x-should-retry': 'false' },
+		);
+	}
+	return null;
+}
+
+/** Hono middleware: returns 401 if client auth fails, 429 if the key's quota is
+ * exceeded. Stores the matched key record keyed by the raw Request (WeakMap) —
+ * never on the shared env object. */
 export function clientAuthMiddleware(): MiddlewareHandler<{ Bindings: Env }> {
 	return async (c, next) => {
-		const keyName = await checkClientAuth(c);
-		if (keyName === null) {
+		const auth = await checkClientAuth(c);
+		if (auth === null) {
 			return c.json({ error: { message: 'Unauthorized' } }, 401);
 		}
-		clientKeyNames.set(c.req.raw, keyName);
+		if (auth.record) {
+			const quotaBlocked = await checkKeyQuota(c, auth.record);
+			if (quotaBlocked) return quotaBlocked;
+			clientKeyRecords.set(c.req.raw, auth.record);
+		} else {
+			clientKeyRecords.delete(c.req.raw);
+		}
 		return next();
 	};
 }

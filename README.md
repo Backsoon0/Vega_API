@@ -38,6 +38,8 @@
 - **全 Provider 互通** — 任一 provider 均可通过任一接口访问（如 OpenAI-format 请求路由到 Anthropic，Gemini-format 请求路由到 OpenAI）
 - **4 种 Provider** — 支持 OpenAI、Google AI Studio、Vertex AI (JWT/API Key)、Anthropic
 - **多密钥管理** — 支持创建多个 API 密钥，每个密钥可独立命名和追踪调用来源
+- **每密钥配额与限流** — 可为每个密钥设置每日/每月调用次数与 Token 上限（`quota_calls`/`quota_tokens`），超出自动返回 429 `insufficient_quota`，面板实时显示用量进度
+- **用量报表（ECharts）** — 概览页内置按日趋势、按模型、按密钥分组的可视化图表（Apache ECharts + Code Dark 主题），一键导出 CSV
 - **故障转移 + 熔断器** — 可选开启：API 调用失败时自动尝试下一个可用 provider；连续失败触发熔断（阈值/冷却可配置），自动恢复探活
 - **缓存追踪** — 自动记录上游 API 的缓存命中/未命中 token 数，在调用记录中展示
 - **SvelteKit 管理面板** — 侧边栏 6 页面（概览 / 模型调试 / 路由拓扑 / 调用记录 / API 设置 / 设置），Code Dark 深色主题，可折叠侧边栏，响应式设计
@@ -58,7 +60,7 @@
 | 框架 | Hono (TypeScript) |
 | AI 后端 | Vercel AI SDK v7 (`ai` + `@ai-sdk/google` + `@ai-sdk/anthropic`) + 上游兼容直连（SSE 透传） |
 | 数据库 | Cloudflare D1 / Vercel Neon (PostgreSQL) |
-| 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons (Code Dark 主题) + marked/katex |
+| 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons (Code Dark 主题) + marked/katex + Apache ECharts（用量报表图表，按需引入 tree-shaking） |
 | 加密 | Web Crypto API (AES-256-GCM、SHA-256) |
 | 测试 | Vitest + @cloudflare/vitest-pool-workers |
 | 部署 | Cloudflare: Wrangler + Workers Static Assets + GitHub Actions；Vercel: Node Serverless (`api/index.ts`) + Neon |
@@ -194,6 +196,8 @@ curl https://your-worker.workers.dev/anthropic/v1/messages \
 | `/anthropic/*` | `x-api-key: <key>` / `Authorization: Bearer <key>` |
 
 > 支持多个命名密钥，在管理面板 → API 设置中管理。调用记录中会追踪每次调用使用的密钥名称。
+>
+> **每密钥配额**：可为每个密钥设置调用次数上限（`quota_calls`）和/或 Token 上限（`quota_tokens`），周期为按天（`day`，默认）或按月（`month`）。配额为 `NULL` 表示不限。超限请求返回 `429 insufficient_quota`（带 `Retry-After` 与 `x-should-retry: false`）。用量按**密钥名称**记录在 `key_usage_daily`：同名密钥共享配额与用量，重命名密钥会遗留旧名称的用量记录。
 
 ### 参数透传 (Extra Body)
 
@@ -356,13 +360,14 @@ response = client.messages.create(
 | `/admin/check` | GET | Bearer | 验证 token |
 | `/admin/providers` | GET/POST | Bearer | 列出/添加提供商 |
 | `/admin/providers/{id}` | GET/PUT/DELETE | Bearer | 单个提供商操作 |
-| `/admin/api-keys` | GET/POST | Bearer | 列出/创建客户端密钥 |
-| `/admin/api-keys/{id}` | PUT/DELETE | Bearer | 重命名/删除密钥 |
+| `/admin/api-keys` | GET/POST | Bearer | 列出/创建客户端密钥（可设置每密钥配额：`quota_calls` / `quota_tokens` / `quota_period`） |
+| `/admin/api-keys/{id}` | PUT/DELETE | Bearer | 重命名/修改配额/删除密钥 |
 | `/admin/api-keys/legacy` | DELETE | Bearer | 删除旧版密钥 |
 | `/admin/api-keys/legacy/migrate` | POST | Bearer | 旧版密钥迁移为命名密钥 |
 | `/admin/settings` | GET/PUT | Bearer | 获取/更新设置 (故障转移、熔断器、调用记录保留上限等) |
 | `/admin/change-password` | POST | Bearer | 修改管理密码 |
 | `/admin/usage` | GET | Bearer | 用量统计 |
+| `/admin/usage/report` | GET | Bearer | 用量报表（`?days=`，返回按日/按模型/按密钥聚合序列，供 ECharts 渲染） |
 | `/admin/logs` | GET | Bearer | 调用记录 |
 | `/admin/logs` | DELETE | Bearer | 一键清空全部调用记录 |
 
@@ -370,11 +375,11 @@ response = client.messages.create(
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| **概览** | `/dashboard` | 统计卡片（总调用、Token、活跃提供商）+ 提供商状态列表 + 请求/延迟图表 |
+| **概览** | `/dashboard` | 统计卡片（总调用/Token 来自用量报表）+ 数据范围切换 + 用量报表图表（按日趋势折线、按模型条形、按密钥条形，ECharts 渲染）+ 导出 CSV + 提供商状态列表 |
 | **模型调试** | `/dashboard/playground` | 内置对话调试（Markdown + KaTeX 渲染、工具调用、流式/非流式） |
 | **路由拓扑** | `/dashboard/routes` | 各 API 接口的调用量/成功率/耗时统计图，故障转移状态 |
 | **调用记录** | `/dashboard/logs` | 调用记录表格，可配置栏位，支持搜索和筛选，单击查看详情（含缓存命中、密钥追踪），一键清空记录 |
-| **API 设置** | `/dashboard/api-settings` | API 调用地址一键复制 + 多密钥管理（创建/命名/重命名/删除）+ 提供商 CRUD |
+| **API 设置** | `/dashboard/api-settings` | API 调用地址一键复制 + 多密钥管理（创建/命名/重命名/删除 + 每密钥配额：调用次数/Token/周期）+ 提供商 CRUD |
 | **设置** | `/dashboard/settings` | 故障转移开关 + 熔断器配置 + 调用记录保留上限 + 栏位配置 + 修改管理密码 + 部署与数据库信息 |
 
 ### 调用记录新增功能
@@ -495,7 +500,7 @@ npm run deploy
 部署后：
 - 管理面板：`https://<你的域名>/`，首次访问设置管理员密码。
 - 健康检查：`https://<你的域名>/health`。
-- 首次冷启动会自动创建 Neon 表结构（Postgres `SERIAL` + `IF NOT EXISTS`），**无需手动迁移**。
+- 首次冷启动会自动创建/补齐表结构（Neon 用 Postgres `IF NOT EXISTS`;D1 用 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info()` 检查后再 ALTER 补列），**双平台均无需手动迁移**。
 - 管理面板「设置 → 部署与数据库」显示 `Vercel Serverless (Node)` / `Neon Postgres` + Neon 主机名。
 
 > 同一仓库可同时保持两套部署：Cloudflare 用 `src/index.ts`（D1），Vercel 用 `api/index.ts`（Neon），互不影响。
@@ -518,13 +523,14 @@ npm run deploy
 vega-api-db
 ├── config         — key-value 配置（密码、版本号、故障转移等设置）
 ├── providers      — AI 提供商配置（敏感字段 AES-GCM 加密，支持 4 种类型）
-├── api_keys       — 客户端 API 密钥（名称、SHA-256 哈希、加密存储、使用时间）
+├── api_keys       — 客户端 API 密钥（名称、SHA-256 哈希、加密存储、使用时间、配额：quota_calls / quota_tokens / quota_period）
+├── key_usage_daily— 每密钥每日用量（key_name + date 唯一，calls / prompt_tokens / completion_tokens），驱动配额检查与用量报表的按密钥分组
 ├── usage_daily    — 每日聚合用量（date, provider_id, model 三维度）
 ├── call_logs      — 详细调用记录（模型、Token、耗时、缓存命中、密钥追踪，保留上限可在设置页配置，默认 10000 条）
 └── rate_limits    — 登录限流数据
 ```
 
-> 部署到 **Vercel/Neon** 时使用**相同的数据结构**，但底层是 PostgreSQL：`id` 用 `SERIAL`（等价于 D1 的 `AUTOINCREMENT`），建表用 `IF NOT EXISTS`，首次冷启动自动创建，无需手动迁移。
+> 部署到 **Vercel/Neon** 时使用**相同的数据结构**，但底层是 PostgreSQL（`id` 用 `SERIAL` 等价于 D1 的 `AUTOINCREMENT`）。**两个平台都会在首次冷启动时自动建表并补齐缺失的列**：Neon 用 `IF NOT EXISTS`，D1 用 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info()` 检查后再 ALTER，均无需手动迁移。
 
 ## 开发
 
@@ -548,7 +554,7 @@ npm run deploy               # 构建 + 部署到 Cloudflare
 ├── wrangler.jsonc            # Cloudflare 配置 (D1 + Assets + run_worker_first)
 ├── vercel.json               # Vercel 配置 (framework:null + maxDuration + 单函数 + SPA 重写)
 ├── .env.example              # 环境变量参考 (Cloudflare + Vercel/Neon)
-├── migrations/               # D1 数据库迁移 (0001–0008)
+├── migrations/               # D1 数据库迁移 (0001–0009)
 │   ├── 0001_init.sql         # 核心表 (config / providers / usage_daily)
 │   ├── 0002_call_logs.sql    # 调用记录表
 │   ├── 0003_duration.sql     # + duration_ms
@@ -556,7 +562,8 @@ npm run deploy               # 构建 + 部署到 Cloudflare
 │   ├── 0005_call_logs_enhance.sql  # + request_id / is_stream / extra
 │   ├── 0006_provider_types.sql     # providers.type 增加 'anthropic'
 │   ├── 0007_api_keys.sql     # 多密钥表
-│   └── 0008_call_logs_enhance.sql  # 缓存追踪 + 密钥名
+│   ├── 0008_call_logs_enhance.sql  # 缓存追踪 + 密钥名
+│   └── 0009_api_key_quota.sql      # api_keys 配额列 + key_usage_daily 表
 ├── api/                      # Vercel 入口 + Neon 适配器
 │   ├── index.ts              # Vercel 函数 (process.env → env → app.fetch, 双桥接)
 │   └── neon.ts               # D1 兼容客户端 (SQL SQLite→Postgres 翻译)
@@ -582,8 +589,8 @@ npm run deploy               # 构建 + 部署到 Cloudflare
 │   │   ├── admin/
 │   │   │   ├── auth.ts       # 登录/setup/check/改密
 │   │   │   ├── providers.ts  # Provider CRUD
-│   │   │   ├── client-key.ts # 多密钥 CRUD + legacy 迁移
-│   │   │   ├── usage.ts      # 用量/调用记录/设置
+│   │   │   ├── client-key.ts # 多密钥 CRUD + 配额 + legacy 迁移
+│   │   │   ├── usage.ts      # 用量/调用记录/设置 + /usage/report 用量报表接口
 │   │   │   ├── playground.ts # 模型调试 (AI SDK)
 │   │   │   └── routes.ts     # 路由拓扑统计
 │   │   ├── v1/
@@ -611,6 +618,7 @@ npm run deploy               # 构建 + 部署到 Cloudflare
         │   ├── ProviderCard.svelte / ProviderForm.svelte
         │   ├── CallLogTable.svelte / LogDetailModal.svelte
         │   ├── route-topology.ts / route-stats.ts   # 路由拓扑图表
+        │   ├── EChart.svelte / chart-theme.ts       # Apache ECharts 封装 (按需引入 + Code Dark 主题)
         │   ├── Markdown.svelte / Spinner.svelte / Modal.svelte / Toast.svelte
         │   └── ...
         └── routes/

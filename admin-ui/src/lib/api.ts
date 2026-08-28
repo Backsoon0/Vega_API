@@ -205,10 +205,22 @@ export async function getApiKeys() {
 	return data as { keys: ApiKeyInfo[]; hasLegacyKey: boolean };
 }
 
-export async function createApiKey(name: string, key?: string, generate?: boolean) {
-	const { ok, data } = await request('POST', '/api-keys', { name, key, generate });
+export interface ApiKeyQuotaInput {
+	quotaCalls?: number | null;
+	quotaTokens?: number | null;
+	quotaPeriod?: 'day' | 'month';
+}
+
+export async function createApiKey(name: string, key?: string, generate?: boolean, quota?: ApiKeyQuotaInput) {
+	const { ok, data } = await request('POST', '/api-keys', { name, key, generate, ...(quota ? { quota } : {}) });
 	if (!ok) throw new Error(data.error || '创建密钥失败');
 	return data as { ok: boolean; message: string; key: ApiKeyInfo; fullKey: string };
+}
+
+export async function updateApiKeyQuota(id: number, quota: ApiKeyQuotaInput) {
+	const { ok, data } = await request('PUT', `/api-keys/${id}`, { quota });
+	if (!ok) throw new Error(data.error || '更新配额失败');
+	return data;
 }
 
 export async function deleteApiKey(id: number) {
@@ -348,6 +360,25 @@ export interface ApiKeyInfo {
 	name: string;
 	createdAt: string;
 	lastUsedAt: string | null;
+	quotaCalls: number | null;
+	quotaTokens: number | null;
+	quotaPeriod: 'day' | 'month';
+	usageCalls: number;
+	usageTokens: number;
+}
+
+// 用量报表 — GET /admin/usage/report?days=N
+export interface UsageReport {
+	days: number;
+	series: Array<{ date: string; calls: number; tokens: number }>;
+	byModel: Array<{ model: string; calls: number; tokens: number }>;
+	byKey: Array<{ keyName: string; calls: number; tokens: number }>;
+}
+
+export async function getUsageReport(days = 7) {
+	const { ok, data } = await request('GET', `/usage/report?days=${days}`);
+	if (!ok) throw new Error(data.error || '获取用量报表失败');
+	return data as UsageReport;
 }
 
 export interface Provider {

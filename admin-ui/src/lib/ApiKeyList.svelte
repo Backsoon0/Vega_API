@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getApiKeys, createApiKey, deleteApiKey, renameApiKey, deleteLegacyKey, migrateLegacyKey, type ApiKeyInfo } from "$lib/api";
+	import { getApiKeys, createApiKey, deleteApiKey, renameApiKey, updateApiKeyQuota, deleteLegacyKey, migrateLegacyKey, type ApiKeyInfo, type ApiKeyQuotaInput } from "$lib/api";
 	import { toasts } from "$lib/toast-store";
 	import Spinner from "$lib/Spinner.svelte";
 
@@ -9,13 +9,44 @@
 	let showInput = $state(false);
 	let newKeyName = $state('');
 	let newKeyValue = $state('');
+	let newQuotaCalls = $state('');
+	let newQuotaTokens = $state('');
+	let newQuotaPeriod = $state<'day' | 'month'>('day');
 	let revealedKey = $state('');
 	let revealedName = $state('');
 	let copying = $state(false);
 	let renamingId = $state(0);
 	let renameName = $state('');
+	let quotaId = $state(0);
+	let quotaCalls = $state('');
+	let quotaTokens = $state('');
+	let quotaPeriod = $state<'day' | 'month'>('day');
 	let showMigrate = $state(false);
 	let migrateName = $state('');
+
+	/** '' / invalid → null (unlimited); otherwise clamped non-negative int. */
+	function parseQuota(v: string): number | null {
+		if (v.trim() === '') return null;
+		const n = Math.floor(Number(v));
+		return Number.isFinite(n) && n >= 0 ? n : null;
+	}
+
+	const PERIOD_LABEL: Record<'day' | 'month', string> = { day: '天', month: '月' };
+
+	function quotaSummary(k: ApiKeyInfo): string {
+		const parts: string[] = [];
+		if (k.quotaCalls != null) parts.push(`调用 ${k.usageCalls}/${k.quotaCalls}`);
+		if (k.quotaTokens != null) parts.push(`Token ${k.usageTokens.toLocaleString()}/${k.quotaTokens.toLocaleString()}`);
+		if (parts.length === 0) return '不限量';
+		return parts.join(' · ') + ` /${PERIOD_LABEL[k.quotaPeriod]}`;
+	}
+
+	function isQuotaExceeded(k: ApiKeyInfo): boolean {
+		return (
+			(k.quotaCalls != null && k.usageCalls >= k.quotaCalls) ||
+			(k.quotaTokens != null && k.usageTokens >= k.quotaTokens)
+		);
+	}
 
 	async function load() {
 		try {
@@ -29,6 +60,13 @@
 		}
 	}
 
+	function buildQuota(): ApiKeyQuotaInput | undefined {
+		const calls = parseQuota(newQuotaCalls);
+		const tokens = parseQuota(newQuotaTokens);
+		if (calls == null && tokens == null) return undefined;
+		return { quotaCalls: calls, quotaTokens: tokens, quotaPeriod: newQuotaPeriod };
+	}
+
 	async function handleGenerate() {
 		const name = newKeyName.trim();
 		if (!name) {
@@ -36,12 +74,15 @@
 			return;
 		}
 		try {
-			const result = await createApiKey(name, undefined, true);
+			const quota = buildQuota();
+			const result = await createApiKey(name, undefined, true, quota);
 			revealedKey = result.fullKey;
 			revealedName = name;
 			showInput = false;
 			newKeyName = '';
-			toasts.show(`密钥 "${name}" 已生成`);
+			newQuotaCalls = '';
+			newQuotaTokens = '';
+			toasts.show(`密钥 "${name}" 已生成${quota ? '（含配额）' : ''}`);
 			await load();
 		} catch (err: any) {
 			toasts.show(err.message, 'error');
@@ -60,13 +101,50 @@
 			return;
 		}
 		try {
-			const result = await createApiKey(name, k);
+			const quota = buildQuota();
+			const result = await createApiKey(name, k, undefined, quota);
 			revealedKey = result.fullKey;
 			revealedName = name;
 			showInput = false;
 			newKeyName = '';
 			newKeyValue = '';
-			toasts.show(`密钥 "${name}" 已设置`);
+			newQuotaCalls = '';
+			newQuotaTokens = '';
+			toasts.show(`密钥 "${name}" 已设置${quota ? '（含配额）' : ''}`);
+			await load();
+		} catch (err: any) {
+			toasts.show(err.message, 'error');
+		}
+	}
+
+	function startQuota(k: ApiKeyInfo) {
+		quotaId = k.id;
+		quotaCalls = k.quotaCalls != null ? String(k.quotaCalls) : '';
+		quotaTokens = k.quotaTokens != null ? String(k.quotaTokens) : '';
+		quotaPeriod = k.quotaPeriod;
+	}
+
+	function cancelQuota() {
+		quotaId = 0;
+		quotaCalls = '';
+		quotaTokens = '';
+	}
+
+	async function handleSaveQuota() {
+		if (!quotaId) return;
+		const quota: ApiKeyQuotaInput = {
+			quotaCalls: parseQuota(quotaCalls),
+			quotaTokens: parseQuota(quotaTokens),
+			quotaPeriod,
+		};
+		try {
+			await updateApiKeyQuota(quotaId, quota);
+			if (quota.quotaCalls == null && quota.quotaTokens == null) {
+				toasts.show('配额已清除（不限量）');
+			} else {
+				toasts.show('配额已更新，立即生效');
+			}
+			cancelQuota();
 			await load();
 		} catch (err: any) {
 			toasts.show(err.message, 'error');
@@ -153,6 +231,8 @@
 		showInput = false;
 		newKeyName = '';
 		newKeyValue = '';
+		newQuotaCalls = '';
+		newQuotaTokens = '';
 	}
 
 	$effect(() => { load(); });
@@ -230,12 +310,36 @@
 							<div style="font-size:13px;color:var(--fg)">{k.name}</div>
 						{/if}
 						<div class="mono" style="font-size:11px;color:var(--muted)">创建 {fmtDay(k.createdAt)}{#if k.lastUsedAt}<span style="margin-left:8px">最近 {fmtDate(k.lastUsedAt)}</span>{/if}</div>
+						<div style="font-size:11px;margin-top:3px">
+							{#if quotaId === k.id}
+								<div class="row" style="flex-wrap:wrap;gap:6px;margin-top:4px">
+									<input class="input" style="width:92px;padding:5px 8px;font-size:12px" bind:value={quotaCalls} placeholder="调用上限" />
+									<input class="input" style="width:110px;padding:5px 8px;font-size:12px" bind:value={quotaTokens} placeholder="Token 上限" />
+									<select class="input" style="width:72px;padding:5px 6px;font-size:12px" bind:value={quotaPeriod}>
+										<option value="day">每日</option>
+										<option value="month">每月</option>
+									</select>
+									<button class="btn btn-accent btn-sm" onclick={handleSaveQuota}>保存</button>
+									<button class="btn btn-ghost btn-sm" onclick={cancelQuota}>取消</button>
+								</div>
+							{:else}
+								<span style="color:{k.quotaCalls == null && k.quotaTokens == null ? 'var(--muted)' : (isQuotaExceeded(k) ? 'var(--danger)' : 'var(--fg-2)')}">
+									{#if k.quotaCalls != null || k.quotaTokens != null}
+										<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 2 4 5v6c0 5.25 3.4 10.74 8 11 4.6-.26 8-5.75 8-11V5z" /></svg>
+									{/if}
+									{quotaSummary(k)}
+								</span>
+							{/if}
+						</div>
 					</div>
 				</div>
 				<div class="row">
 					{#if renamingId !== k.id}
 						<button class="icon-btn" style="width:34px;height:34px" title="重命名" onclick={() => startRename(k.id, k.name)}>
 							<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" /></svg>
+						</button>
+						<button class="icon-btn" style="width:34px;height:34px;{k.quotaCalls != null || k.quotaTokens != null ? 'color:var(--cta)' : ''}" title="{k.quotaCalls != null || k.quotaTokens != null ? '编辑配额' : '设置配额'}" onclick={() => startQuota(k)}>
+							<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M12 2 4 5v6c0 5.25 3.4 10.74 8 11 4.6-.26 8-5.75 8-11V5z" /><path d="m9.5 12 1.8 1.8L15 10" /></svg>
 						</button>
 					{/if}
 					<button class="icon-btn" style="width:34px;height:34px;color:var(--danger)" title="删除" onclick={() => handleDelete(k.id, k.name)}>
@@ -252,6 +356,15 @@
 			<div class="row" style="flex-wrap:wrap">
 				<input class="input" style="flex:1;min-width:160px" bind:value={newKeyName} placeholder="密钥名称（如：我的应用、项目A）" />
 				<input class="input" style="flex:1;min-width:160px;font-family:var(--font-mono)" bind:value={newKeyValue} placeholder="自行设置 Key（留空将随机生成）" />
+			</div>
+			<div class="row" style="flex-wrap:wrap;gap:8px;margin-top:10px">
+				<input class="input" style="width:130px;font-size:12.5px" bind:value={newQuotaCalls} placeholder="调用上限（留空不限）" />
+				<input class="input" style="width:150px;font-size:12.5px" bind:value={newQuotaTokens} placeholder="Token 上限（留空不限）" />
+				<select class="input" style="width:76px;font-size:12.5px" bind:value={newQuotaPeriod}>
+					<option value="day">每日</option>
+					<option value="month">每月</option>
+				</select>
+				<span style="font-size:11px;color:var(--muted);align-self:center">配额可稍后在列表里修改</span>
 			</div>
 			<div class="row" style="margin-top:10px">
 				<button class="btn btn-primary btn-sm" onclick={() => newKeyValue.trim() ? handleSet() : handleGenerate()}>创建</button>

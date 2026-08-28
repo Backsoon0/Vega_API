@@ -75,8 +75,12 @@ npm run deploy             # build UI + deploy Worker + static assets
 
 ### Notes
 
-- The Neon schema is created on first cold start by `prepareRuntime` (tables use
-  Postgres `SERIAL`, `IF NOT EXISTS`). No manual migration needed on Vercel.
+- **Schema self-heals on first cold start on both platforms** — `prepareRuntime`
+  → `initSchema` in `src/db.ts` creates missing tables/indexes and adds missing
+  columns (Neon uses Postgres `IF NOT EXISTS` + `SERIAL`; D1 checks
+  `PRAGMA table_info()` before each ALTER since SQLite has no `IF NOT EXISTS`
+  for columns). No manual migration is required on either Vercel or Cloudflare —
+  `npm run db:migrate` remains only as a manual fallback / local dev seeding.
 - Runtime SQL differences (SQLite D1 → Postgres) are translated by the Neon
   adapter in `api/neon.ts` (`?` → `$n`, `INSERT OR REPLACE` → `ON CONFLICT ...`,
   `julianday()` → `EXTRACT(EPOCH ...) / 86400`).

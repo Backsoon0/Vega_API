@@ -8,6 +8,12 @@
 // Runtime queries use a D1-shaped client (`env.DB.prepare().bind().all()/.first()/.run()`)
 // which is satisfied by Cloudflare's real D1 binding on Workers and by the Neon
 // adapter on Vercel, so data-access code stays identical across platforms.
+//
+// BOTH platforms self-heal at cold start (no manual migration needed):
+//   - tables  : `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`
+//   - columns : Postgres `ADD COLUMN IF NOT EXISTS`; SQLite has no IF NOT EXISTS,
+//               so D1 checks `PRAGMA table_info()` first and only ALTERs missing columns.
+// This keeps the schema in sync with the deployed code automatically.
 
 import type { Env } from './types.js';
 import { detectDatabase } from './runtime.js';
@@ -26,18 +32,31 @@ const D1_SCHEMA_STATEMENTS = [
 	'CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON call_logs(timestamp)',
 	'CREATE INDEX IF NOT EXISTS idx_logs_provider ON call_logs(provider_id)',
 	'CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT)',
+	'CREATE TABLE IF NOT EXISTS key_usage_daily (key_name TEXT NOT NULL, date TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(key_name, date))',
 ];
 
-// ALTER TABLE ... ADD COLUMN (SQLite has no IF NOT EXISTS — wrapped in try/catch).
-const D1_MIGRATIONS = [
-	'ALTER TABLE rate_limits ADD COLUMN banned_until INTEGER NOT NULL DEFAULT 0',   // 0004
-	'ALTER TABLE call_logs ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0',       // 0003
-	'ALTER TABLE call_logs ADD COLUMN request_id TEXT NOT NULL DEFAULT \'\'',          // 0005
-	'ALTER TABLE call_logs ADD COLUMN is_stream INTEGER NOT NULL DEFAULT 0',          // 0005
-	'ALTER TABLE call_logs ADD COLUMN extra TEXT NOT NULL DEFAULT \'{}\'',             // 0005
-	'ALTER TABLE call_logs ADD COLUMN cache_read_input_tokens INTEGER NOT NULL DEFAULT 0',    // 0008
-	'ALTER TABLE call_logs ADD COLUMN cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0', // 0008
-	'ALTER TABLE call_logs ADD COLUMN api_key_name TEXT NOT NULL DEFAULT \'\'',               // 0008
+// Additive column migrations — engine-specific SQL for each platform. D1 runs
+// the SQLite form only after a PRAGMA existence check; Neon runs the Postgres
+// `IF NOT EXISTS` form directly. Keep the two forms in sync column-wise.
+type ColumnMigration = {
+	table: string;
+	column: string;
+	d1: string;    // SQLite ALTER (no IF NOT EXISTS support)
+	neon: string;  // Postgres ALTER (supports IF NOT EXISTS)
+};
+
+const COLUMN_MIGRATIONS: ColumnMigration[] = [
+	{ table: 'rate_limits', column: 'banned_until', d1: 'ALTER TABLE rate_limits ADD COLUMN banned_until INTEGER NOT NULL DEFAULT 0', neon: 'ALTER TABLE rate_limits ADD COLUMN IF NOT EXISTS banned_until INTEGER NOT NULL DEFAULT 0' },                                        // 0004
+	{ table: 'call_logs', column: 'duration_ms', d1: 'ALTER TABLE call_logs ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0', neon: 'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS duration_ms INTEGER NOT NULL DEFAULT 0' },                                                    // 0003
+	{ table: 'call_logs', column: 'request_id', d1: "ALTER TABLE call_logs ADD COLUMN request_id TEXT NOT NULL DEFAULT ''", neon: 'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS request_id TEXT NOT NULL DEFAULT \'\'' },                                                            // 0005
+	{ table: 'call_logs', column: 'is_stream', d1: 'ALTER TABLE call_logs ADD COLUMN is_stream INTEGER NOT NULL DEFAULT 0', neon: 'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS is_stream INTEGER NOT NULL DEFAULT 0' },                                                              // 0005
+	{ table: 'call_logs', column: 'extra', d1: "ALTER TABLE call_logs ADD COLUMN extra TEXT NOT NULL DEFAULT '{}'", neon: 'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS extra TEXT NOT NULL DEFAULT \'{}\'' },                                                                        // 0005
+	{ table: 'call_logs', column: 'cache_read_input_tokens', d1: 'ALTER TABLE call_logs ADD COLUMN cache_read_input_tokens INTEGER NOT NULL DEFAULT 0', neon: 'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS cache_read_input_tokens INTEGER NOT NULL DEFAULT 0' },                        // 0008
+	{ table: 'call_logs', column: 'cache_creation_input_tokens', d1: 'ALTER TABLE call_logs ADD COLUMN cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0', neon: 'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0' },            // 0008
+	{ table: 'call_logs', column: 'api_key_name', d1: "ALTER TABLE call_logs ADD COLUMN api_key_name TEXT NOT NULL DEFAULT ''", neon: 'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS api_key_name TEXT NOT NULL DEFAULT \'\'' },                                                          // 0008
+	{ table: 'api_keys', column: 'quota_calls', d1: 'ALTER TABLE api_keys ADD COLUMN quota_calls INTEGER', neon: 'ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS quota_calls INTEGER' },                                    // 0009
+	{ table: 'api_keys', column: 'quota_tokens', d1: 'ALTER TABLE api_keys ADD COLUMN quota_tokens INTEGER', neon: 'ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS quota_tokens INTEGER' },                                  // 0009
+	{ table: 'api_keys', column: 'quota_period', d1: "ALTER TABLE api_keys ADD COLUMN quota_period TEXT NOT NULL DEFAULT 'day'", neon: 'ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS quota_period TEXT NOT NULL DEFAULT \'day\'' },                                                        // 0009
 ];
 
 // ---------------------------------------------------------------------------
@@ -55,23 +74,18 @@ const NEON_SCHEMA_STATEMENTS = [
 	`CREATE TABLE IF NOT EXISTS call_logs (id SERIAL PRIMARY KEY, timestamp TEXT NOT NULL, ip TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 1, request_id TEXT NOT NULL DEFAULT '', is_stream INTEGER NOT NULL DEFAULT 0, extra TEXT NOT NULL DEFAULT '{}', cache_read_input_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0, api_key_name TEXT NOT NULL DEFAULT '')`,
 	'CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON call_logs(timestamp)',
 	'CREATE INDEX IF NOT EXISTS idx_logs_provider ON call_logs(provider_id)',
-	'CREATE TABLE IF NOT EXISTS api_keys (id SERIAL PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT)',
-];
-
-const NEON_MIGRATIONS = [
-	'ALTER TABLE rate_limits ADD COLUMN IF NOT EXISTS banned_until INTEGER NOT NULL DEFAULT 0',
-	'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS duration_ms INTEGER NOT NULL DEFAULT 0',
-	'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS request_id TEXT NOT NULL DEFAULT \'\'',
-	'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS is_stream INTEGER NOT NULL DEFAULT 0',
-	'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS extra TEXT NOT NULL DEFAULT \'{}\'',
-	'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS cache_read_input_tokens INTEGER NOT NULL DEFAULT 0',
-	'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0',
-	'ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS api_key_name TEXT NOT NULL DEFAULT \'\'',
+	'CREATE TABLE IF NOT EXISTS api_keys (id SERIAL PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT, quota_calls INTEGER, quota_tokens INTEGER, quota_period TEXT NOT NULL DEFAULT \'day\')',
+	'CREATE TABLE IF NOT EXISTS key_usage_daily (key_name TEXT NOT NULL, date TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(key_name, date))',
 ];
 
 /**
  * Initialize the database schema for the active engine. Safe to call on every
- * cold start — uses IF NOT EXISTS (and IF NOT EXISTS / try-catch for ALTERs).
+ * cold start — creates missing tables/indexes and adds missing columns.
+ *
+ * D1 (SQLite): `CREATE ... IF NOT EXISTS` for tables/indexes + `PRAGMA
+ * table_info()` existence check before each ALTER (SQLite has no
+ * `ADD COLUMN IF NOT EXISTS`). Exactly the same "self-heal" semantics as Neon.
+ * Neon (Postgres): `IF NOT EXISTS` everywhere, including `ADD COLUMN`.
  */
 export async function initSchema(env: Env): Promise<void> {
 	if (detectDatabase(env) === 'neon') {
@@ -81,31 +95,37 @@ export async function initSchema(env: Env): Promise<void> {
 	await initD1Schema(env);
 }
 
+// ---- D1 (SQLite) ----
+
 async function initD1Schema(env: Env): Promise<void> {
 	for (const stmt of D1_SCHEMA_STATEMENTS) {
 		await env.DB.prepare(stmt).run();
 	}
-	// ALTER on existing tables: CREATE TABLE IF NOT EXISTS won't add columns, so
-	// ALTER with try/catch (D1/SQLite doesn't support IF NOT EXISTS for ALTER).
-	for (const stmt of D1_MIGRATIONS) {
-		try {
-			await env.DB.prepare(stmt).run();
-		} catch {
-			// Column already exists — safe to ignore
-		}
+	for (const mig of COLUMN_MIGRATIONS) {
+		if (await d1ColumnExists(env, mig.table, mig.column)) continue;
+		await env.DB.prepare(mig.d1).run();
 	}
 }
+
+/** SQLite has no `ADD COLUMN IF NOT EXISTS` — check `PRAGMA table_info` instead. */
+async function d1ColumnExists(env: Env, table: string, column: string): Promise<boolean> {
+	try {
+		const res = await env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+		return res.results.some((r) => r.name === column);
+	} catch {
+		// Table missing (shouldn't happen — CREATE IF NOT EXISTS ran above).
+		return false;
+	}
+}
+
+// ---- Neon (Postgres) ----
 
 async function initNeonSchema(env: Env): Promise<void> {
 	for (const stmt of NEON_SCHEMA_STATEMENTS) {
 		await env.DB.prepare(stmt).run();
 	}
-	// Postgres supports IF NOT EXISTS on ADD COLUMN, but keep try/catch to be safe.
-	for (const stmt of NEON_MIGRATIONS) {
-		try {
-			await env.DB.prepare(stmt).run();
-		} catch {
-			// Column already exists — safe to ignore
-		}
+	// Postgres supports IF NOT EXISTS on ADD COLUMN.
+	for (const mig of COLUMN_MIGRATIONS) {
+		await env.DB.prepare(mig.neon).run();
 	}
 }
