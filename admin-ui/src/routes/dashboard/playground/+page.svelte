@@ -340,7 +340,7 @@
 
 			<div class="chat-scroll" bind:this={messagesEl} id="chatScroll">
 				{#if messages.length === 0}
-					<div class="empty" id="chatEmpty" style="padding:64px 24px;margin:auto">
+					<div class="empty" id="chatEmpty">
 						<div class="ic">
 							<MessageSquare style="width:22px;height:22px" stroke-width={1.5} />
 						</div>

@@ -119,6 +119,10 @@ h1,h2,h3,h4{text-wrap:balance;margin:0}
   z-index:50;width:var(--sb-w);flex-shrink:0;
   background:var(--surface);border-right:1px solid var(--b-sub);
   display:flex;flex-direction:column;
+  /* Pin the sidebar to the viewport so the collapse/logout footer always
+     stays at the bottom-left, even when the page content is taller than the
+     viewport (otherwise the footer would ride to the end of the scroll). */
+  position:sticky;top:0;height:100dvh;align-self:flex-start;
   transition:width var(--dur-2) var(--ease),transform var(--dur-2) var(--ease);
 }
 /* mobile: overlay drawer */
@@ -458,7 +462,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .chart-tip .r .v-t{color:var(--success)}
 
 /* ── Route tree ─────────────────────────────────────────────────────── */
-.tree-row{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;
+.tree-row{display:flex;align-items:center;gap:10px;padding:11px 16px;width:100%;cursor:pointer;
   transition:background var(--dur)}
 .tree-row:hover{background:var(--surface-3)}
 .tree-row .chev{transition:transform var(--dur-2) var(--ease);color:var(--muted);flex-shrink:0}
@@ -507,6 +511,13 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
   font-family:var(--font-mono);font-size:12px;color:var(--muted);transition:background var(--dur),color var(--dur)}
 .model-item:hover{background:var(--surface-3);color:var(--fg-2)}
 .model-item.sel{color:var(--cta)}
+
+/* Empty-state prompt inside the chat scroll: centered on desktop, but pushed
+   down near the bottom bar (input) on mobile so it doesn't float mid-screen. */
+#chatEmpty{margin:auto;padding:64px 24px}
+@media(max-width:819px){
+  #chatEmpty{margin-top:auto;margin-bottom:20px;padding:36px 24px 12px}
+}
 
 /* ── Utility ────────────────────────────────────────────────────────── */
 .grid{display:grid;gap:16px}

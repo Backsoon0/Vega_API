@@ -140,6 +140,15 @@ async function buildDirectRequest(
 			const cfg = provider.config;
 			const loc = cfg.location || 'global';
 			baseUrl = `https://aiplatform.googleapis.com/v1/projects/${cfg.projectId}/locations/${loc}/endpoints/openapi`;
+			// The Vertex OpenAI-compat endpoint requires the model in
+			// `<publisher>/<model>` form (e.g. `google/gemini-3-flash-preview`).
+			// A bare model id (as returned by the live model list) yields
+			// HTTP 400 "Malformed publisher model ... expected '<publisher>/<model>'".
+			// Mirror the /v1 + /v1beta direct paths: prepend the `google/` publisher
+			// prefix when it isn't already present.
+			modelId = inModelId.startsWith('google/') || inModelId.startsWith('publishers/')
+				? inModelId
+				: 'google/' + inModelId;
 			headers['x-goog-user-project'] = cfg.projectId;
 			if (isVertexApiKeyMode(cfg)) {
 				headers['x-goog-api-key'] = cfg.apiKey;

@@ -364,8 +364,8 @@
 								<ChevronRight class="chev" stroke-width={2} />
 							{/if}
 							<span class="mono" style="font-weight:600;color:var(--fg)">{model.id}</span>
-							<span class="chip {MODE_TAG[model.routingMode]}" style="margin-left:8px">{MODE_LABELS[model.routingMode]}</span>
-							<span class="tag tag-muted" style="margin-left:auto">{stats.total} upstream{stats.total === 1 ? "" : "s"}</span>
+							<span class="chip {MODE_TAG[model.routingMode]}" style="margin-left:auto">{MODE_LABELS[model.routingMode]}</span>
+							<span class="tag tag-muted">{stats.total} upstream{stats.total === 1 ? "" : "s"}</span>
 						</button>
 						{#if modelExpanded}
 							<div class="tree-depth">
