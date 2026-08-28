@@ -71,7 +71,7 @@
   const pal = $derived(chartPalette());
   const axes = $derived(chartAxes(pal));
   const series = report?.series || [];
-  const hasChart = $derived(series.length > 1);
+  const hasChart = $derived(series.length > 0);
 
   const trendOption = $derived({
     ...axes,
@@ -275,7 +275,12 @@
         <span class="chip chip-cta">{rangeDays}d</span>
       </div>
       <div style="padding:18px 20px 14px">
-        {#if !hasChart}
+        {#if !report}
+          <div class="empty" style="padding:40px 0">
+            <p style="margin:0 0 4px">用量报表接口无响应</p>
+            <p style="font-size:12px;color:var(--muted);margin:0">请确认已部署包含 /admin/usage/report 的最新版本</p>
+          </div>
+        {:else if !hasChart}
           <div class="empty" style="padding:40px 0">暂无用法数据</div>
         {:else}
           <EChart option={trendOption} height={chartHeight(rangeDays)} />

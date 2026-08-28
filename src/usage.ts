@@ -359,19 +359,25 @@ export async function getUsageReport(env: Env, days: number): Promise<{
 	const byKey: Array<{ keyName: string; calls: number; tokens: number }> = [];
 
 	try {
-		// Daily series — reuse the date-range query shape.
+		// Daily series — reuse the date-range query shape, then zero-fill every day
+		// in the range so the trend line is continuous (charts need full timeline).
 		const dailyRows = await env.DB
 			.prepare(
 				'SELECT date, SUM(calls) as calls, SUM(prompt_tokens) as pt, SUM(completion_tokens) as ct FROM usage_daily WHERE date >= ? GROUP BY date ORDER BY date',
 			)
 			.bind(from)
 			.all<{ date: string; calls: number; pt: number; ct: number }>();
+		const byDate = new Map<string, { calls: number; tokens: number }>();
 		for (const r of dailyRows.results || []) {
-			series.push({
-				date: r.date,
+			byDate.set(r.date, {
 				calls: Number(r.calls) || 0,
 				tokens: (Number(r.pt) || 0) + (Number(r.ct) || 0),
 			});
+		}
+		for (let i = 0; i < n; i++) {
+			const day = new Date(Date.now() - (n - 1 - i) * 86400000).toISOString().slice(0, 10);
+			const v = byDate.get(day);
+			series.push({ date: day, calls: v?.calls ?? 0, tokens: v?.tokens ?? 0 });
 		}
 	} catch (err) {
 		console.error('Usage report series error:', (err as Error).message);
