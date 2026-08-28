@@ -1,6 +1,6 @@
 # Vega API
 
-基于 Hono + TypeScript 的**多接口 AI API 网关**，使用 Vercel AI SDK 统一后端，同时提供 OpenAI (`/v1/*`)、Google Gemini (`/v1beta/*`)、Anthropic Messages (`/anthropic/*`) 三种原生 API 接口。同一套应用既可部署在 **Cloudflare Workers**（数据库 **D1**），也可部署在 **Vercel**（数据库 **Neon PostgreSQL**），通过环境变量自动切换。管理面板使用 SvelteKit + Tailwind CSS v4 构建。
+基于 Hono + TypeScript 的**多接口 AI API 网关**，以 Vercel AI SDK 为核心（部分流量走上游直连以降低 CPU），同时提供 OpenAI (`/v1/*`)、Google Gemini (`/v1beta/*`)、Anthropic Messages (`/anthropic/*`) 三种原生 API 接口。同一套应用既可部署在 **Cloudflare Workers**（数据库 **D1**），也可部署在 **Vercel**（数据库 **Neon PostgreSQL**），通过环境变量自动切换。管理面板使用 SvelteKit + Tailwind CSS v4 构建。
 
 ## 目录
 
@@ -33,15 +33,17 @@
 
 ## 特性
 
-- **三接口并行** — 同一 Worker 同时提供 OpenAI、Gemini、Anthropic 三种标准 API
-- **AI SDK 驱动** — 基于 Vercel AI SDK v5 (`streamText`/`generateText`) 统一后端调用，自动在各 provider 原生格式间转换
+- **三接口并行** — 同一后端应用同时提供 OpenAI、Gemini、Anthropic 三种标准 API（Cloudflare / Vercel 双平台一键部署）
+- **AI SDK + 直连混合驱动** — 基于 Vercel AI SDK v7 (`streamText`/`generateText`) 处理 Anthropic、Google/Vertex 工具回放与模型调试；OpenAI 兼容及 Google 无工具调用走上游直连（SSE 透传），兼顾正确性与低 CPU 消耗
 - **全 Provider 互通** — 任一 provider 均可通过任一接口访问（如 OpenAI-format 请求路由到 Anthropic，Gemini-format 请求路由到 OpenAI）
 - **4 种 Provider** — 支持 OpenAI、Google AI Studio、Vertex AI (JWT/API Key)、Anthropic
 - **多密钥管理** — 支持创建多个 API 密钥，每个密钥可独立命名和追踪调用来源
-- **故障转移模式** — 可选开启，当 API 调用失败时自动尝试下一个可用 provider 的相同模型
+- **故障转移 + 熔断器** — 可选开启：API 调用失败时自动尝试下一个可用 provider；连续失败触发熔断（阈值/冷却可配置），自动恢复探活
 - **缓存追踪** — 自动记录上游 API 的缓存命中/未命中 token 数，在调用记录中展示
-- **SvelteKit 管理面板** — 侧边栏 4 页面（概览 / 调用记录 / API 设置 / 设置），Code Dark 深色主题，可折叠侧边栏，响应式设计
-- **调用记录增强** — D1 持久化存储，可配置显示栏位，单击记录查看完整详情，追踪密钥来源和缓存信息
+- **SvelteKit 管理面板** — 侧边栏 6 页面（概览 / 模型调试 / 路由拓扑 / 调用记录 / API 设置 / 设置），Code Dark 深色主题，可折叠侧边栏，响应式设计
+- **模型调试 Playground** — 面板内置对话调试页，支持 Markdown + KaTeX 渲染、工具调用、流式输出
+- **路由拓扑统计** — 面板内可视化各 API 接口的调用量、成功率、耗时分布，故障转移状态一目了然
+- **调用记录增强** — 数据库持久化存储（D1/Neon），可配置显示栏位，单击记录查看完整详情，追踪密钥来源和缓存信息
 - **安全设计** — API Key AES-GCM 加密存储、SHA-256 哈希快速匹配、登录限流（5 次失败 → 15 分钟封禁）、多种认证方式
 - **流式支持** — 完整支持 SSE 流式响应（OpenAI/Gemini/Anthropic 三种 SSE 格式）
 - **思考模式控制** — 支持 `thinking: { type: "disabled" }` 禁用推理（Anthropic/Google 通过 AI SDK 原生支持，DeepSeek 通过参数透传支持）
@@ -54,12 +56,12 @@
 | 层 | 技术 |
 |----|------|
 | 框架 | Hono (TypeScript) |
-| AI 后端 | Vercel AI SDK v5 (`ai` + `@ai-sdk/openai` + `@ai-sdk/google` + `@ai-sdk/anthropic`) |
+| AI 后端 | Vercel AI SDK v7 (`ai` + `@ai-sdk/google` + `@ai-sdk/anthropic`) + 上游兼容直连（SSE 透传） |
 | 数据库 | Cloudflare D1 / Vercel Neon (PostgreSQL) |
-| 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons (Code Dark 主题) |
+| 前端 | SvelteKit + Tailwind CSS v4 + Lucide Icons (Code Dark 主题) + marked/katex |
 | 加密 | Web Crypto API (AES-256-GCM、SHA-256) |
 | 测试 | Vitest + @cloudflare/vitest-pool-workers |
-| 部署 | Wrangler + Workers Static Assets + GitHub Actions |
+| 部署 | Cloudflare: Wrangler + Workers Static Assets + GitHub Actions；Vercel: Node Serverless (`api/index.ts`) + Neon |
 
 ## 架构
 
@@ -68,7 +70,7 @@
       │
       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│              Cloudflare Worker (Hono + AI SDK)                │
+│       Vega API 网关 (Hono) — Cloudflare Worker / Vercel       │
 │                                                               │
 │  SvelteKit SPA → /                                           │
 │  OpenAI 兼容    → /v1/chat/completions, /v1/models           │
@@ -77,14 +79,12 @@
 │  管理 API       → /admin/*                                    │
 │                                                               │
 │  ┌──────────────────────────────────────────────────────┐    │
-│  │            AI SDK Provider 工厂 (ai-providers.ts)     │    │
-│  │                                                       │    │
-│  │  OpenAI ──── @ai-sdk/openai  ─── OpenAI API           │    │
-│  │  AI Studio   @ai-sdk/google   ─── Gemini API          │    │
-│  │  Vertex AI   @ai-sdk/google   ─── Vertex AI (JWT)     │    │
-│  │  Anthropic   @ai-sdk/anthropic── Anthropic Messages    │    │
-│  │                                                       │    │
-│  │  streamText() / generateText() → 自动格式转换          │    │
+│  │      上游直连 (SSE 透传) — openai / google 无工具     │    │
+│  │  AI SDK Provider 工厂 (ai-providers.ts)              │    │
+│  │    Anthropic ─ @ai-sdk/anthropic                     │    │
+│  │    Google    ─ @ai-sdk/google (工具回放 / 模型调试)   │    │
+│  │    Vertex    ─ @ai-sdk/google (JWT/Key + baseURL 回退)│    │
+│  │    streamText() / generateText() → 自动格式转换       │    │
 │  └──────────────────────────────────────────────────────┘    │
 │                                                               │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐     │
@@ -94,7 +94,7 @@
 └──────────────────────────────────────────────────────────────┘
 ```
 
-所有 provider 通过 AI SDK 统一调用，格式转换由 AI SDK 自动处理。
+**混合路由**：`openai` 类型与 Google/Vertex 无工具调用走**上游兼容直连**（直接转发上游 OpenAI 兼容端点的 SSE，CPU 最低）；Anthropic、Google/Vertex **工具回放**（`VEGA_GOOGLE_TOOL_MODE=ai-sdk`，保证 Gemini 3 `thought_signature` 正确）与面板**模型调试**走 AI SDK 的 `streamText`/`generateText`，格式转换由 AI SDK 自动处理（详见下方 `VEGA_GOOGLE_TOOL_MODE`）。
 
 > **双平台可移植**：上面的 Worker 与 `src/app.ts` 是同一份 Hono 应用。Cloudflare 入口为 `src/index.ts`（数据库走 D1 绑定 `DB`）；Vercel 入口为 `api/index.ts`（数据库走 `@neondatabase/serverless` 包装的 Neon，SQL 自动从 SQLite 译为 PostgreSQL）。管理面板「设置 → 部署与数据库」会显示当前部署平台与数据库引擎。
 
@@ -370,10 +370,12 @@ response = client.messages.create(
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| **概览** | `/dashboard` | 统计卡片（总调用、Token、活跃提供商）+ 提供商状态列表 |
+| **概览** | `/dashboard` | 统计卡片（总调用、Token、活跃提供商）+ 提供商状态列表 + 请求/延迟图表 |
+| **模型调试** | `/dashboard/playground` | 内置对话调试（Markdown + KaTeX 渲染、工具调用、流式/非流式） |
+| **路由拓扑** | `/dashboard/routes` | 各 API 接口的调用量/成功率/耗时统计图，故障转移状态 |
 | **调用记录** | `/dashboard/logs` | 调用记录表格，可配置栏位，支持搜索和筛选，单击查看详情（含缓存命中、密钥追踪），一键清空记录 |
 | **API 设置** | `/dashboard/api-settings` | API 调用地址一键复制 + 多密钥管理（创建/命名/重命名/删除）+ 提供商 CRUD |
-| **设置** | `/dashboard/settings` | 故障转移开关 + 熔断器配置 + 调用记录保留上限 + 修改管理密码 + 调用记录栏位配置 |
+| **设置** | `/dashboard/settings` | 故障转移开关 + 熔断器配置 + 调用记录保留上限 + 栏位配置 + 修改管理密码 + 部署与数据库信息 |
 
 ### 调用记录新增功能
 
@@ -402,7 +404,7 @@ response = client.messages.create(
 
 - [Cloudflare 账号](https://dash.cloudflare.com/)（含 D1 权限）
 - [Vercel 账号](https://vercel.com/)（部署到 Vercel 时需要）
-- [Node.js](https://nodejs.org/) 18+
+- [Node.js](https://nodejs.org/) 20+（Wrangler 4 / Vercel Node runtime 均要求 20+）
 
 ### 部署到 Cloudflare Workers（D1）
 
@@ -426,7 +428,7 @@ Workflow 文件：`.github/workflows/deploy.yml`
 
 ```bash
 git clone <repo-url> && cd vega-api
-pnpm install
+pnpm install   # 或 npm install（仓库为 npm + pnpm 双 workspace）
 ```
 
 ##### 2. 创建 D1 数据库
@@ -475,7 +477,7 @@ npm run deploy
 
 参考 [Waline 的 Vercel 部署](https://waline.js.org/guide/deploy/vercel.html) 思路：在 Vercel 上运行单个 Node Serverless 函数，数据库使用 Vercel 集成的 **Neon**。
 
-1. **导入项目**：把仓库推送到 GitHub，在 Vercel → Add New → Project 导入。**请把 Framework Preset 设为 *Other***（Project → Settings → General → Framework Preset → Other）。不设为 Other 时，Vercel 会自动识别为 SvelteKit，把 `admin-ui/build` 当作服务端输出去找 `server/index` 入口，导致 `No entrypoint found in output directory` 报错。设为 Other 后，Vercel 会把 `public/` 作为静态资源、`api/index.ts` 作为函数，`vercel.json` 自动完成构建与路由。
+1. **导入项目**：把仓库推送到 GitHub，在 Vercel → Add New → Project 导入。仓库根目录的 `vercel.json` 已内置 `"framework": null`，会**强制使用 *Other* 预设**（Vercel 不会把它误认为 SvelteKit 项目），一般无需手动设置；若导入时仍被识别成 SvelteKit（`No entrypoint found in output directory`），在 *Project → Settings → General → Framework Preset* 手动改为 *Other* 即可。选 Other 后，Vercel 会把 `public/` 作为静态资源、`api/index.ts` 作为函数，`vercel.json` 自动完成构建与路由。
 2. **配置环境变量**：在 *Vercel → Project → Settings → Environment Variables* 添加（命名参考 Waline 数据库规范）：
    - 引擎选择：`DATABASE=postgres`（`neon`/`pg` 亦可）。
    - 连接串（三选一）：
@@ -486,9 +488,9 @@ npm run deploy
    - 可选：`OPENAI_API_KEY`、`VEGA_GOOGLE_TOOL_MODE`、`DEPLOYMENT_PLATFORM`。
 3. **Deploy**。`vercel.json` 会：
    - 用 `pnpm --filter vega-api-admin run build` 构建管理面板（pnpm 能正确解析 workspace 的 `vite`；仓库里给 Cloudflare 用的 `npm` 版 `build:ui` 脚本保持不变），并把 `admin-ui/build` 拷到 Vercel 的 `public/` 目录作为静态资源输出；
-   - 把 `api/index.ts` 部署为单个 **Node** Serverless 函数（Vercel 自动识别 `@vercel/node` 运行时，无需在 `vercel.json` 里手动固定 `functions.runtime`）；
+   - 将 `api/index.ts` 部署为单个 **Node** Serverless 函数（Vercel 自动识别 `@vercel/node` 运行时，无需在 `vercel.json` 里手动固定 `functions.runtime`）；
    - 把 API 路径（`/v1/*`、`/v1beta/*`、`/anthropic/*`、`/admin/*`、`/health`）重写到该函数，其余请求回退到 `index.html`（SPA）。
-   - 若需更长函数时长以支持长流式响应，可在 *Vercel → Project → Settings → Functions* 里调大 `maxDuration`。
+   - **函数时长已内置**：`vercel.json` 的 `functions."api/index.ts".maxDuration` 设为 **60 秒**（Hobby 套餐上限，任意套餐均合法），长流式 SSE 响应不会被默认 10s 超时掐断；Pro/Enterprise 如需更长可在 `vercel.json` 中调大（Pro 默认支持 300s+，Fluid compute 最高 30 分钟，超出套餐上限会导致构建失败）。
 
 部署后：
 - 管理面板：`https://<你的域名>/`，首次访问设置管理员密码。
@@ -505,7 +507,7 @@ npm run deploy
 | **API Key 存储** | AES-256-GCM 加密，密钥存储于 Worker Secret |
 | **密钥查找** | SHA-256 哈希快速匹配，避免全量解密 |
 | **管理面板认证** | SHA-256 密码哈希 → Bearer token |
-| **暴力破解防护** | D1 内置限流：5 次失败 → 15 分钟封禁（5 分钟滑动窗口） |
+| **暴力破解防护** | 数据库限流（D1/Neon 通用）：5 次失败 → 15 分钟封禁（5 分钟滑动窗口） |
 | **客户端访问控制** | 支持 Bearer / x-api-key / x-goog-api-key / ?key= 多认证方式 |
 | **密钥保护** | 编辑时不回填敏感字段 |
 | **传输安全** | Cloudflare 自动 TLS |
@@ -527,85 +529,100 @@ vega-api-db
 ## 开发
 
 ```bash
-pnpm install              # 安装所有依赖（pnpm workspace）
-npm run dev              # Worker 开发服务器
-npm run dev:ui           # 前端开发服务器
-npm test                 # 运行测试
-npm run build:ui         # 构建前端
-npm run db:migrate:local # 本地数据库迁移
-npm run deploy           # 构建 + 部署到 Cloudflare
+npm install 或 pnpm install   # 安装所有依赖（npm 与 pnpm 双 workspace，任选其一）
+npm run dev                  # Worker 开发服务器
+npm run dev:ui               # 前端开发服务器
+npm test                     # 运行测试
+npm run build:ui             # 构建前端
+npm run db:migrate:local     # 本地数据库迁移
+npm run deploy               # 构建 + 部署到 Cloudflare
 ```
 
 ### 项目结构
 
 ```
-├── .github/workflows/         # GitHub Actions 自动部署
+├── .github/workflows/         # GitHub Actions 自动部署 (Cloudflare)
 │   └── deploy.yml
-├── package.json              # npm workspaces root
-├── wrangler.jsonc            # Workers 配置 (D1 + Assets + run_worker_first)
-├── vercel.json               # Vercel 配置 (build + 单函数 + SPA 重写)
-├── migrations/               # D1 数据库迁移
-│   ├── 0001_init.sql         # 核心表
+├── package.json              # root (npm workspaces: ["admin-ui"])
+├── pnpm-workspace.yaml       # pnpm workspace（与 npm workspaces 并存）
+├── wrangler.jsonc            # Cloudflare 配置 (D1 + Assets + run_worker_first)
+├── vercel.json               # Vercel 配置 (framework:null + maxDuration + 单函数 + SPA 重写)
+├── .env.example              # 环境变量参考 (Cloudflare + Vercel/Neon)
+├── migrations/               # D1 数据库迁移 (0001–0008)
+│   ├── 0001_init.sql         # 核心表 (config / providers / usage_daily)
 │   ├── 0002_call_logs.sql    # 调用记录表
+│   ├── 0003_duration.sql     # + duration_ms
+│   ├── 0004_rate_limits_banned_until.sql
+│   ├── 0005_call_logs_enhance.sql  # + request_id / is_stream / extra
+│   ├── 0006_provider_types.sql     # providers.type 增加 'anthropic'
 │   ├── 0007_api_keys.sql     # 多密钥表
-│   └── 0008_call_logs_enhance.sql # 缓存追踪 + 密钥名
+│   └── 0008_call_logs_enhance.sql  # 缓存追踪 + 密钥名
 ├── api/                      # Vercel 入口 + Neon 适配器
-│   ├── index.ts              # Vercel 函数 (构造 env → app.fetch)
+│   ├── index.ts              # Vercel 函数 (process.env → env → app.fetch, 双桥接)
 │   └── neon.ts               # D1 兼容客户端 (SQL SQLite→Postgres 翻译)
-├── src/                      # Worker 源码 (TypeScript)
+├── src/                       # 共享后端源码 (TypeScript, 双平台)
 │   ├── index.ts              # Cloudflare 入口: prepareRuntime + app.fetch
-│   ├── app.ts                # 共享 Hono 应用 (双平台复用)
-│   ├── runtime.ts            # 平台/数据库自动检测
+│   ├── app.ts                # 共享 Hono 应用 (双平台复用, 路由挂载)
+│   ├── runtime.ts            # 平台/数据库自动检测 (env var)
 │   ├── request-util.ts       # 跨平台请求工具 (客户端 IP 等)
 │   ├── ai-providers.ts       # AI SDK Provider 工厂 + Vertex JWT 管理
-│   ├── router.ts             # 模型路由: 缓存, Provider 查找, 模型聚合
-│   ├── types.ts              # 共享类型定义 (DBClient / Env)
+│   ├── router.ts             # 模型路由: 缓存, Provider 查找, 模型聚合, 故障转移
+│   ├── types.ts              # 共享类型定义 (DBClient / Env / Provider)
 │   ├── db.ts                 # schema 初始化 (D1 SQLite / Neon Postgres 分支)
-│   ├── config.ts             # 配置 CRUD + 多密钥管理 + 故障转移
+│   ├── config.ts             # 配置 CRUD + 多密钥管理 + 故障转移/熔断/保留上限
 │   ├── crypto.ts             # AES-GCM + SHA-256 + 密钥哈希
 │   ├── rate-limit.ts         # 登录限流
 │   ├── usage.ts              # 用量追踪 + 调用记录 + 缓存提取
+│   ├── circuit-breaker.ts    # 熔断器 (内存态 + D1 配置)
+│   ├── google-tool-mode.ts   # VEGA_GOOGLE_TOOL_MODE 决策
+│   ├── upstream-errors.ts    # 上游错误归一化
 │   ├── middleware/
-│   │   └── auth.ts           # 认证中间件 (多密钥匹配 + 名称注入)
+│   │   └── auth.ts           # 客户端认证中间件 (多密钥匹配) + 管理端认证
 │   ├── routes/
 │   │   ├── admin/
-│   │   │   ├── auth.ts
-│   │   │   ├── providers.ts
-│   │   │   ├── client-key.ts  # 多密钥 CRUD + 迁移
-│   │   │   └── usage.ts
+│   │   │   ├── auth.ts       # 登录/setup/check/改密
+│   │   │   ├── providers.ts  # Provider CRUD
+│   │   │   ├── client-key.ts # 多密钥 CRUD + legacy 迁移
+│   │   │   ├── usage.ts      # 用量/调用记录/设置
+│   │   │   ├── playground.ts # 模型调试 (AI SDK)
+│   │   │   └── routes.ts     # 路由拓扑统计
 │   │   ├── v1/
-│   │   │   ├── models.ts
-│   │   │   └── chat.ts
+│   │   │   ├── models.ts     # OpenAI 模型列表
+│   │   │   └── chat.ts       # OpenAI 对话 (直连 + AI SDK 双路径)
 │   │   ├── v1beta/
 │   │   │   ├── models.ts
-│   │   │   └── chat.ts
+│   │   │   └── chat.ts       # Gemini 对话 (generateContent / stream)
 │   │   └── anthropic/
-│   │       └── messages.ts
-│   └── providers/
+│   │       └── messages.ts   # Anthropic Messages API (AI SDK)
+│   └── providers/            # (legacy) 仅供 fetchModelList()
 │       ├── vertex.ts
 │       ├── ai-studio.ts
 │       └── openai.ts
 ├── test/
-│   └── index.spec.js
-└── admin-ui/                 # SvelteKit 管理面板
+│   └── index.spec.js         # cloudflare:test 集成测试
+└── admin-ui/                 # SvelteKit 管理面板 (静态构建)
     ├── package.json
     └── src/
-        ├── app.css           # Code Dark 设计 Token
+        ├── app.css           # Code Dark 设计 Token (@theme)
         ├── lib/
         │   ├── api.ts        # /admin/* API 客户端
-        │   ├── Sidebar.svelte
+        │   ├── Sidebar.svelte / sidebar-state.ts
         │   ├── ApiKeyList.svelte
-        │   ├── CallLogTable.svelte
-        │   ├── LogDetailModal.svelte
+        │   ├── ProviderCard.svelte / ProviderForm.svelte
+        │   ├── CallLogTable.svelte / LogDetailModal.svelte
+        │   ├── route-topology.ts / route-stats.ts   # 路由拓扑图表
+        │   ├── Markdown.svelte / Spinner.svelte / Modal.svelte / Toast.svelte
         │   └── ...
         └── routes/
             ├── +layout.svelte
             ├── +page.svelte          # 登录
             └── dashboard/
                 ├── +page.svelte      # 概览
-                ├── logs/+page.svelte
-                ├── api-settings/+page.svelte
-                └── settings/+page.svelte
+                ├── playground/+page.svelte   # 模型调试
+                ├── routes/+page.svelte       # 路由拓扑
+                ├── logs/+page.svelte         # 调用记录
+                ├── api-settings/+page.svelte # API 设置
+                └── settings/+page.svelte     # 设置
 ```
 
 ## 设计系统 — Code Dark

@@ -14,11 +14,33 @@ npm run db:migrate   # Apply D1 migrations to remote database
 npm run db:migrate:local  # Apply D1 migrations to local database
 ```
 
-This project is a **pnpm workspace** (a `pnpm-lock.yaml` is committed). The root `package.json` manages the Worker (`wrangler`, `vitest`, `hono`) and `admin-ui/` workspace (SvelteKit). A single `pnpm install` at root installs everything (the root scripts invoke npm for the workspace build, but install must use `pnpm`).
+**Dual package-manager workspace.** The repo is simultaneously an npm and a pnpm
+workspace: root `package.json` (`workspaces: ["admin-ui"]`) + `package-lock.json`
+for npm, and `pnpm-workspace.yaml` + `pnpm-lock.yaml` for pnpm; both lockfiles are
+committed. A single `npm install` **or** `pnpm install` at root installs
+everything. Vercel builds with **pnpm** (`vercel.json` → `pnpm install
+--no-frozen-lockfile`); the Cloudflare GitHub Action and most local dev use
+**npm**. Keep both lockfiles consistent when changing dependencies.
 
 ## Architecture
 
-Vega API is a Cloudflare Worker (Hono + TypeScript) that provides three AI API interfaces backed by a unified provider layer built on the Vercel AI SDK (`ai@5` + `@ai-sdk/*@2`).
+Vega API is one **shared Hono application (`src/app.ts`)** that runs on **two
+platforms** with a D1-shaped database client (`env.DB`:
+
+`prepare().bind().all()/.first()/.run()`, see `src/types.ts`):
+
+| Platform | Runtime | Database | Entry point |
+|----------|---------|----------|-------------|
+| Cloudflare Workers | Worker (`wrangler`) | **D1** (`binding: DB`) | `src/index.ts` |
+| Vercel | Node Serverless (`@vercel/node`) | **Neon** (Postgres) | `api/index.ts` |
+
+`api/neon.ts` wraps `@neondatabase/serverless` in a D1-compatible client and
+translates SQLite/D1 SQL to Postgres (`?` → `$n`, `INSERT OR REPLACE` →
+`ON CONFLICT`, `julianday()` → `EXTRACT(EPOCH …)/86400`). Schema DDL is
+per-engine in `src/db.ts` (`D1_SCHEMA_STATEMENTS` vs `NEON_SCHEMA_STATEMENTS`);
+runtime queries are shared. Platform/database detection (`src/runtime.ts`) reads
+Waline-style env vars (`DATABASE`/`DATABASE_PROVIDER`, `PGURL`/`DATABASE_URL`/
+`POSTGRES_URL`, `DEPLOYMENT_PLATFORM`). Never branch `env.DB` code on platform.
 
 **Three API interfaces:**
 - `/v1/*` — OpenAI-compatible endpoints (chat completions, models)
@@ -26,134 +48,156 @@ Vega API is a Cloudflare Worker (Hono + TypeScript) that provides three AI API i
 - `/anthropic/*` — Native Anthropic Messages API (/v1/messages)
 
 **Supported provider types:**
-- `openai` — OpenAI (via `@ai-sdk/openai`)
-- `google_ai_studio` — Google AI Studio (via `@ai-sdk/google`)
-- `vertex_ai` — Google Vertex AI JWT/API Key (via `@ai-sdk/google` + custom auth)
+- `openai` — OpenAI / compatible (via **direct fetch passthrough**, NOT the AI SDK)
+- `google_ai_studio` — Google AI Studio (direct passthrough or AI SDK, see below)
+- `vertex_ai` — Google Vertex AI JWT/API Key (direct passthrough or AI SDK)
 - `anthropic` — Anthropic Messages API (via `@ai-sdk/anthropic`)
 
-The AI SDK serves as the unified backend: all three API formats are converted to/from the AI SDK's internal format via `streamText`/`generateText`. This avoids per-provider pass-through and enables format conversion (e.g., OpenAI-format requests routed to Anthropic).
+### Chat routing (current — this has drifted from the old "AI SDK only" design)
+
+| Provider / case | Path |
+|-----------------|------|
+| `openai` | **Direct fetch + SSE passthrough** (`handleOpenAIDirectStream`) — raw upstream proxy, no AI SDK. Chosen for low CPU on the Cloudflare free tier. |
+| `google_ai_studio` / `vertex_ai`, no tool-call history | **Direct passthrough** via Google's OpenAI-compat endpoint (`generativelanguage.googleapis.com/v1beta/openai`) or Vertex OpenAI-compat endpoint. |
+| `google_ai_studio` / `vertex_ai`, replaying tool calls | **AI SDK native path** (`@ai-sdk/google`) so Gemini 3 `thought_signature` replay works — unless `VEGA_GOOGLE_TOOL_MODE=direct`. |
+| `anthropic` | **AI SDK** `streamText`/`generateText` (`@ai-sdk/anthropic`). |
+| Admin playground | AI SDK (`src/routes/admin/playground.ts`). |
+
+The `VEGA_GOOGLE_TOOL_MODE` env var (see `src/google-tool-mode.ts`) switches the
+Google tool-replay path: `"ai-sdk"` (default; correct for Gemini 3 + tools,
+higher CPU) or `"direct"` (lighter, Gemini 2.5 works, Gemini 3 rejected).
+
+**Legacy providers** (`src/providers/*.ts`) are used **only** for
+`fetchModelList()` in model aggregation — never route chat through them.
+
+Request flow (simplified):
 
 ```
-Request flow:
-  Client → Worker at /v1/chat/completions (OpenAI format)
-    → openaiToAISDKMessages() → AI SDK ModelMessage[]
-    → createModelFromProvider() → LanguageModel
-    → streamText() / generateText()
-    → convert fullStream → OpenAI SSE format
-    → Response to Client
+Client → /v1/chat/completions (OpenAI format)
+  → router.findProviderForModel() → ProviderMatch
+  → openai type / google no-tools → direct passthrough (OpenAI-compat upstream)
+  → anthropic → createModelFromProvider() → LanguageModel → streamText()/generateText()
+  → convert fullStream → OpenAI SSE format → Client
 
-  Client → Worker at /v1beta/models/:model:generateContent (Gemini format)
-    → geminiToAISDK() → AI SDK ModelMessage[]
-    → streamText() / generateText()
-    → convert fullStream → Gemini JSON format
-    → Response to Client
+Client → /v1beta/models/:model:generateContent (Gemini format)
+  → same dispatch → Gemini JSON format → Client
 
-  Client → Worker at /anthropic/v1/messages (Anthropic format)
-    → anthropicToAISDK() → AI SDK ModelMessage[]
-    → streamText() / generateText()
-    → convert fullStream → Anthropic SSE format
-    → Response to Client
+Client → /anthropic/v1/messages (Anthropic format)
+  → anthropicToAISDK() → streamText()/generateText() → Anthropic SSE → Client
 ```
 
-**Entry point:** [src/index.ts](src/index.ts) — Hono app with all routes, exported as `export default { async fetch(request, env, ctx) {} }`.
+**Entry points:** Cloudflare `src/index.ts` (default export `{ fetch }`);
+Vercel `api/index.ts` (web `Request`/`Response` or Node `(req, res)` handling).
+Both call `prepareRuntime(env)` (idempotent one-time schema init + circuit-breaker
+config load) then `app.fetch(request, env, ctx)`.
 
-**Worker source files:**
+### Backend source files
 
 | File | Role |
 |------|------|
-| [src/index.ts](src/index.ts) | Hono entry: route dispatch, client/admin auth, all API routes |
-| [src/types.ts](src/types.ts) | Shared TypeScript interfaces (Provider, Model, Env) |
-| [src/db.ts](src/db.ts) | D1 schema initialization (run once per cold start) |
-| [src/config.ts](src/config.ts) | D1-backed config CRUD: providers, admin password, client key (AES-GCM) |
-| [src/crypto.ts](src/crypto.ts) | AES-256-GCM + SHA-256 (Web Crypto API) |
-| [src/rate-limit.ts](src/rate-limit.ts) | D1-backed login rate limiter |
-| [src/usage.ts](src/usage.ts) | D1 usage tracking: daily aggregates + call_logs (10000-row retention) |
-| [src/ai-providers.ts](src/ai-providers.ts) | **AI SDK Provider factory**: creates LanguageModel from Provider config. Handles Vertex JWT token management |
-| [src/router.ts](src/router.ts) | Model routing: provider cache, model aggregation, model→provider matching |
-| [src/providers/vertex.ts](src/providers/vertex.ts) | (Legacy) Vertex AI JWT + API Key pass-through — kept for model list fetching |
-| [src/providers/ai-studio.ts](src/providers/ai-studio.ts) | (Legacy) AI Studio pass-through — kept for model list fetching |
-| [src/providers/openai.ts](src/providers/openai.ts) | (Legacy) OpenAI pass-through — kept for model list fetching |
-| [src/routes/v1/chat.ts](src/routes/v1/chat.ts) | **OpenAI-format chat**: AI SDK streamText/generateText, SSE conversion |
+| [src/app.ts](src/app.ts) | **Shared Hono app** used by both runtimes: middleware, route mounting, SPA fallback |
+| [src/index.ts](src/index.ts) | Cloudflare Worker entry: `prepareRuntime` + `app.fetch` |
+| [api/index.ts](api/index.ts) | **Vercel entry**: builds `env` from `process.env` (Neon), bridges web/Node requests, `waitUntil` shim |
+| [api/neon.ts](api/neon.ts) | **Neon adapter**: D1-compatible client + SQLite→Postgres SQL translation |
+| [src/types.ts](src/types.ts) | Shared interfaces: Provider, Model, Env, DBClient/DBPrepared/DBResult |
+| [src/runtime.ts](src/runtime.ts) | Platform/database detection for both runtimes (env-var only) |
+| [src/db.ts](src/db.ts) | Schema init: **D1 SQLite and Neon Postgres branches** (IF NOT EXISTS) |
+| [src/config.ts](src/config.ts) | Config CRUD: `config_version`, `admin_password`, client key, failover, circuit breaker, log retention (AES-GCM for secrets) |
+| [src/crypto.ts](src/crypto.ts) | AES-256-GCM + SHA-256 + API-key hashing (Web Crypto API) |
+| [src/request-util.ts](src/request-util.ts) | `getClientIp`: CF-Connecting-IP (Cloudflare) / x-forwarded-for, x-real-ip (Vercel) |
+| [src/rate-limit.ts](src/rate-limit.ts) | DB-backed login rate limiter (5 failures / 5 min → 15-min ban) |
+| [src/usage.ts](src/usage.ts) | Usage tracking: daily aggregates + call_logs (retention configurable, default 10000) |
+| [src/circuit-breaker.ts](src/circuit-breaker.ts) | Provider circuit breaker (threshold/cooldown from config, in-memory state) |
+| [src/upstream-errors.ts](src/upstream-errors.ts) | Upstream error normalization (JSON-safe bodies) |
+| [src/google-tool-mode.ts](src/google-tool-mode.ts) | `VEGA_GOOGLE_TOOL_MODE` decision for Google tool replay |
+| [src/ai-providers.ts](src/ai-providers.ts) | AI SDK provider factory (`google_ai_studio` / `vertex_ai` / `anthropic`). Vertex JWT token management + base-URL fallback |
+| [src/router.ts](src/router.ts) | Model routing: provider cache, model aggregation, model→provider matching, failover |
+| [src/providers/*.ts](src/providers/) | (Legacy) pass-through providers — kept for `fetchModelList()` |
+| [src/middleware/auth.ts](src/middleware/auth.ts) | Client auth middleware (multi-key match, key-name injection) + admin auth |
+| [src/routes/v1/chat.ts](src/routes/v1/chat.ts) | OpenAI-format chat: direct passthrough **and** AI SDK paths |
 | [src/routes/v1/models.ts](src/routes/v1/models.ts) | OpenAI-format model listing |
-| [src/routes/v1beta/chat.ts](src/routes/v1beta/chat.ts) | **Gemini-native chat**: :generateContent/:streamGenerateContent |
+| [src/routes/v1beta/chat.ts](src/routes/v1beta/chat.ts) | Gemini-native chat: :generateContent/:streamGenerateContent |
 | [src/routes/v1beta/models.ts](src/routes/v1beta/models.ts) | Gemini-native model listing |
-| [src/routes/anthropic/messages.ts](src/routes/anthropic/messages.ts) | **Anthropic-native Messages API**: SSE streaming |
+| [src/routes/anthropic/messages.ts](src/routes/anthropic/messages.ts) | Anthropic-native Messages API (SSE streaming) |
 | [src/routes/admin/auth.ts](src/routes/admin/auth.ts) | Admin auth (setup, login, check, change-password) |
 | [src/routes/admin/providers.ts](src/routes/admin/providers.ts) | Provider CRUD (supports all 4 types) |
-| [src/routes/admin/client-key.ts](src/routes/admin/client-key.ts) | Client API key management |
-| [src/routes/admin/usage.ts](src/routes/admin/usage.ts) | Usage stats and call logs |
-
-### AI SDK Version Compatibility
-
-| AI SDK Core | Provider Packages | LanguageModel Interface |
-|-------------|-------------------|------------------------|
-| `ai@5.x` | `@ai-sdk/*@2.x` | LanguageModelV2 (`specificationVersion: "v2"`) |
-| `ai@6.x` (beta) | `@ai-sdk/*@3.x` | LanguageModelV3 (`specificationVersion: "v3"`) |
-
-> **Current**: ai@5.0.202 + provider@2.x. Provider v3 packages return LanguageModelV3 which is NOT assignable to ai v5's LanguageModel type.
+| [src/routes/admin/client-key.ts](src/routes/admin/client-key.ts) | Client API key management (multi-key + legacy migration) |
+| [src/routes/admin/usage.ts](src/routes/admin/usage.ts) | Usage stats, call logs, settings (failover/circuit-breaker/retention) |
+| [src/routes/admin/playground.ts](src/routes/admin/playground.ts) | Model playground (AI SDK streamText/generateText) |
+| [src/routes/admin/routes.ts](src/routes/admin/routes.ts) | Route-topology statistics (per-route usage/errors, chart data) |
 | [test/index.spec.js](test/index.spec.js) | Integration tests (`cloudflare:test` Vitest pool) |
 
-**Admin frontend (SvelteKit SPA) — Code Dark theme with sidebar navigation:**
+### AI SDK Version Lock
+
+> **Current**: `ai@7.x` + `@ai-sdk/google@4.x` + `@ai-sdk/anthropic@4.x`
+> (factory returns v3-generation `LanguageModel` instances). `@ai-sdk/openai` is
+> declared but currently unused (OpenAI goes through the direct passthrough).
+
+**Do not upgrade** `ai` or any `@ai-sdk/*` package independently — the pinned set
+is mutually compatible; mixing major generations breaks typing at build time.
+
+### Admin frontend (SvelteKit SPA) — Code Dark theme, 6 sidebar pages
 
 | File | Role |
 |------|------|
 | [admin-ui/src/app.css](admin-ui/src/app.css) | Design tokens (`@theme`), Google Fonts, keyframe animations, base styles |
 | [admin-ui/src/app.html](admin-ui/src/app.html) | HTML shell: SVG favicon, font preconnect, `theme-color` meta |
 | [admin-ui/src/lib/api.ts](admin-ui/src/lib/api.ts) | API client for `/admin/*` endpoints |
-| [admin-ui/src/lib/sidebar-state.ts](admin-ui/src/lib/sidebar-state.ts) | Svelte writable store for sidebar collapsed state (persisted to localStorage) |
-| [admin-ui/src/lib/Sidebar.svelte](admin-ui/src/lib/Sidebar.svelte) | Collapsible sidebar navigation (4 pages, mobile overlay drawer) |
-| [admin-ui/src/lib/CallLogTable.svelte](admin-ui/src/lib/CallLogTable.svelte) | Call log table with search/filter, desktop table + mobile card layout |
-| [admin-ui/src/lib/Modal.svelte](admin-ui/src/lib/Modal.svelte) | Generic modal with Svelte transition animations (fly + fade) |
-| [admin-ui/src/lib/Toast.svelte](admin-ui/src/lib/Toast.svelte) | Toast notifications (event-driven) |
+| [admin-ui/src/lib/sidebar-state.ts](admin-ui/src/lib/sidebar-state.ts) | Svelte writable store for sidebar collapsed state (localStorage) |
+| [admin-ui/src/lib/Sidebar.svelte](admin-ui/src/lib/Sidebar.svelte) | Collapsible sidebar navigation (6 pages, mobile overlay drawer) |
+| [admin-ui/src/lib/route-topology.ts](admin-ui/src/lib/route-topology.ts) / [route-stats.ts](admin-ui/src/lib/route-stats.ts) | Route-topology chart data + helpers |
+| [admin-ui/src/lib/CallLogTable.svelte](admin-ui/src/lib/CallLogTable.svelte) | Call log table with search/filter, desktop table + mobile cards |
+| [admin-ui/src/lib/LogDetailModal.svelte](admin-ui/src/lib/LogDetailModal.svelte) | Call-log detail modal (tokens, cache, errors, request id) |
 | [admin-ui/src/lib/ProviderCard.svelte](admin-ui/src/lib/ProviderCard.svelte) | Provider card: always-visible actions on mobile, hover-reveal on desktop |
-| [admin-ui/src/lib/ProviderForm.svelte](admin-ui/src/lib/ProviderForm.svelte) | Add/edit provider form. Vertex AI: auth mode toggle (service account + JSON import / API key) |
-| [admin-ui/src/lib/ClientKeySection.svelte](admin-ui/src/lib/ClientKeySection.svelte) | Client API key management (generate, custom, reveal, copy, delete) |
-| [admin-ui/src/routes/+layout.svelte](admin-ui/src/routes/+layout.svelte) | Auth guard + sidebar shell (desktop: fixed sidebar, mobile: overlay drawer) |
+| [admin-ui/src/lib/ProviderForm.svelte](admin-ui/src/lib/ProviderForm.svelte) | Add/edit provider form. Vertex AI: auth mode toggle (JWT/JSON import / API key) |
+| [admin-ui/src/lib/ApiKeyList.svelte](admin-ui/src/lib/ApiKeyList.svelte) | Client API key management (create, name, rename, delete, reveal) |
+| [admin-ui/src/lib/Markdown.svelte](admin-ui/src/lib/Markdown.svelte) | Markdown + KaTeX rendering (playground output) |
+| other lib components | `Alert.svelte`, `CustomSelect.svelte`, `Modal.svelte`, `Spinner.svelte`, `Toast.svelte`, `toast-store.ts`, `utils.ts` |
+| [admin-ui/src/routes/+layout.svelte](admin-ui/src/routes/+layout.svelte) | Auth guard + sidebar shell |
 | [admin-ui/src/routes/+page.svelte](admin-ui/src/routes/+page.svelte) | Login page (password show/hide toggle) |
-| [admin-ui/src/routes/dashboard/+page.svelte](admin-ui/src/routes/dashboard/+page.svelte) | Overview: stat cards + provider status |
-| [admin-ui/src/routes/dashboard/logs/+page.svelte](admin-ui/src/routes/dashboard/logs/+page.svelte) | Call records: D1-backed log table with search + provider filter |
-| [admin-ui/src/routes/dashboard/api-settings/+page.svelte](admin-ui/src/routes/dashboard/api-settings/+page.svelte) | API settings: provider CRUD + client API key |
-| [admin-ui/src/routes/dashboard/panel-settings/+page.svelte](admin-ui/src/routes/dashboard/panel-settings/+page.svelte) | Panel settings: change admin password |
+| [admin-ui/src/routes/dashboard/+page.svelte](admin-ui/src/routes/dashboard/+page.svelte) | Overview: stat cards + provider status + charts |
+| [admin-ui/src/routes/dashboard/playground/+page.svelte](admin-ui/src/routes/dashboard/playground/+page.svelte) | 模型调试: model playground |
+| [admin-ui/src/routes/dashboard/routes/+page.svelte](admin-ui/src/routes/dashboard/routes/+page.svelte) | 路由拓扑: per-route statistics + charts |
+| [admin-ui/src/routes/dashboard/logs/+page.svelte](admin-ui/src/routes/dashboard/logs/+page.svelte) | 调用记录: DB-backed log table + search + provider filter + clear |
+| [admin-ui/src/routes/dashboard/api-settings/+page.svelte](admin-ui/src/routes/dashboard/api-settings/+page.svelte) | API 设置: endpoint copy + provider CRUD + client API keys |
+| [admin-ui/src/routes/dashboard/settings/+page.svelte](admin-ui/src/routes/dashboard/settings/+page.svelte) | 设置: failover, circuit breaker, log retention, column prefs, password, 部署与数据库 |
 
 ## AI SDK Provider Layer
 
-The AI SDK Provider factory in [src/ai-providers.ts](src/ai-providers.ts) creates `LanguageModel` instances from D1 `Provider` records. This is the central abstraction for all three API interfaces.
+[src/ai-providers.ts](src/ai-providers.ts) creates AI SDK `LanguageModel`
+instances from DB `Provider` records (used for Anthropic, Google tool replay,
+and the playground):
 
 ```ts
-export function createModelFromProvider(provider: Provider, env: Env, modelId: string): LanguageModelV2
-// Returns an AI SDK LanguageModel for use with streamText() / generateText()
-// Handles all 4 provider types:
-//   - openai: createOpenAI({ apiKey, baseURL }).chat(modelId)
+export function createModelFromProvider(provider: Provider, env: Env, modelId: string): LanguageModel
 //   - google_ai_studio: createGoogleGenerativeAI({ apiKey })(modelId)
-//   - vertex_ai: createGoogleGenerativeAI({ baseURL, fetch: jwtInjector })(modelId)
-//   - anthropic: createAnthropic({ apiKey })(modelId)
+//   - vertex_ai: createGoogleGenerativeAI({ baseURL, fetch: jwtInjector }) — incl. Vertex base-URL fallback
+//   - anthropic:       createAnthropic({ apiKey })(modelId)
+//   - openai:          NOT handled here — direct passthrough in the route layer
 ```
 
-**Legacy providers** ([src/providers/*.ts](src/providers/)) are only used for `fetchModelList()` in model aggregation. Chat/completions go through the AI SDK factory.
+**Legacy providers** ([src/providers/*.ts](src/providers/)) are used only for
+`fetchModelList()` (model aggregation).
 
-## Provider Interface Contract (Legacy — model list only)
+## Data Model
 
-Legacy provider modules export model fetching (no longer used for chat proxy):
-
-```ts
-export async function fetchModelList(env: Env, config: Record<string, string>): Promise<Model[]>
-// Returns: Array<{ id, object: "model", created, owned_by }>
-```
-
-## D1 Data Model
-
-Database: `vega-api-db` (binding: `DB`)
+Cloudflare D1 (`vega-api-db`, binding `DB`) and Vercel Neon share the same
+table/column layout (Postgres uses `SERIAL` for auto-increment ids).
 
 | Table | Key fields | Purpose |
 |-------|-----------|---------|
-| `config` | `key TEXT PK, value TEXT` | admin_password hash, client_api_key (encrypted), config_version, rate limit entries |
-| `providers` | `id TEXT PK, type, name, enabled, config, models, weight` | AI provider configuration |
-| `usage_daily` | `date, provider_id, model (unique)` | Per-model daily aggregate usage (calls, prompt_tokens, completion_tokens) |
-| `call_logs` | `id AUTOINCREMENT, timestamp, ip, provider_id, model, ...` | Detailed request log (max 10000 rows, auto-cleanup) |
+| `config` | `key TEXT PK, value TEXT` | config_version, admin_password hash, client api key (encrypted), failover_enabled, circuit_breaker_threshold/cooldown_seconds, log_retention_limit, rate-limit entries |
+| `providers` | `id TEXT PK, type, name, enabled, config, models, weight` | AI provider configuration (4 types) |
+| `usage_daily` | `date, provider_id, model (unique), calls, prompt_tokens, completion_tokens` | Per-model daily aggregate usage |
+| `call_logs` | `id, timestamp, ip, provider_id, model, prompt/completion_tokens, duration_ms, success, request_id, is_stream, extra, cache_read/creation_input_tokens, api_key_name` | Detailed request log (retention configurable, default 10000 rows) |
+| `api_keys` | `id, name, key_hash UNIQUE, encrypted_key, created_at, last_used_at` | Multi-key client API keys (SHA-256 hash for fast match) |
+| `rate_limits` | `key PK, attempts, reset_at, banned_until` | Login rate limiting |
 
-Sensitive fields (`apiKey`, `privateKey`) in `providers.config` stored `enc:` prefixed (AES-256-GCM). Edit without changing preserves existing encrypted value.
+Sensitive fields (`apiKey`, `privateKey`) in `providers.config` are `enc:`
+prefixed (AES-256-GCM). Editing without changing a field preserves the encrypted
+value — check for `enc:` before re-encrypting.
 
-**Provider config shapes (config field inside provider record):**
+**Provider config shapes (inside provider record):**
 
 | Type | Config fields |
 |------|--------------|
@@ -163,26 +207,34 @@ Sensitive fields (`apiKey`, `privateKey`) in `providers.config` stored `enc:` pr
 | `openai` | `apiKey`, `baseUrl` (optional) |
 | `anthropic` | `apiKey` |
 
-Vertex AI auto-detects auth mode: if `config.apiKey` is present → API Key mode; if `config.serviceAccountEmail` + `config.privateKey` → JWT mode.
+Vertex AI auth mode auto-detects: `config.apiKey` → API Key mode;
+`serviceAccountEmail` + `privateKey` → JWT mode.
 
 ## Deployment Config
 
-[wrangler.jsonc](wrangler.jsonc) configures:
-- `main` → `src/index.ts` (TypeScript entry)
-- `d1_databases` → `vega-api-db` (binding: `DB`)
-- `assets.directory` → `./admin-ui/build/` (SvelteKit build output)
-- `assets.not_found_handling` → `"single-page-application"` (SPA fallback)
-- `assets.run_worker_first` → `["/admin/*", "/v1/*", "/v1beta/*", "/anthropic/*", "/health"]` (API routes bypass assets)
+**Cloudflare** — [wrangler.jsonc](wrangler.jsonc):
+- `main` → `src/index.ts`
+- `d1_databases` → `vega-api-db` (binding `DB`)
+- `assets.directory` → `./admin-ui/build/`; `not_found_handling` → SPA;
+  `run_worker_first` → `/admin/*`, `/v1/*`, `/v1beta/*`, `/anthropic/*`, `/health`
 - `compatibility_flags` → `["nodejs_compat"]`
+
+**Vercel** — [vercel.json](vercel.json):
+- `framework: null` — forces the "Other" preset (avoids SvelteKit mis-detection)
+- `functions."api/index.ts".maxDuration: 60` — SSE streams outlive the 10 s default; 60 s is the max Hobby accepts (out-of-range fails the build; raise it for Pro/Fluid)
+- build: `pnpm --filter vega-api-admin run build` → copies `admin-ui/build` → `public/`
+- rewrites: API paths → `/api`; SPA fallback → `/index.html`
 
 ## Migrations
 
-D1 migrations live in `migrations/`:
-- `0001_init.sql` — Core tables (config, providers, usage_daily)
-- `0002_call_logs.sql` — Persistent call log storage
-- `0006_provider_types.sql` — Adds 'anthropic' to provider type CHECK constraint
+D1 migrations in `migrations/` (0001–0008):
+`0001_init`, `0002_call_logs`, `0003_duration`, `0004_rate_limits_banned_until`,
+`0005_call_logs_enhance`, `0006_provider_types` (adds `'anthropic'` CHECK),
+`0007_api_keys`, `0008_call_logs_enhance` (cache tokens + key name).
 
-Apply: `npm run db:migrate` (remote) or `npm run db:migrate:local`
+Apply: `npm run db:migrate` (remote) or `npm run db:migrate:local`. On **Neon**
+(Vercel) the schema is created automatically on first cold start by
+`prepareRuntime`; no D1-style migration step is needed there.
 
 ## Key Constraints
 
@@ -194,13 +246,15 @@ Apply: `npm run db:migrate` (remote) or `npm run db:migrate:local`
 - **No Svelte runes in `.ts` files.** `$state`, `$effect`, etc. only work in `.svelte` files. Regular `.ts` files use Svelte stores (`writable`) or plain variables.
 - **`$derived` with Svelte stores.** Use `$state` + `$effect` instead of `$derived` when tracking `$page` store changes — `$derived` doesn't reliably auto-subscribe to Svelte 4 stores.
 - **Single-line SQL.** D1 `exec()` requires single-line SQL statements; multi-line template literals with `split(';')` cause parse errors.
+- **Neon SQL parity.** Every SQL change in `src/db.ts` must be mirrored in the Neon statement list; runtime SQL must survive the `api/neon.ts` translation (`?`, `INSERT OR REPLACE`, `julianday`).
 - **`class:` directive on components.** Svelte 5 doesn't support `class:` directive on components (e.g., Lucide icons). Use string interpolation: `class={...}`.
+- **Vercel env parity.** `ENCRYPTION_KEY` must be identical on both platforms. Vercel needs a Neon connection string (`PGURL`/`DATABASE_URL`/...); Cloudflare must NOT set one (D1 auto-detect).
 
 ## Security
 
-- API keys: AES-256-GCM encrypted; key in Worker Secret (`ENCRYPTION_KEY`)
+- API keys: AES-256-GCM encrypted; key in platform secret (`ENCRYPTION_KEY`)
 - Admin auth: SHA-256 password hash → Bearer token = hash itself
-- Rate limiting: 5 failures per 5-min window → 15-min IP ban (D1-backed)
+- Rate limiting: 5 failures per 5-min window → 15-min IP ban (DB-backed, both engines)
 - Sensitive fields never echoed in edit forms
 
 ## Design System — Code Dark
@@ -246,3 +300,20 @@ Admin UI uses a dark OLED theme with semantic color tokens defined via Tailwind 
 **Responsive breakpoints:** `sm:640px` (tablet), `lg:1024px` (desktop). Mobile-first: stacks vertically, full-width cards, always-visible action buttons. Desktop: `max-w-6xl` centered, sidebar (collapsible 64px/240px).
 
 **Reduced motion:** `prefers-reduced-motion: reduce` disables all animations/transitions globally.
+
+## Vercel Deployment Notes
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for full setup. Key points:
+
+- Framework Preset must behave as "Other" — now enforced by `"framework": null`
+  in `vercel.json`, no manual dashboard setting required.
+- `maxDuration: 60` is set in `vercel.json` `functions` — long streaming
+  responses won't be cut off at the 10 s default (an out-of-range value fails
+  the build: Hobby max is 60 s; Pro supports 300 s+ by default and up to
+  30 min with Fluid compute — raise the value if you're on Pro/Enterprise).
+- Neon schema auto-creates on first cold start; usage/call-log writes are
+  fire-and-forget on Vercel (no `waitUntil` — the shim in `api/index.ts`
+  mirrors Cloudflare semantics; consider `@vercel/functions` `after()` if log
+  reliability matters).
+- Vercel functions have a ~4.5 MB request-body limit (Cloudflare allows more) —
+  the app's own 5 MB cap is effectively 4.5 MB on Vercel.
