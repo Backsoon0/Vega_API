@@ -25,10 +25,17 @@ platform and database engine (and the Neon host when applicable).
 ## Cloudflare Workers (unchanged)
 
 ```bash
-npm run db:migrate         # apply D1 migrations to the remote DB
-npm run deploy             # build UI + deploy Worker + static assets
+npx wrangler login            # or set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID
+npm run deploy                # build UI + deploy Worker + static assets
 ```
 
+- **GitHub Actions is optional.** `npm run deploy` is everything the CI
+  workflow does (minus the belt-and-suspenders migration step) — you can deploy
+  directly from any machine with wrangler auth. The workflow at
+  `.github/workflows/deploy.yml` is only a convenience channel.
+- **Migrations are optional too.** `prepareRuntime` → `initSchema` auto-creates
+  missing tables/indexes and adds missing columns at cold start on both engines.
+  `npm run db:migrate` (below) exists as a manual fallback / local seeding only.
 - `.dev.vars` must contain `ENCRYPTION_KEY=<64 hex chars>` for local dev/tests.
 - No `vercel.json` / `api/` involvement.
 

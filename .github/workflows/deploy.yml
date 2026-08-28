@@ -9,11 +9,12 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # v5: runs on Node 24 runtime (v4 used Node 20, which GitHub deprecated)
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
 
       # Regenerate lockfile on Linux to resolve platform-specific native deps
       # (tailwindcss/oxide, etc.) that Windows-generated lockfile cannot include.
@@ -22,8 +23,11 @@ jobs:
 
       - run: npm install
 
+      # Schema migrations are belt-and-suspenders — the Worker/Function also
+      # self-heals missing tables/columns at cold start (initSchema in src/db.ts),
+      # so this step only needs to succeed once per new migration file.
       - name: Apply D1 migrations
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

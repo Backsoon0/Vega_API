@@ -427,7 +427,9 @@ response = client.messages.create(
 
 Workflow 文件：`.github/workflows/deploy.yml`
 
-#### 手动部署
+#### 手动部署（不需要 GitHub Actions）
+
+> 部署不依赖 CI：本地装好依赖、配好认证后，`npm run deploy` 一条命令即可发布。GitHub Actions（`.github/workflows/deploy.yml`）只是可选的自动化通道。
 
 ##### 1. 克隆并安装
 
@@ -436,40 +438,36 @@ git clone <repo-url> && cd vega-api
 pnpm install   # 或 npm install（仓库为 npm + pnpm 双 workspace）
 ```
 
-##### 2. 创建 D1 数据库
+##### 2. 配置 wrangler 认证
+
+二选一：
+- `npx wrangler login`（浏览器 OAuth，推荐）
+- 或设置环境变量 `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`
+
+##### 3. 创建 D1 数据库（仅首次）
 
 ```bash
 npx wrangler d1 create vega-api-db
 ```
 
-将输出的 `database_id` 填入 `wrangler.jsonc` 中的 `d1_databases.database_id`。
+将输出的 `database_id` 填入 `wrangler.jsonc` 中的 `d1_databases.database_id`（本仓库已预填）。
 
-##### 3. 运行数据库迁移
+> **Schema 会自动初始化**：Worker 冷启动时 `initSchema` 会自动建表/建索引/补缺失列（D1 用 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info()` 检查后 ALTER），**无需手动跑迁移**。`npm run db:migrate -- --remote` 仅作为手动兜底。
 
-```bash
-npm run db:migrate -- --remote   # 生产环境
-npm run db:migrate:local         # 本地开发
-```
-
-##### 4. 生成加密密钥
+##### 4. 生成并设置加密密钥（首次）
 
 ```bash
 openssl rand -hex 32
+npx wrangler secret put ENCRYPTION_KEY   # 粘贴上面生成的 64 位十六进制
 ```
 
-##### 5. 设置加密密钥
-
-```bash
-npx wrangler secret put ENCRYPTION_KEY
-```
-
-##### 6. 构建前端并部署
+##### 5. 构建前端并部署
 
 ```bash
 npm run deploy
 ```
 
-##### 7. 初始化配置
+##### 6. 初始化配置
 
 浏览器访问 `https://your-worker.workers.dev/`：
 1. 首次访问输入管理密码（≥6 位）
