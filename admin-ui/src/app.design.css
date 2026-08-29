@@ -471,7 +471,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tree-model .tree-depth{display:none}
 .tree-model.open .tree-depth{display:block}
 .tree-model>.tree-row .chev{transition:transform var(--dur-2) var(--ease),color var(--dur)}
-.tree-model.open>.tree-row .chev{transform:rotate(90deg);color:var(--cta)}
+.tree-model.open>.tree-row .chev{color:var(--cta)}
 
 /* ── Playground chat ────────────────────────────────────────────────── */
 .chat{display:flex;flex-direction:column;height:calc(100dvh - 180px);min-height:460px;

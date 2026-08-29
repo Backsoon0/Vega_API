@@ -1,9 +1,10 @@
 <script lang="ts">
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
+  import { version } from "$app/environment";
   import {
     LayoutDashboard, MessageSquare, Network, ListTodo, Settings, Wrench, LogOut,
-    ChevronsRight, ChevronsLeft, Zap,
+    ChevronsLeft, Zap,
   } from "lucide-svelte";
   import { clearToken } from "$lib/api";
   import { sidebarCollapsed } from "$lib/sidebar-state";
@@ -85,17 +86,13 @@
   <!-- Footer -->
   <div class="side-foot">
     <button class="nav-item" id="collapseBtn" onclick={toggleCollapse} title={collapsed ? "展开侧边栏" : "收起侧边栏"} aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}>
-      {#if collapsed}
-        <ChevronsRight class="collapse-chev" stroke-width={1.8} />
-      {:else}
-        <ChevronsLeft class="collapse-chev" stroke-width={1.8} />
-      {/if}
+      <ChevronsLeft class="collapse-chev" stroke-width={1.8} />
       <span class="nav-txt">{collapsed ? "展开" : "收起"}</span>
     </button>
     <button class="nav-item logout" onclick={handleLogout} title="退出登录">
       <LogOut stroke-width={1.6} />
       <span class="nav-txt">退出登录</span>
     </button>
-    <div class="ver">v2.3.0</div>
+    <div class="ver">v{version}</div>
   </div>
 </aside>
