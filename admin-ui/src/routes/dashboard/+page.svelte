@@ -70,7 +70,7 @@
   // ---- ECharts options (Code Dark themed) ----
   const pal = $derived(chartPalette());
   const axes = $derived(chartAxes(pal));
-  const series = report?.series || [];
+  const series = $derived(report?.series || []);
   const hasChart = $derived(series.length > 0);
 
   const trendOption = $derived({
@@ -109,7 +109,7 @@
   });
 
   // 按模型分布 — horizontal bar, top 12
-  const byModel = report?.byModel || [];
+  const byModel = $derived(report?.byModel || []);
   const modelOption = $derived({
     ...axes,
     color: [pal.cta],
@@ -129,7 +129,7 @@
   });
 
   // 按密钥用量 — horizontal bar, 调用数（配额密钥可显示超限状态）
-  const byKey = report?.byKey || [];
+  const byKey = $derived(report?.byKey || []);
   const keyOption = $derived({
     ...axes,
     color: [pal.accent],

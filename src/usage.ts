@@ -352,7 +352,13 @@ export async function getUsageReport(env: Env, days: number): Promise<{
 	byKey: Array<{ keyName: string; calls: number; tokens: number }>;
 }> {
 	const n = Number.isFinite(days) ? Math.min(Math.max(Math.floor(days), 1), 365) : 7;
-	const from = new Date(Date.now() - (n - 1) * 86400000).toISOString().slice(0, 10);
+	// usage_daily is date-granular (UTC dates): a call inside a rolling window can
+	// fall on the calendar day BEFORE the window start (e.g. 23:00 yesterday is
+	// within "最近 24 小时"). Start the window n full days back and include that
+	// whole first day, so days=1 covers [yesterday, today] instead of only today —
+	// fixes the "24h view empty in the morning" case while keeping the same
+	// daily-granularity semantics for n>1 (e.g. days=7 → now-7d .. today).
+	const from = new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 
 	const series: Array<{ date: string; calls: number; tokens: number }> = [];
 	const byModel: Array<{ model: string; calls: number; tokens: number }> = [];
@@ -374,8 +380,8 @@ export async function getUsageReport(env: Env, days: number): Promise<{
 				tokens: (Number(r.pt) || 0) + (Number(r.ct) || 0),
 			});
 		}
-		for (let i = 0; i < n; i++) {
-			const day = new Date(Date.now() - (n - 1 - i) * 86400000).toISOString().slice(0, 10);
+		for (let i = 0; i <= n; i++) {
+			const day = new Date(Date.now() - (n - i) * 86400000).toISOString().slice(0, 10);
 			const v = byDate.get(day);
 			series.push({ date: day, calls: v?.calls ?? 0, tokens: v?.tokens ?? 0 });
 		}

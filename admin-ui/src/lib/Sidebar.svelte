@@ -96,6 +96,6 @@
       <LogOut stroke-width={1.6} />
       <span class="nav-txt">退出登录</span>
     </button>
-    <div class="ver">v2.1.0</div>
+    <div class="ver">v2.3.0</div>
   </div>
 </aside>
