@@ -120,6 +120,68 @@ export async function deleteProvider(id: string) {
   if (!ok) throw new Error(data.error || 'Failed to delete provider');
 }
 
+// Provider preset templates (feature 2)
+export interface ProviderTemplate {
+  id: string;
+  label: string;
+  type: 'openai' | 'google_ai_studio' | 'vertex_ai' | 'anthropic';
+  description: string;
+  config: Record<string, string>;
+  weight?: number;
+}
+
+export async function getProviderTemplates(): Promise<ProviderTemplate[]> {
+  const { ok, data } = await request('GET', '/provider-templates');
+  if (!ok) throw new Error(data.error || '获取模板失败');
+  return data as ProviderTemplate[];
+}
+
+// Model aliases (feature 1)
+export interface ModelAlias {
+  id: number;
+  alias: string;
+  target: string;
+  providerId: string | null;
+  enabled: boolean;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getAliases(): Promise<ModelAlias[]> {
+  const { ok, data } = await request('GET', '/aliases');
+  if (!ok) throw new Error(data.error || '获取别名失败');
+  return data as ModelAlias[];
+}
+
+export async function createAlias(input: {
+  alias: string; target: string; providerId?: string | null; enabled?: boolean; description?: string;
+}) {
+  const { ok, data } = await request('POST', '/aliases', input);
+  if (!ok) throw new Error(data.error || '创建别名失败');
+  return data as ModelAlias;
+}
+
+export async function updateAlias(id: number, input: {
+  alias: string; target: string; providerId?: string | null; enabled?: boolean; description?: string;
+}) {
+  const { ok, data } = await request('PUT', `/aliases/${id}`, input);
+  if (!ok) throw new Error(data.error || '更新别名失败');
+  return data as ModelAlias;
+}
+
+export async function deleteAlias(id: number) {
+  const { ok, data } = await request('DELETE', `/aliases/${id}`);
+  if (!ok) throw new Error(data.error || '删除别名失败');
+  return data;
+}
+
+export async function toggleAliasEnabled(id: number, enabled: boolean) {
+  const { ok, data } = await request('PATCH', `/aliases/${id}/enabled`, { enabled });
+  if (!ok) throw new Error(data.error || '切换别名状态失败');
+  return data;
+}
+
 // Client API Key
 export async function getClientKey() {
   const { ok, data } = await request('GET', '/client-key');
@@ -389,6 +451,7 @@ export interface Provider {
   config: Record<string, string>;
   models: string[];
   weight: number;
+  hiddenModels?: string[];
 }
 
 export interface ProviderInput {
@@ -399,6 +462,7 @@ export interface ProviderInput {
   config: Record<string, string>;
   models: string[];
   weight: number;
+  hiddenModels?: string[];
 }
 
 export interface ClientKeyInfo {

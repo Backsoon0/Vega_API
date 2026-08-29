@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { createProvider, updateProvider } from "$lib/api";
-  import type { Provider } from "$lib/api";
+  import { createProvider, updateProvider, getProviderTemplates } from "$lib/api";
+  import type { Provider, ProviderTemplate } from "$lib/api";
   import { toasts } from "$lib/toast-store";
-  import { Upload, Database, Globe, Key, AlertCircle, Lock, ShieldCheck, KeyRound, Brain } from "lucide-svelte";
+  import { Upload, Database, Globe, Key, AlertCircle, Lock, ShieldCheck, KeyRound, Brain, LayoutTemplate } from "lucide-svelte";
   import Spinner from "$lib/Spinner.svelte";
   import Alert from "$lib/Alert.svelte";
 
@@ -20,6 +20,11 @@
   let weight = $state(1);
   let loading = $state(false);
   let error = $state("");
+
+  // Preset templates (feature 2)
+  let templates = $state<ProviderTemplate[]>([]);
+  let selectedTemplate = $state("");
+  let templatesLoaded = $state(false);
 
   // Vertex AI fields
   let vAuthMode = $state("service_account");
@@ -48,6 +53,32 @@
     { value: "service_account", label: "服务账号", icon: ShieldCheck, desc: "JSON 密钥文件或手动输入 PEM" },
     { value: "api_key", label: "API 密钥", icon: KeyRound, desc: "使用 Vertex AI API 密钥" },
   ];
+
+  // Load templates once on mount (only meaningful for creating a provider)
+  $effect(() => {
+    if (!templatesLoaded && !editing) {
+      templatesLoaded = true;
+      getProviderTemplates().then((t) => (templates = t)).catch(() => {});
+    }
+  });
+
+  // Apply a template to the form fields (feature 2). Templates are a quick
+  // prefill — everything can still be edited before saving.
+  function onSelectTemplate(tid: string) {
+    if (!tid) return;
+    const t = templates.find((x) => x.id === tid);
+    if (!t) return;
+    type = t.type;
+    if (!name.trim() || editing) name = t.label;
+    if (!provId.trim()) provId = t.id;
+    if (t.weight != null) weight = t.weight;
+    // Prefill openai baseUrl; clear secret fields so the user enters their own.
+    oBaseUrl = t.config.baseUrl || oBaseUrl;
+    if (t.type === "openai") oBaseUrl = t.config.baseUrl || oBaseUrl;
+    fApiKey = "";
+    vApiKey = "";
+    vPrivateKey = "";
+  }
 
   $effect(() => {
     if (editing) {
@@ -185,6 +216,30 @@
 </script>
 
 <form onsubmit={handleSubmit} class="space-y-5">
+  <!-- ═══════════ Preset Template (feature 2) — new-provider only ═══════════ -->
+  {#if !editing && templates.length > 0}
+    <div style="padding:16px 18px;border-radius:14px;background:var(--input);border:1px dashed var(--b-def)">
+      <label for="pf-template" style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">
+        <LayoutTemplate style="width:13px;height:13px" /> 从预置模板创建
+      </label>
+      <select
+        id="pf-template"
+        class="input"
+        style="font-family:var(--font-sans)"
+        bind:value={selectedTemplate}
+        onchange={(e) => onSelectTemplate((e.target as HTMLSelectElement).value)}
+      >
+        <option value="">— 选择模板自动填充（可再自定义）—</option>
+        {#each templates as t}
+          <option value={t.id}>{t.label} — {t.description}</option>
+        {/each}
+      </select>
+      <p style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:8px">
+        <AlertCircle style="width:12px;height:12px;flex-shrink:0" /> 模板仅自动填充配置项，API 密钥需自行填写；选择后仍可自由修改
+      </p>
+    </div>
+  {/if}
+
   <!-- Provider Type — visual radio cards -->
   <fieldset>
     <legend style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">

@@ -4,13 +4,13 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../../types.js';
-import { getAggregatedModels } from '../../router.js';
+import { getPublicModels } from '../../router.js';
 
 export const v1ModelRoutes = new Hono<{ Bindings: Env }>();
 
 // GET /v1/models — List all models across providers
 v1ModelRoutes.get('/models', async (c: Context<{ Bindings: Env }>) => {
-	const models = await getAggregatedModels(c.env);
+	const models = await getPublicModels(c.env);
 	// Strip internal _providerId/_providerIds from response — Cherry Studio / clients may group by it
 	const cleanModels = models.map(({ _providerId, _providerIds, ...rest }) => rest);
 	return c.json({ object: 'list', data: cleanModels });
@@ -26,7 +26,7 @@ v1ModelRoutes.get('/models/:modelId', async (c: Context<{ Bindings: Env }>) => {
 		);
 	}
 	const modelId = decodeURIComponent(rawParam);
-	const models = await getAggregatedModels(c.env);
+	const models = await getPublicModels(c.env);
 	const found = models.find((m) => m.id === modelId);
 	if (!found) {
 		return c.json(

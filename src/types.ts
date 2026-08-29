@@ -9,6 +9,8 @@ export interface Provider {
   config: Record<string, string>;
   models: string[];
   weight: number;
+  /** Model names hidden from public list endpoints (still callable). */
+  hiddenModels?: string[];
 }
 
 export interface ProviderRow {
@@ -19,6 +21,7 @@ export interface ProviderRow {
   config: string;  // JSON string
   models: string;  // JSON string
   weight: number;
+  hidden_models?: string;  // JSON string (array of model names)
 }
 
 export interface Model {
@@ -107,6 +110,20 @@ export interface ClientKeyRecord {
  * `D1Database` satisfies this structurally; `@neondatabase/serverless` is wrapped
  * by a Neon adapter in the Vercel entry point.
  */
+
+/** A model alias / redirect rule (feature 1). */
+export interface ModelAlias {
+	id: number;
+	alias: string;
+	target: string;
+	/** Optional provider lock — when set, the alias only resolves to `target` under this provider. */
+	providerId: string | null;
+	enabled: boolean;
+	description: string;
+	createdAt: string;
+	updatedAt: string;
+}
+
 export interface DBMeta {
 	changes: number;
 	last_row_id: number;

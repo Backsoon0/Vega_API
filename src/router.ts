@@ -5,6 +5,7 @@ import type { Env, Provider, Model, ProviderHandler } from './types.js';
 import { listProviders, getFailoverEnabled } from './config.js';
 import { getConfigVersion } from './config.js';
 import { getCircuitState } from './circuit-breaker.js';
+import { resolveAlias } from './aliases.js';
 import * as VertexProvider from './providers/vertex.js';
 import * as AiStudioProvider from './providers/ai-studio.js';
 import * as OpenAIProvider from './providers/openai.js';
@@ -185,7 +186,27 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 	return modelsPromise;
 }
 
-// ---- Model-to-provider routing (returns ALL candidates sorted by weight desc) ----
+/**
+ * Public (client-facing) model list — the aggregated list minus models the
+ * provider hides via `hiddenModels`. Used by the three public list endpoints
+ * (/v1/models, /v1beta/models, /anthropic/v1/models). Hidden models remain
+ * callable (findProviderForModel still resolves them) and still appear in the
+ * admin route topology (getRouteTopology uses the full aggregated list).
+ */
+export async function getPublicModels(env: Env): Promise<Model[]> {
+	const [models, providers] = await Promise.all([
+		getAggregatedModels(env),
+		loadProviders(env),
+	]);
+
+	const hidden = new Set<string>();
+	for (const p of providers) {
+		for (const m of p.hiddenModels || []) hidden.add(m);
+	}
+	if (hidden.size === 0) return models;
+
+	return models.filter((m) => !hidden.has(m.id));
+}
 export interface ProviderMatch {
 	provider: Provider;
 	matchedModel: string;
@@ -202,6 +223,16 @@ export async function findProviderForModel(
 	env: Env,
 	modelId: string,
 ): Promise<ProviderMatch[]> {
+	// Feature 1: resolve model alias / redirect FIRST so all dialects see the
+	// target model. On a runaway cycle (shouldn't happen — guarded at write time)
+	// we fall back to the original name rather than failing the request.
+	let resolvedModel = modelId;
+	try {
+		resolvedModel = await resolveAlias(env, modelId);
+	} catch (err) {
+		console.error(`Alias resolution error for "${modelId}":`, (err as Error).message);
+	}
+
 	const providers = await loadProviders(env);
 	const enabled = providers
 		.filter((p) => p.enabled)
@@ -220,16 +251,16 @@ export async function findProviderForModel(
 
 	// 1. Use model→provider map to find providers that actually list this model
 	const modelProviders = await getModelProviders(env);
-	const supportedIds = modelProviders.get(modelId) || [];
+	const supportedIds = modelProviders.get(resolvedModel) || [];
 	for (const pid of supportedIds) {
 		const provider = enabled.find((p) => p.id === pid);
-		if (provider) addMatch(provider, modelId);
+		if (provider) addMatch(provider, resolvedModel);
 	}
 
 	// 2. Configured model exact match
 	for (const p of enabled) {
-		if ((p.models || []).some((m) => m === modelId)) {
-			addMatch(p, modelId);
+		if ((p.models || []).some((m) => m === resolvedModel)) {
+			addMatch(p, resolvedModel);
 		}
 	}
 
@@ -238,17 +269,17 @@ export async function findProviderForModel(
 	for (const p of enabled) {
 		if (
 			(p.models || []).some(
-				(m) => modelId.startsWith(m + '/'),
+				(m) => resolvedModel.startsWith(m + '/'),
 			)
 		) {
-			addMatch(p, modelId);
+			addMatch(p, resolvedModel);
 		}
 	}
 
 	// 4. Fallback: no provider explicitly lists this model — try ALL enabled providers.
 	if (!matches.length) {
 		for (const p of enabled) {
-			addMatch(p, modelId);
+			addMatch(p, resolvedModel);
 		}
 	}
 

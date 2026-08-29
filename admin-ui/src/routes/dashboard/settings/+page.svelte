@@ -3,6 +3,7 @@
 	import { ToggleLeft, Columns, Shield, Database, Lock, Eye, EyeOff, Server, HardDrive } from "lucide-svelte";
 	import Alert from "$lib/Alert.svelte";
 	import Spinner from "$lib/Spinner.svelte";
+	import AliasManager from "$lib/AliasManager.svelte";
 	import { toasts } from "$lib/toast-store";
 
 	// ---- Password state ----
@@ -292,6 +293,9 @@
 		<button class="btn btn-primary btn-sm mt" onclick={saveColumnPrefs}>保存栏位设置</button>
 	</div>
 </div>
+
+<!-- Model aliases -->
+<AliasManager />
 
 <!-- Password change -->
 <div class="card card-pad rise" style="--d:240ms;max-width:520px;margin-top:24px">

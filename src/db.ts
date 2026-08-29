@@ -33,6 +33,7 @@ const D1_SCHEMA_STATEMENTS = [
 	'CREATE INDEX IF NOT EXISTS idx_logs_provider ON call_logs(provider_id)',
 	'CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT)',
 	'CREATE TABLE IF NOT EXISTS key_usage_daily (key_name TEXT NOT NULL, date TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(key_name, date))',
+	'CREATE TABLE IF NOT EXISTS model_aliases (id INTEGER PRIMARY KEY AUTOINCREMENT, alias TEXT NOT NULL UNIQUE, target TEXT NOT NULL, provider_id TEXT, enabled INTEGER NOT NULL DEFAULT 1, description TEXT NOT NULL DEFAULT \'\', created_at TEXT NOT NULL DEFAULT (datetime(\'now\')), updated_at TEXT NOT NULL DEFAULT (datetime(\'now\')))',
 ];
 
 // Additive column migrations — engine-specific SQL for each platform. D1 runs
@@ -57,6 +58,7 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
 	{ table: 'api_keys', column: 'quota_calls', d1: 'ALTER TABLE api_keys ADD COLUMN quota_calls INTEGER', neon: 'ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS quota_calls INTEGER' },                                    // 0009
 	{ table: 'api_keys', column: 'quota_tokens', d1: 'ALTER TABLE api_keys ADD COLUMN quota_tokens INTEGER', neon: 'ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS quota_tokens INTEGER' },                                  // 0009
 	{ table: 'api_keys', column: 'quota_period', d1: "ALTER TABLE api_keys ADD COLUMN quota_period TEXT NOT NULL DEFAULT 'day'", neon: 'ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS quota_period TEXT NOT NULL DEFAULT \'day\'' },                                                        // 0009
+	{ table: 'providers', column: 'hidden_models', d1: "ALTER TABLE providers ADD COLUMN hidden_models TEXT NOT NULL DEFAULT '[]'", neon: "ALTER TABLE providers ADD COLUMN IF NOT EXISTS hidden_models TEXT NOT NULL DEFAULT '[]'" },                                             // aliases/hidden feature
 ];
 
 // ---------------------------------------------------------------------------
@@ -76,6 +78,7 @@ const NEON_SCHEMA_STATEMENTS = [
 	'CREATE INDEX IF NOT EXISTS idx_logs_provider ON call_logs(provider_id)',
 	'CREATE TABLE IF NOT EXISTS api_keys (id SERIAL PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT, quota_calls INTEGER, quota_tokens INTEGER, quota_period TEXT NOT NULL DEFAULT \'day\')',
 	'CREATE TABLE IF NOT EXISTS key_usage_daily (key_name TEXT NOT NULL, date TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(key_name, date))',
+	`CREATE TABLE IF NOT EXISTS model_aliases (id SERIAL PRIMARY KEY, alias TEXT NOT NULL UNIQUE, target TEXT NOT NULL, provider_id TEXT, enabled INTEGER NOT NULL DEFAULT 1, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (now()), updated_at TEXT NOT NULL DEFAULT (now()))`,
 ];
 
 /**

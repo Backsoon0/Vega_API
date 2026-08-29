@@ -10,8 +10,14 @@ import {
 	saveProvider,
 	deleteProvider,
 } from '../../config.js';
+import { PROVIDER_TEMPLATES } from '../../provider-templates.js';
 
 export const adminProviderRoutes = new Hono<{ Bindings: Env }>();
+
+// GET /admin/provider-templates — preset templates for the provider form (feature 2)
+adminProviderRoutes.get('/provider-templates', (c: Context<{ Bindings: Env }>) => {
+	return c.json(PROVIDER_TEMPLATES);
+});
 
 // GET /admin/providers — List all providers (masked)
 adminProviderRoutes.get('/providers', async (c: Context<{ Bindings: Env }>) => {

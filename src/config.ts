@@ -42,7 +42,25 @@ async function bumpConfigVersion(env: Env): Promise<void> {
 
 // ---- Providers ----
 
+/** Parse a JSON string array field safely, returning [] on malformed input. */
+function safeParseStringArray(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 function rowToProvider(row: ProviderRow, decryptedConfig: Record<string, string>): Provider {
+  let hiddenModels: string[] = [];
+  try {
+    hiddenModels = JSON.parse(row.hidden_models || '[]');
+    if (!Array.isArray(hiddenModels)) hiddenModels = [];
+  } catch {
+    hiddenModels = [];
+  }
   return {
     id: row.id,
     type: row.type as Provider['type'],
@@ -51,6 +69,7 @@ function rowToProvider(row: ProviderRow, decryptedConfig: Record<string, string>
     config: decryptedConfig,
     models: JSON.parse(row.models || '[]'),
     weight: row.weight,
+    hiddenModels,
   };
 }
 
@@ -135,7 +154,7 @@ export async function saveProvider(
   env: Env,
   provider: Partial<Provider> & { id: string }
 ): Promise<Provider> {
-  const { id, type, name, enabled, config = {}, models, weight } = provider;
+  const { id, type, name, enabled, config = {}, models, weight, hiddenModels } = provider;
 
   if (!id) {
     throw new Error('Provider must have id');
@@ -148,6 +167,7 @@ export async function saveProvider(
   const existingModels: string[] = existing
     ? JSON.parse(existing.models || '[]')
     : [];
+  const existingHidden: string[] = existing ? safeParseStringArray(existing.hidden_models) : [];
 
   // Resolve final values: use existing row values as defaults for omitted fields
   const finalType = type ?? (existing ? existing.type : undefined);
@@ -193,19 +213,23 @@ export async function saveProvider(
   const finalModels = models === undefined
     ? existingModels
     : models;
+  const finalHiddenModels = hiddenModels === undefined
+    ? existingHidden
+    : (Array.isArray(hiddenModels) ? hiddenModels : []);
 
   await env.DB
     .prepare(
-      `INSERT OR REPLACE INTO providers (id, type, name, enabled, config, models, weight)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT OR REPLACE INTO providers (id, type, name, enabled, config, models, weight, hidden_models)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .bind(id, finalType, finalName, enabledInt, JSON.stringify(encryptedConfig), JSON.stringify(finalModels), finalWeight)
+    .bind(id, finalType, finalName, enabledInt, JSON.stringify(encryptedConfig), JSON.stringify(finalModels), finalWeight, JSON.stringify(finalHiddenModels))
     .run();
 
   await bumpConfigVersion(env);
   return {
     id, type: finalType as Provider['type'], name: finalName,
     enabled: enabledInt === 1, config: maskSensitiveConfig(encryptedConfig), models: finalModels, weight: finalWeight,
+    hiddenModels: finalHiddenModels,
   };
 }
 

@@ -6,7 +6,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../../types.js';
-import { getAggregatedModels } from '../../router.js';
+import { getPublicModels } from '../../router.js';
 
 export const v1betaModelRoutes = new Hono<{ Bindings: Env }>();
 
@@ -37,7 +37,7 @@ function toGeminiModel(m: { id: string }) {
 
 // GET /v1beta/models — List models in Google Generative Language API format
 v1betaModelRoutes.get('/models', async (c: Context<{ Bindings: Env }>) => {
-	const models = await getAggregatedModels(c.env);
+	const models = await getPublicModels(c.env);
 	const geminiModels = models.map(toGeminiModel);
 	return c.json({ models: geminiModels });
 });
@@ -49,7 +49,7 @@ v1betaModelRoutes.get('/models/:modelId', async (c: Context<{ Bindings: Env }>) 
 		return c.json({ error: { message: 'Model ID is required', code: 400 } }, 400);
 	}
 	const modelId = decodeURIComponent(rawParam).replace(/^models\//, '');
-	const models = await getAggregatedModels(c.env);
+	const models = await getPublicModels(c.env);
 	const found = models.find((m) => m.id === modelId);
 	if (!found) {
 		return c.json({ error: { message: `Model not found: ${modelId}`, code: 404 } }, 404);

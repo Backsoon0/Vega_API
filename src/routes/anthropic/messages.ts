@@ -9,7 +9,7 @@ import type { Context } from 'hono';
 import { streamText, generateText } from 'ai';
 import type { Env } from '../../types.js';
 import type { ProviderMatch } from '../../router.js';
-import { findProviderForModel, getAggregatedModels } from '../../router.js';
+import { findProviderForModel, getPublicModels } from '../../router.js';
 import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers.js';
 import { recordUsage, extractCacheTokens } from '../../usage.js';
 import { getFailoverEnabled } from '../../config.js';
@@ -1053,7 +1053,7 @@ async function handleAnthropicNonStream(
  * (e.g. Cherry Studio) may still try to fetch models. Return OpenAI format.
  */
 anthropicMessagesRoutes.get('/v1/models', async (c: Context<{ Bindings: Env }>) => {
-	const models = await getAggregatedModels(c.env);
+	const models = await getPublicModels(c.env);
 	const clean = models.map(({ _providerId, ...rest }) => rest);
 	return c.json({ object: 'list', data: clean });
 });
