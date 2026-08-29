@@ -414,6 +414,11 @@ export function buildModelTopology(
 		else if (modelProviderIds.includes(p.id)) addDisabled(p, 'live');
 	}
 
+	// Final order mirrors findProviderForModel()'s last step (weight desc =
+	// request order). Without this, "live" matches come back in concurrent
+	// model-list fetch completion order and the tree would mislead failover.
+	enabledMatches.sort((a, b) => (b.weight || 1) - (a.weight || 1));
+
 	let routingMode: RoutingMode = 'priority';
 	if (enabledMatches.length > 1 && failoverEnabled) routingMode = 'failover';
 

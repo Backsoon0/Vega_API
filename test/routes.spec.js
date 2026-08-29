@@ -171,6 +171,23 @@ describe("route topology - provider matching", () => {
 		expect(m.providers.map((p) => p.id)).toEqual(["prov-b", "prov-c", "prov-a"]);
 	});
 
+	it("6b. mixed-stage candidates are ordered by weight desc, not by match stage", () => {
+		// Stage order alone would produce [low-cfg(configured), mid-prefix(prefix),
+		// high-live(live)] — the request path (findProviderForModel) re-sorts by
+		// weight desc and so must the visualization.
+		const providers = [
+			mkProvider("low-cfg", { models: ["gpt/vision"], weight: 2 }),
+			mkProvider("mid-prefix", { models: ["gpt"], weight: 5 }),
+			mkProvider("high-live", { models: [], weight: 10 }),
+		];
+		const m = buildModelTopology("gpt/vision", providers, [], ["high-live"], true);
+		expect(m.providers.map((p) => p.id)).toEqual(["high-live", "mid-prefix", "low-cfg"]);
+		// stage attribution is preserved — only ORDER becomes weight desc
+		expect(m.providers.find((p) => p.id === "low-cfg")?.matchedBy).toBe("configured");
+		expect(m.providers.find((p) => p.id === "mid-prefix")?.matchedBy).toBe("prefix");
+		expect(m.providers.find((p) => p.id === "high-live")?.matchedBy).toBe("live");
+	});
+
 	it("7. prefix matching with '/' delimiter is attributed as prefix", async () => {
 		// The routing rule requires the configured prefix to be followed by '/':
 		// "openai/gpt-4o" matches "openai/gpt-4o/vision-preview" but NOT
