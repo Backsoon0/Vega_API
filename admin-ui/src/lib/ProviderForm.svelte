@@ -5,6 +5,7 @@
   import { Upload, Database, Globe, Key, AlertCircle, Lock, ShieldCheck, KeyRound, Brain, LayoutTemplate } from "lucide-svelte";
   import Spinner from "$lib/Spinner.svelte";
   import Alert from "$lib/Alert.svelte";
+  import CustomSelect from "$lib/CustomSelect.svelte";
 
   interface Props {
     editing?: Provider | null;
@@ -25,6 +26,9 @@
   let templates = $state<ProviderTemplate[]>([]);
   let selectedTemplate = $state("");
   let templatesLoaded = $state(false);
+  const templateOptions = $derived(
+    templates.map((t) => ({ value: t.id, label: `${t.label} — ${t.description}` })),
+  );
 
   // Vertex AI fields
   let vAuthMode = $state("service_account");
@@ -219,21 +223,15 @@
   <!-- ═══════════ Preset Template (feature 2) — new-provider only ═══════════ -->
   {#if !editing && templates.length > 0}
     <div style="padding:16px 18px;border-radius:14px;background:var(--input);border:1px dashed var(--b-def)">
-      <label for="pf-template" style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">
         <LayoutTemplate style="width:13px;height:13px" /> 从预置模板创建
       </label>
-      <select
-        id="pf-template"
-        class="input"
-        style="font-family:var(--font-sans)"
+      <CustomSelect
+        options={templateOptions}
         bind:value={selectedTemplate}
-        onchange={(e) => onSelectTemplate((e.target as HTMLSelectElement).value)}
-      >
-        <option value="">— 选择模板自动填充（可再自定义）—</option>
-        {#each templates as t}
-          <option value={t.id}>{t.label} — {t.description}</option>
-        {/each}
-      </select>
+        onchange={(v) => onSelectTemplate(String(v))}
+        placeholder="选择模板自动填充（可再自定义）"
+      />
       <p style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:8px">
         <AlertCircle style="width:12px;height:12px;flex-shrink:0" /> 模板仅自动填充配置项，API 密钥需自行填写；选择后仍可自由修改
       </p>
