@@ -329,9 +329,13 @@ async function handleGeminiDirectStream(
 
 	const isGoogleStudio = baseUrl.includes('generativelanguage.googleapis.com');
 	const isVertexApiKey = baseUrl.includes('aiplatform.googleapis.com') && apiKey && apiKey.length < 200;
-	const authHeaders: Record<string, string> = (isGoogleStudio || isVertexApiKey)
-		? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
-		: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+	// Google's OpenAI-compat layer authenticates via `Authorization: Bearer <API key>`
+	// (x-goog-api-key alone returns 400 "Missing or invalid Authorization header").
+	const authHeaders: Record<string, string> = isGoogleStudio
+		? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'x-goog-api-key': apiKey }
+		: isVertexApiKey
+			? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
+			: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
 	// Connect timeout: 15s for TCP + TLS + headers. Cancelled once connected so
 	// streaming body reads are NOT affected. Prevents hanging on unresponsive upstream.
@@ -553,9 +557,13 @@ async function handleGeminiDirectNonStream(
 
 	const isGoogleStudio = baseUrl.includes('generativelanguage.googleapis.com');
 	const isVertexApiKey = baseUrl.includes('aiplatform.googleapis.com') && apiKey && apiKey.length < 200;
-	const authHeaders: Record<string, string> = (isGoogleStudio || isVertexApiKey)
-		? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
-		: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+	// Google's OpenAI-compat layer authenticates via `Authorization: Bearer <API key>`
+	// (x-goog-api-key alone returns 400 "Missing or invalid Authorization header").
+	const authHeaders: Record<string, string> = isGoogleStudio
+		? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'x-goog-api-key': apiKey }
+		: isVertexApiKey
+			? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
+			: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',

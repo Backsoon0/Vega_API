@@ -134,6 +134,10 @@ async function buildDirectRequest(
 		case 'google_ai_studio':
 			baseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai';
 			modelId = inModelId.replace(/^(google\/|models\/)+/, '');
+			// Google's OpenAI-compat layer authenticates via `Authorization: Bearer <API key>`
+			// (x-goog-api-key alone returns 400 "Missing or invalid Authorization header").
+			// Send both headers for compatibility with either auth scheme.
+			headers['Authorization'] = `Bearer ${provider.config.apiKey}`;
 			headers['x-goog-api-key'] = provider.config.apiKey;
 			break;
 		case 'vertex_ai': {
