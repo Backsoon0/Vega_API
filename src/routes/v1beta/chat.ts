@@ -430,6 +430,19 @@ async function handleGeminiDirectStream(
 			let streamErrorMsg = '';
 			let lastInputTokens = 0;
 			let lastOutputTokens = 0;
+			// Gemini-format clients read usageMetadata from the final chunk carrying
+			// finishReason. OpenAI-compatible providers following the include_usage
+			// convention (Aliyun MaaS/DashScope, OpenAI) send usage in a SEPARATE chunk
+			// AFTER finish_reason — so a finish chunk without usage is HELD until the
+			// usage chunk arrives or the stream ends, otherwise usageMetadata is 0.
+			let pendingFinishReason: string | null = null;
+			const emitPendingFinish = () => {
+				controller.enqueue(encoder.encode(ssePfx + JSON.stringify(buildGeminiChunk(fullText, pendingFinishReason!, {
+					inputTokens: lastInputTokens, outputTokens: lastOutputTokens,
+					totalTokens: lastInputTokens + lastOutputTokens,
+				})) + sseSfx));
+				pendingFinishReason = null;
+			};
 
 			// SSE heartbeat: send comment every 15s to keep connection alive.
 			// Only in SSE mode — a bare comment line would corrupt NDJSON output.
@@ -469,31 +482,42 @@ async function handleGeminiDirectStream(
 						const delta = choice?.delta;
 						const usage = parsed?.usage;
 
-						// Error chunk from upstream (e.g., rate limit, quota exhausted)
-						if (parsed?.error) {
-							streamError = true;
-							streamErrorMsg = parsed.error.message || JSON.stringify(parsed.error);
-							controller.enqueue(encoder.encode(ssePfx + JSON.stringify({ error: { message: streamErrorMsg, code: 429 } }) + sseSfx));
+					// Error chunk from upstream (e.g., rate limit, quota exhausted)
+					if (parsed?.error) {
+						streamError = true;
+						streamErrorMsg = parsed.error.message || JSON.stringify(parsed.error);
+						if (pendingFinishReason !== null) emitPendingFinish();
+						controller.enqueue(encoder.encode(ssePfx + JSON.stringify({ error: { message: streamErrorMsg, code: 429 } }) + sseSfx));
+						continue;
+					}
+
+					// Usage-only chunk (choices empty, usage present — captures token counts)
+					if (parsed?.usage && (!parsed?.choices || parsed.choices.length === 0)) {
+						lastInputTokens = parsed.usage.prompt_tokens || 0;
+						lastOutputTokens = parsed.usage.completion_tokens || 0;
+						// Trailing usage chunk after a held finish chunk: emit the finish
+						// chunk now so its usageMetadata carries the real counts.
+						if (pendingFinishReason !== null) emitPendingFinish();
+					}
+
+					// Flush a held finish chunk before any other event (usage-only
+					// chunks merge their counts into the held chunk instead).
+					if (pendingFinishReason !== null && !(parsed?.usage && (!parsed?.choices || parsed.choices.length === 0))) {
+						emitPendingFinish();
+					}
+
+					if (choice?.finish_reason && choice.finish_reason !== 'null' && choice.finish_reason !== null) {
+							if (usage) { lastInputTokens = usage.prompt_tokens || 0; lastOutputTokens = usage.completion_tokens || 0; }
+							const fr = choice.finish_reason;
+							const finishReason = fr === 'stop' ? 'STOP' : fr === 'length' ? 'MAX_TOKENS'
+								: fr === 'tool_calls' ? 'STOP' : fr === 'content_filter' ? 'SAFETY' : 'STOP';
+							pendingFinishReason = finishReason;
+							// Emit immediately when usage rides on the finish chunk itself
+							// (DeepSeek etc.); otherwise hold for a possible trailing
+							// usage-only chunk (OpenAI/Aliyun include_usage order).
+							if (usage) emitPendingFinish();
 							continue;
 						}
-
-						// Usage-only chunk (choices empty, usage present — captures token counts)
-						if (parsed?.usage && (!parsed?.choices || parsed.choices.length === 0)) {
-							lastInputTokens = parsed.usage.prompt_tokens || 0;
-							lastOutputTokens = parsed.usage.completion_tokens || 0;
-						}
-
-						if (choice?.finish_reason && choice.finish_reason !== 'null' && choice.finish_reason !== null) {
-								if (usage) { lastInputTokens = usage.prompt_tokens || 0; lastOutputTokens = usage.completion_tokens || 0; }
-								const fr = choice.finish_reason;
-								const finishReason = fr === 'stop' ? 'STOP' : fr === 'length' ? 'MAX_TOKENS'
-									: fr === 'tool_calls' ? 'STOP' : fr === 'content_filter' ? 'SAFETY' : 'STOP';
-								controller.enqueue(encoder.encode(ssePfx + JSON.stringify(buildGeminiChunk(fullText, finishReason, {
-									inputTokens: lastInputTokens, outputTokens: lastOutputTokens,
-									totalTokens: usage?.total_tokens || lastInputTokens + lastOutputTokens,
-								})) + sseSfx));
-								continue;
-							}
 
 							const ct = delta?.content;
 							if (ct != null && ct !== '') { fullText += ct; controller.enqueue(encoder.encode(ssePfx + JSON.stringify(buildGeminiChunk(fullText)) + sseSfx)); }
@@ -513,6 +537,8 @@ async function handleGeminiDirectStream(
 						} catch { /* skip */ }
 					}
 				}
+				// Stream ended: flush any finish chunk still held for a usage chunk.
+				if (pendingFinishReason !== null && !streamError) emitPendingFinish();
 			} catch (err) {
 				streamError = true;
 				streamErrorMsg = err instanceof Error ? err.message : String(err);

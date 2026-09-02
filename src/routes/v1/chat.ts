@@ -496,6 +496,25 @@ async function handleOpenAIDirectStream(
 			let lastCompletionTokens = 0;
 			let lastCacheRead = 0;
 			let lastCacheCreation = 0;
+			// Providers following the OpenAI include_usage convention (Aliyun MaaS/
+			// DashScope compatible-mode, OpenAI itself) send usage in a SEPARATE chunk
+			// AFTER the finish_reason chunk and before [DONE]. Emitting [DONE] right
+			// after finish_reason makes compliant clients discard that trailing usage
+			// chunk (they stop parsing at [DONE]) — so a finish chunk without usage is
+			// HELD until the usage chunk arrives or the stream ends.
+			let pendingFinishReason: string | null = null;
+			let doneSent = false;
+			const emitFinishChunk = (usage: unknown) => {
+				const u = usage && typeof usage === 'object' ? usage : undefined;
+				controller.enqueue(encoder.encode(
+					`data: ${JSON.stringify({
+						id: requestId, object: 'chat.completion.chunk', created, model: modelId,
+						choices: [{ index: 0, delta: {}, finish_reason: pendingFinishReason! }],
+						...(u ? { usage: u } : {}),
+					})}\n\n`,
+				));
+				pendingFinishReason = null;
+			};
 
 			// SSE heartbeat: send comment every 15s to keep connection alive
 			const HEARTBEAT_MS = 15_000;
@@ -535,8 +554,17 @@ async function handleOpenAIDirectStream(
 						const json = line.slice(line.startsWith('data: ') ? 6 : 5).trim();
 
 					if (json === '[DONE]') {
+						if (pendingFinishReason !== null) emitFinishChunk(undefined);
 						controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+						doneSent = true;
 						continue;
+					}
+
+					// Flush a held finish chunk before any other data event, except a
+					// usage-only chunk (whose counts merge into the held chunk below).
+					if (pendingFinishReason !== null
+						&& !(json.indexOf('"usage"') >= 0 && json.indexOf('"finish_reason":"') < 0)) {
+						emitFinishChunk(undefined);
 					}
 
 					// Error chunk from upstream (e.g., rate limit, quota exhausted)
@@ -552,48 +580,51 @@ async function handleOpenAIDirectStream(
 						continue;
 					}
 
-					// Usage-only chunk (choices empty, usage present — captures token counts from chunks like {"choices":[],"usage":{...}})
-					if (json.indexOf('"usage"') >= 0 && json.indexOf('"finish_reason":"') < 0) {
+				// Usage-only chunk (choices empty, usage present — captures token counts from chunks like {"choices":[],"usage":{...}})
+				if (json.indexOf('"usage"') >= 0 && json.indexOf('"finish_reason":"') < 0) {
+					try {
+						const parsed = JSON.parse(json);
+						if (parsed?.usage) {
+							lastPromptTokens = parsed.usage.prompt_tokens || 0;
+							lastCompletionTokens = parsed.usage.completion_tokens || 0;
+							// Capture cache hit tokens from the usage chunk (DeepSeek etc.)
+							const cache = extractOpenAICacheTokens(parsed.usage);
+							if (cache.cacheReadInputTokens > 0) lastCacheRead = cache.cacheReadInputTokens;
+							if (cache.cacheCreationInputTokens > 0) lastCacheCreation = cache.cacheCreationInputTokens;
+							// Trailing usage chunk after a held finish chunk (OpenAI/Aliyun
+							// include_usage order): emit the finish chunk WITH usage merged
+							// in, so clients that only read usage from the finish chunk
+							// still see the counts.
+							if (pendingFinishReason !== null) emitFinishChunk(parsed.usage);
+						}
+					} catch { /* ignore parse errors */ }
+				}
+
+				// Finish event: extract usage, rewrite with our id/created/model
+				if (json.indexOf('"finish_reason":"') >= 0) {
 						try {
 							const parsed = JSON.parse(json);
-							if (parsed?.usage) {
-								lastPromptTokens = parsed.usage.prompt_tokens || 0;
-								lastCompletionTokens = parsed.usage.completion_tokens || 0;
-								// Capture cache hit tokens from the usage chunk (DeepSeek etc.)
-								const cache = extractOpenAICacheTokens(parsed.usage);
+							const usage = parsed?.usage;
+							const hasUsage = usage && typeof usage === 'object';
+							if (hasUsage) {
+								lastPromptTokens = usage.prompt_tokens || 0;
+								lastCompletionTokens = usage.completion_tokens || 0;
+								// Capture cache hit tokens from the finish chunk (DeepSeek etc.)
+								const cache = extractOpenAICacheTokens(usage);
 								if (cache.cacheReadInputTokens > 0) lastCacheRead = cache.cacheReadInputTokens;
 								if (cache.cacheCreationInputTokens > 0) lastCacheCreation = cache.cacheCreationInputTokens;
 							}
+							const fr = parsed?.choices?.[0]?.finish_reason || 'stop';
+							const finishReason = fr === 'stop' ? 'stop' : fr === 'length' ? 'length'
+								: fr === 'tool_calls' ? 'tool_calls' : fr === 'content_filter' ? 'content_filter' : 'stop';
+							pendingFinishReason = finishReason;
+							// Providers that embed usage in the finish chunk (DeepSeek etc.)
+							// can emit immediately; otherwise hold the chunk — a trailing
+							// usage-only chunk may still arrive before [DONE].
+							if (hasUsage) emitFinishChunk(usage);
 						} catch { /* ignore parse errors */ }
+						continue;
 					}
-
-					// Finish event: extract usage, rewrite with our id/created/model
-					if (json.indexOf('"finish_reason":"') >= 0) {
-							try {
-								const parsed = JSON.parse(json);
-								const usage = parsed?.usage;
-								if (usage) {
-									lastPromptTokens = usage.prompt_tokens || 0;
-									lastCompletionTokens = usage.completion_tokens || 0;
-									// Capture cache hit tokens from the finish chunk (DeepSeek etc.)
-									const cache = extractOpenAICacheTokens(usage);
-									if (cache.cacheReadInputTokens > 0) lastCacheRead = cache.cacheReadInputTokens;
-									if (cache.cacheCreationInputTokens > 0) lastCacheCreation = cache.cacheCreationInputTokens;
-								}
-								const fr = parsed?.choices?.[0]?.finish_reason || 'stop';
-								const finishReason = fr === 'stop' ? 'stop' : fr === 'length' ? 'length'
-									: fr === 'tool_calls' ? 'tool_calls' : fr === 'content_filter' ? 'content_filter' : 'stop';
-								controller.enqueue(encoder.encode(
-									`data: ${JSON.stringify({
-										id: requestId, object: 'chat.completion.chunk', created, model: modelId,
-										choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
-										usage: usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-									})}\n\n`,
-								));
-								controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-							} catch { /* ignore parse errors */ }
-							continue;
-						}
 
 					// Rare: reasoning + content in same delta chunk → split into two events
 					const rcIdx = json.indexOf(REASONING_KEY);
@@ -622,11 +653,19 @@ async function handleOpenAIDirectStream(
 						continue;
 					}
 
-						// Normal chunk: pass through unchanged (content, reasoning, tool calls — all native)
-						controller.enqueue(encoder.encode(line + '\n'));
-					}
+					// Normal chunk: pass through unchanged (content, reasoning, tool calls — all native)
+					controller.enqueue(encoder.encode(line + '\n'));
 				}
-			} catch (err) {
+			}
+			// Upstream stream ended. If it never sent an explicit [DONE] (some
+			// providers just close the connection), flush any finish chunk still
+			// held for a trailing usage chunk and terminate the SSE stream properly.
+			if (!doneSent && !streamError) {
+				if (pendingFinishReason !== null) emitFinishChunk(undefined);
+				controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+				doneSent = true;
+			}
+		} catch (err) {
 				streamError = true;
 				streamErrorMsg = err instanceof Error ? err.message : String(err);
 				controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message: streamErrorMsg, type: 'server_error' } })}\n\n`));

@@ -345,6 +345,34 @@ async function handleAnthropicDirectStream(
 			let streamErrorMsg = '';
 			let lastInputTokens = 0;
 			let lastOutputTokens = 0;
+			// Anthropic clients read output_tokens from message_delta. OpenAI-style
+			// providers following the include_usage convention (Aliyun MaaS/DashScope,
+			// OpenAI) send usage in a SEPARATE chunk AFTER finish_reason — so a finish
+			// without usage is HELD until the usage chunk arrives or the stream ends,
+			// otherwise message_delta would report output_tokens: 0.
+			let pendingFinishStopReason: string | null = null;
+			const emitAnthropicFinish = () => {
+				closeBlock(controller);
+				// Emit accumulated tool calls as tool_use blocks
+				for (const [, tc] of toolCallAcc) {
+					controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({
+						type: 'content_block_start', index: contentIndex,
+						content_block: { type: 'tool_use', id: tc.id || `toolu_${generateMessageId()}`, name: tc.name || '', input: {} },
+					})}\n\n`));
+					controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({
+						type: 'content_block_delta', index: contentIndex,
+						delta: { type: 'input_json_delta', partial_json: tc.args || '{}' },
+					})}\n\n`));
+					controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: contentIndex })}\n\n`));
+					contentIndex++;
+				}
+				toolCallAcc.clear();
+				controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({
+					type: 'message_delta', delta: { stop_reason: mapStopReasonOpenAI(pendingFinishStopReason!), stop_sequence: null }, usage: { output_tokens: lastOutputTokens },
+				})}\n\n`));
+				controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`));
+				pendingFinishStopReason = null;
+			};
 
 			// SSE heartbeat: send comment every 15s to keep connection alive
 			const HEARTBEAT_MS = 15_000;
@@ -390,18 +418,28 @@ async function handleAnthropicDirectStream(
 						const delta = choice?.delta;
 						const usage = parsed?.usage;
 
-						// Error chunk from upstream (e.g., rate limit, quota exhausted)
-						if (parsed?.error) {
-							streamError = true;
-							streamErrorMsg = parsed.error.message || JSON.stringify(parsed.error);
-							continue;
-						}
+					// Error chunk from upstream (e.g., rate limit, quota exhausted)
+					if (parsed?.error) {
+						streamError = true;
+						streamErrorMsg = parsed.error.message || JSON.stringify(parsed.error);
+						if (pendingFinishStopReason !== null) emitAnthropicFinish();
+						continue;
+					}
 
-						// Usage-only chunk (choices empty, usage present — captures token counts)
-						if (parsed?.usage && (!parsed?.choices || parsed.choices.length === 0)) {
-							lastInputTokens = parsed.usage.prompt_tokens || 0;
-							lastOutputTokens = parsed.usage.completion_tokens || 0;
-						}
+					// Usage-only chunk (choices empty, usage present — captures token counts)
+					if (parsed?.usage && (!parsed?.choices || parsed.choices.length === 0)) {
+						lastInputTokens = parsed.usage.prompt_tokens || 0;
+						lastOutputTokens = parsed.usage.completion_tokens || 0;
+						// Trailing usage chunk after a held finish event: emit the finish
+						// now so message_delta carries the real output_tokens.
+						if (pendingFinishStopReason !== null) emitAnthropicFinish();
+					}
+
+					// Flush a held finish event before any other event (usage-only
+					// chunks merge their counts into the held finish instead).
+					if (pendingFinishStopReason !== null && !(parsed?.usage && (!parsed?.choices || parsed.choices.length === 0))) {
+						emitAnthropicFinish();
+					}
 
 						// Accumulate OpenAI tool-call fragments → Anthropic tool_use blocks (emitted on finish)
 						if (Array.isArray(delta?.tool_calls)) {
@@ -419,31 +457,16 @@ async function handleAnthropicDirectStream(
 							}
 						}
 
-						// Finish event
-						if (choice?.finish_reason && choice.finish_reason !== 'null' && choice.finish_reason !== null) {
-								if (usage) { lastInputTokens = usage.prompt_tokens || 0; lastOutputTokens = usage.completion_tokens || 0; }
-								closeBlock(controller);
-								// Emit accumulated tool calls as tool_use blocks
-								for (const [, tc] of toolCallAcc) {
-									controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({
-										type: 'content_block_start', index: contentIndex,
-										content_block: { type: 'tool_use', id: tc.id || `toolu_${generateMessageId()}`, name: tc.name || '', input: {} },
-									})}\n\n`));
-									controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({
-										type: 'content_block_delta', index: contentIndex,
-										delta: { type: 'input_json_delta', partial_json: tc.args || '{}' },
-									})}\n\n`));
-									controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: contentIndex })}\n\n`));
-									contentIndex++;
-								}
-								toolCallAcc.clear();
-								const sr = mapStopReasonOpenAI(choice.finish_reason);
-								controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({
-									type: 'message_delta', delta: { stop_reason: sr, stop_sequence: null }, usage: { output_tokens: lastOutputTokens },
-								})}\n\n`));
-								controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`));
-								continue;
-							}
+					// Finish event
+					if (choice?.finish_reason && choice.finish_reason !== 'null' && choice.finish_reason !== null) {
+							if (usage) { lastInputTokens = usage.prompt_tokens || 0; lastOutputTokens = usage.completion_tokens || 0; }
+							pendingFinishStopReason = choice.finish_reason;
+							// Emit immediately when usage rides on the finish chunk itself
+							// (DeepSeek etc.); otherwise hold for a possible trailing
+							// usage-only chunk (OpenAI/Aliyun include_usage order).
+							if (usage) emitAnthropicFinish();
+							continue;
+						}
 
 							// Reasoning deltas → Anthropic thinking block (never merged into text)
 							const rc = delta?.reasoning_content;
@@ -465,6 +488,8 @@ async function handleAnthropicDirectStream(
 						} catch { /* skip */ }
 					}
 				}
+				// Stream ended: flush any finish event still held for a usage chunk.
+				if (pendingFinishStopReason !== null && !streamError) emitAnthropicFinish();
 			} catch (err) {
 				streamError = true;
 				streamErrorMsg = err instanceof Error ? err.message : String(err);
