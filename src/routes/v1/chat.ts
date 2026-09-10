@@ -396,10 +396,14 @@ async function handleOpenAIDirectStream(
 			? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 			: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
-	// Connect timeout: 15s for TCP + TLS + headers. Cancelled once connected so
-	// streaming body reads are NOT affected. Prevents hanging on unresponsive upstream.
+	// Connect timeout: covers TCP + TLS + waiting for response headers. Some
+	// providers (Aliyun MaaS dedicated instances) queue requests while busy and
+	// delay response headers well beyond TCP/TLS time, so this must tolerate
+	// slow header arrival — 60s. Cancelled once fetch resolves so streaming
+	// body reads are NOT affected. clientSignal still aborts immediately when
+	// the client disconnects.
 	const connectController = new AbortController();
-	const connectTimer = setTimeout(() => connectController.abort(), 15_000);
+	const connectTimer = setTimeout(() => connectController.abort(), 60_000);
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',
 		headers: authHeaders,
@@ -834,10 +838,12 @@ async function handleOpenAIStream(
 	);
 	const system = extractSystem(messages);
 
-		// Connect timeout: 15s for initial upstream connection. Cancelled on first chunk
-	// so streaming body reads are NOT affected.
+		// Connect timeout: covers TCP + TLS + response headers. Mirrors the direct
+	// passthrough path above — 60s because busy upstreams (Aliyun MaaS queueing)
+	// delay response headers beyond TCP/TLS time. Cancelled on first chunk so
+	// streaming body reads are NOT affected.
 	const connectController = new AbortController();
-	const connectTimer = setTimeout(() => connectController.abort(), 15_000);
+	const connectTimer = setTimeout(() => connectController.abort(), 60_000);
 
 	const result = streamText({
 		model,
@@ -1307,7 +1313,10 @@ v1ChatRoutes.post('/chat/completions', async (c: Context<{ Bindings: Env }>) => 
 
 	// Try each candidate in weight order; fall back on failure (if failover enabled).
 	// Each candidate gets up to MAX_RETRIES attempts (with exponential backoff) for transient errors.
-	const MAX_RETRIES = 2;
+	// Keep MAX_RETRIES at 1: with a 60s connect timeout, 3 attempts per provider
+	// would occupy up to ~180s before failover even starts — a queued upstream
+	// (Aliyun MaaS busy instance) won't recover within that window anyway.
+	const MAX_RETRIES = 1;
 	const BASE_RETRY_DELAY_MS = 100;
 
 	let lastError = '';
