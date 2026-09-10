@@ -21,7 +21,7 @@
 import type { Env } from '../src/types.js';
 import { app, prepareRuntime } from '../src/app.js';
 import { NeonDBClient } from './neon.js';
-import { decrypt } from '../src/crypto.js';
+import { getProvider } from '../src/config.js';
 
 // ---- Resolve the Postgres/Neon connection string (Waline-style names) ----
 
@@ -181,27 +181,28 @@ async function handleDebugPing(req: any, res?: any): Promise<Response | void> {
 	if (token !== expected) return send(404, { error: 'Not Found' });
 
 	const runtimeEnv = getEnv();
-	const row = await runtimeEnv.DB.prepare(
-		"SELECT api_key_encrypted FROM providers WHERE id = 'aliyun' LIMIT 1",
-	)
-		.first<{ api_key_encrypted: string }>()
-		.catch((e) => {
-			console.error('[debug-ping] DB query failed:', e);
-			return null;
-		});
-	if (!row?.api_key_encrypted) {
-		return send(404, { error: 'aliyun provider not configured in DB' });
-	}
-
-	const apiKey = await decrypt(runtimeEnv, row.api_key_encrypted).catch((e) => {
-		console.error('[debug-ping] decrypt failed:', e);
-		return '';
+	const provider = await getProvider(runtimeEnv, 'aliyun').catch((e) => {
+		console.error('[debug-ping] getProvider failed:', e);
+		return null;
 	});
-	if (!apiKey) {
-		return send(500, { error: 'decrypt failed (ENCRYPTION_KEY mismatch?)' });
+	if (!provider) {
+		return send(404, { error: 'aliyun provider not found in DB' });
 	}
 
-	const url = 'https://llm-j3l90y3f41bmk281.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models';
+	const apiKey = provider.config.apiKey || '';
+	if (!apiKey) {
+		return send(500, { error: 'aliyun provider has no apiKey in config' });
+	}
+	const rawBaseUrl = (provider.config.baseUrl || '').replace(/\/+$/, '');
+	if (!rawBaseUrl) {
+		return send(500, { error: 'aliyun provider has no baseUrl in config' });
+	}
+
+	// Match the real route logic (src/routes/v1/chat.ts:380-382): ensure baseUrl ends with /v1,
+	// then probe the cheapest authenticated endpoint (/models).
+	const url = rawBaseUrl.endsWith('/v1')
+		? `${rawBaseUrl}/models`
+		: `${rawBaseUrl}/v1/models`;
 	const t0 = Date.now();
 	let httpStatus = 0;
 	let errMsg = '';
