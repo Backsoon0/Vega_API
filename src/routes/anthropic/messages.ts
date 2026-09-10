@@ -10,7 +10,8 @@ import { streamText, generateText } from 'ai';
 import type { Env } from '../../types.js';
 import type { ProviderMatch } from '../../router.js';
 import { findProviderForModel, getPublicModels } from '../../router.js';
-import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers.js';
+import { createModelFromProvider } from '../../ai-providers.js';
+import { getVertexAccessToken, isVertexApiKeyMode } from '../../google-auth.js';
 import { recordUsage, extractCacheTokens } from '../../usage.js';
 import { getFailoverEnabled } from '../../config.js';
 import { getClientKeyName } from '../../middleware/auth.js';
@@ -594,7 +595,7 @@ async function handleAnthropicStream(
 	clientKeyName: string,
 	isLastAttempt: boolean,
 ): Promise<Response> {
-	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
+	const model = createModelFromProvider(provider.provider, provider.matchedModel);
 	const { messages, system } = anthropicToAISDK(body);
 
 	// Connect timeout: 15s for initial upstream connection. Cancelled on first chunk
@@ -954,7 +955,7 @@ async function handleAnthropicNonStream(
 	clientKeyName: string,
 	isLastAttempt: boolean,
 ): Promise<Response> {
-	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
+	const model = createModelFromProvider(provider.provider, provider.matchedModel);
 	const { messages, system } = anthropicToAISDK(body);
 
 	const result = await generateText({

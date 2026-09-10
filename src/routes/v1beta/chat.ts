@@ -11,7 +11,8 @@ import { streamText, generateText } from 'ai';
 import type { Env } from '../../types.js';
 import type { ProviderMatch } from '../../router.js';
 import { findProviderForModel } from '../../router.js';
-import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers.js';
+import { createModelFromProvider } from '../../ai-providers.js';
+import { getVertexAccessToken, isVertexApiKeyMode } from '../../google-auth.js';
 import { recordUsage, extractCacheTokens } from '../../usage.js';
 import { getFailoverEnabled } from '../../config.js';
 import { getClientKeyName } from '../../middleware/auth.js';
@@ -645,7 +646,7 @@ async function handleGeminiStream(
 	clientKeyName: string,
 	isLastAttempt: boolean,
 ): Promise<Response> {
-	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
+	const model = createModelFromProvider(provider.provider, provider.matchedModel);
 	const { messages } = geminiToAISDK(body);
 	const genConfig = body.generationConfig as Record<string, unknown> | undefined;
 
@@ -887,7 +888,7 @@ async function handleGeminiNonStream(
 	clientKeyName: string,
 	isLastAttempt: boolean,
 ): Promise<Response> {
-	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
+	const model = createModelFromProvider(provider.provider, provider.matchedModel);
 	const { messages } = geminiToAISDK(body);
 	const genConfig = body.generationConfig as Record<string, unknown> | undefined;
 

@@ -170,12 +170,16 @@ instances from DB `Provider` records (used for Anthropic, Google tool replay,
 and the playground):
 
 ```ts
-export function createModelFromProvider(provider: Provider, env: Env, modelId: string): LanguageModel
+export function createModelFromProvider(provider: Provider, modelId: string): LanguageModel
 //   - google_ai_studio: createGoogleGenerativeAI({ apiKey })(modelId)
 //   - vertex_ai: createGoogleGenerativeAI({ baseURL, fetch: jwtInjector }) — incl. Vertex base-URL fallback
 //   - anthropic:       createAnthropic({ apiKey })(modelId)
 //   - openai:          NOT handled here — direct passthrough in the route layer
 ```
+
+Vertex JWT/API-key auth lives in [src/google-auth.ts](src/google-auth.ts)
+(`getVertexAccessToken`, `isVertexApiKeyMode`) — shared by the factory, the
+routes' Vertex passthroughs, and the legacy model-list handler.
 
 **Legacy providers** ([src/providers/*.ts](src/providers/)) are used only for
 `fetchModelList()` (model aggregation).

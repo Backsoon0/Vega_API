@@ -10,7 +10,8 @@ import { streamText, generateText } from 'ai';
 import type { Env } from '../../types.js';
 import type { ProviderMatch } from '../../router.js';
 import { findProviderForModel } from '../../router.js';
-import { createModelFromProvider, getVertexAccessToken, isVertexApiKeyMode } from '../../ai-providers.js';
+import { createModelFromProvider } from '../../ai-providers.js';
+import { getVertexAccessToken, isVertexApiKeyMode } from '../../google-auth.js';
 import { recordUsage, extractCacheTokens, extractOpenAICacheTokens } from '../../usage.js';
 import { getFailoverEnabled } from '../../config.js';
 import { getClientKeyName } from '../../middleware/auth.js';
@@ -826,7 +827,7 @@ async function handleOpenAIStream(
 	isLastAttempt: boolean,
 ): Promise<Response> {
 	const modelId = String(body.model).trim();
-	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
+	const model = createModelFromProvider(provider.provider, provider.matchedModel);
 
 	const messages = openaiToAISDKMessages(
 		(body.messages as Array<{ role: string; content: unknown }>) || [],
@@ -1123,7 +1124,7 @@ async function handleOpenAINonStream(
 	isLastAttempt: boolean,
 ): Promise<Response> {
 	const modelId = String(body.model).trim();
-	const model = createModelFromProvider(provider.provider, env, provider.matchedModel);
+	const model = createModelFromProvider(provider.provider, provider.matchedModel);
 
 	const messages = openaiToAISDKMessages(
 		(body.messages as Array<{ role: string; content: unknown }>) || [],

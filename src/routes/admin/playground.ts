@@ -16,11 +16,8 @@ import type { Context } from 'hono';
 import { streamText, generateText } from 'ai';
 import type { Env, Provider } from '../../types.js';
 import { getProvider } from '../../config.js';
-import {
-	createModelFromProvider,
-	getVertexAccessToken,
-	isVertexApiKeyMode,
-} from '../../ai-providers.js';
+import { createModelFromProvider } from '../../ai-providers.js';
+import { getVertexAccessToken, isVertexApiKeyMode } from '../../google-auth.js';
 import { PROVIDER_HANDLERS, withTimeout } from '../../router.js';
 
 export const adminPlaygroundRoutes = new Hono<{ Bindings: Env }>();
@@ -74,7 +71,7 @@ adminPlaygroundRoutes.get('/playground/models/:providerId', async (c: Context<{ 
 
 	try {
 		const live = await withTimeout(
-			handler.fetchModelList(c.env, provider.config),
+			handler.fetchModelList(provider.config),
 			10_000,
 			`Live model fetch for provider ${providerId}`,
 		);
@@ -109,7 +106,7 @@ adminPlaygroundRoutes.post('/playground/chat', async (c: Context<{ Bindings: Env
 	// Anthropic uses AI SDK; OpenAI/Google/Vertex use direct fetch
 	if (provider.type === 'anthropic') {
 		return isStream
-			? handleAnthropicStream(c, provider, modelId, messages, system)
+			? handleAnthropicStream(provider, modelId, messages, system)
 			: handleAnthropicNonStream(c, provider, modelId, messages, system);
 	}
 
@@ -308,13 +305,12 @@ async function handleDirectNonStream(
 // ---- Anthropic AI SDK handlers ----
 
 async function handleAnthropicStream(
-	c: Context<{ Bindings: Env }>,
 	provider: Provider,
 	modelId: string,
 	messages: ChatMessage[],
 	system: string | undefined,
 ): Promise<Response> {
-	const model = createModelFromProvider(provider, c.env, modelId);
+	const model = createModelFromProvider(provider, modelId);
 
 	const result = streamText({
 		model,
@@ -375,7 +371,7 @@ async function handleAnthropicNonStream(
 	messages: ChatMessage[],
 	system: string | undefined,
 ): Promise<Response> {
-	const model = createModelFromProvider(provider, c.env, modelId);
+	const model = createModelFromProvider(provider, modelId);
 
 	const result = await generateText({
 		model,

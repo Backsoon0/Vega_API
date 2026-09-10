@@ -151,7 +151,7 @@ export async function getAggregatedModels(env: Env): Promise<Model[]> {
 				if (handler?.fetchModelList) {
 					livePromises.push(
 						withTimeout(
-							handler.fetchModelList(env, p.config),
+							handler.fetchModelList(p.config),
 							10_000,
 							`Model fetch for provider ${p.id} (${p.type})`,
 						)

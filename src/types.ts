@@ -173,15 +173,13 @@ export interface Env {
 	DEPLOYMENT_PLATFORM?: string;
 }
 
+/**
+ * Legacy provider handler — supplies ONLY the live model-list aggregation
+ * (see PROVIDER_HANDLERS in src/router.ts). Chat requests never go through
+ * these handlers; they use direct passthrough or the AI SDK factory instead.
+ */
 export interface ProviderHandler {
-  proxyRequest(
-    request: Request,
-    env: Env,
-    provider: Provider,
-    suffix: string
-  ): Promise<Response>;
   fetchModelList(
-    env: Env,
     config: Record<string, string>
   ): Promise<Model[]>;
 }

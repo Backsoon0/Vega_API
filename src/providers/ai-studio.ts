@@ -1,62 +1,19 @@
 // src/providers/ai-studio.ts
-// Google AI Studio (Gemini API) backend proxy
-// Uses OpenAI-compatible endpoint at generativelanguage.googleapis.com
-// Auth: Bearer token (API key)
+// Google AI Studio (Gemini API) model-list fetch — legacy provider handler.
+// Chat requests bypass this file entirely (direct passthrough in
+// src/routes/*). Uses the OpenAI-compatible endpoint first, then the
+// native Gemini models API.
 
-import type { Env, Provider, Model } from '../types.js';
+import type { Model } from '../types.js';
 
 const UPSTREAM_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
-
-/**
- * Build and proxy a request to Google AI Studio (pass-through, no format conversion).
- */
-export async function proxyRequest(
-  request: Request, env: Env, provider: Provider, suffix: string
-): Promise<Response> {
-  const apiKey = provider.config.apiKey;
-  if (!apiKey) throw new Error('AI Studio: Missing apiKey');
-
-  const upstreamUrl = new URL(UPSTREAM_BASE);
-  upstreamUrl.pathname += suffix;
-
-  const reqUrl = new URL(request.url);
-  upstreamUrl.search = reqUrl.search;
-
-  const headers = new Headers(request.headers);
-	// Remove incoming Authorization — it's the client key, not the provider key
-	headers.delete('Authorization');
-	headers.set('x-goog-api-key', apiKey);
-  if (!headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  // For /chat/completions, strip google/ and models/ prefixes from model name
-  let body: BodyInit | null = request.body;
-  if (suffix === '/chat/completions' && body) {
-    try {
-      const cloned = request.clone();
-      const json = await cloned.json() as Record<string, unknown>;
-      if (json.model) {
-        json.model = String(json.model).replace(/^(google\/|models\/)+/, '');
-        body = JSON.stringify(json);
-        headers.delete('content-length');
-      }
-    } catch {
-      // If parsing fails, use original body
-    }
-  }
-
-  return fetch(new Request(upstreamUrl.toString(), {
-    method: request.method, headers, body,
-  }));
-}
 
 /**
  * Fetch available models from Google AI Studio.
  * Tries the OpenAI-compatible endpoint first, falls back to the native Gemini API.
  */
 export async function fetchModelList(
-	env: Env, config: Record<string, string>
+	config: Record<string, string>
 ): Promise<Model[]> {
 	const apiKey = config.apiKey;
 	if (!apiKey) {
