@@ -230,10 +230,14 @@ async function handleAnthropicDirectStream(
 			? { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 			: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
-	// Connect timeout: 15s for TCP + TLS + headers. Cancelled once connected so
-	// streaming body reads are NOT affected. Prevents hanging on unresponsive upstream.
+	// Connect timeout: covers TCP + TLS + waiting for response headers. Some
+	// providers (Aliyun MaaS dedicated instances) queue requests while busy and
+	// delay response headers well beyond TCP/TLS time, so this must tolerate
+	// slow header arrival — 60s. Cancelled once fetch resolves so streaming
+	// body reads are NOT affected. clientSignal still aborts immediately when
+	// the client disconnects.
 	const connectController = new AbortController();
-	const connectTimer = setTimeout(() => connectController.abort(), 15_000);
+	const connectTimer = setTimeout(() => connectController.abort(), 60_000);
 	const upstreamResponse = await fetch(`${baseUrl}/chat/completions`, {
 		method: 'POST',
 		headers: authHeaders,
@@ -598,10 +602,12 @@ async function handleAnthropicStream(
 	const model = createModelFromProvider(provider.provider, provider.matchedModel);
 	const { messages, system } = anthropicToAISDK(body);
 
-	// Connect timeout: 15s for initial upstream connection. Cancelled on first chunk
-	// so streaming body reads are NOT affected.
+	// Connect timeout: covers TCP + TLS + response headers. Mirrors the direct
+	// passthrough path above — 60s because busy upstreams (Aliyun MaaS queueing)
+	// delay response headers beyond TCP/TLS time. Cancelled on first chunk so
+	// streaming body reads are NOT affected.
 	const connectController = new AbortController();
-	const connectTimer = setTimeout(() => connectController.abort(), 15_000);
+	const connectTimer = setTimeout(() => connectController.abort(), 60_000);
 
 	const result = streamText({
 		model,

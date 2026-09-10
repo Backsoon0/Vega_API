@@ -14,7 +14,6 @@
     { "source": "/v1/:path*", "destination": "/api" },
     { "source": "/anthropic/:path*", "destination": "/api" },
     { "source": "/admin/:path*", "destination": "/api" },
-    { "source": "/api/_debug/:path*", "destination": "/api" },
     {
       "source": "/((?!api/|.*\\.).*)",
       "destination": "/index.html"

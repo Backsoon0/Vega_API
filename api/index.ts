@@ -21,7 +21,6 @@
 import type { Env } from '../src/types.js';
 import { app, prepareRuntime } from '../src/app.js';
 import { NeonDBClient } from './neon.js';
-import { getProvider } from '../src/config.js';
 
 // ---- Resolve the Postgres/Neon connection string (Waline-style names) ----
 
@@ -142,106 +141,12 @@ async function writeResponseToNode(res: any, response: Response): Promise<void> 
 	res.end();
 }
 
-// ---- Temporary debug: measure Vercel → Aliyun MaaS connect latency ----
-// Enable in Vercel by setting env DEBUG_TOKEN=<random>. Disable by removing the var.
-// Hit: curl -H "x-debug-token: <token>" https://<host>/api/_debug/ping-upstream
-
-function isDebugPingUrl(req: any): boolean {
-	const u = typeof req.url === 'string' ? req.url : '';
-	if (u.startsWith('/_debug/ping-upstream') || u.startsWith('/api/_debug/ping-upstream')) return true;
-	try {
-		return new URL(u).pathname === '/api/_debug/ping-upstream';
-	} catch {
-		return false;
-	}
-}
-
-async function handleDebugPing(req: any, res?: any): Promise<Response | void> {
-	const send = (status: number, body: unknown): Response | void => {
-		const json = JSON.stringify(body, null, 2);
-		if (res && typeof res.statusCode === 'number') {
-			res.statusCode = status;
-			res.setHeader('content-type', 'application/json');
-			res.end(json);
-			return;
-		}
-		return new Response(json, { status, headers: { 'content-type': 'application/json' } });
-	};
-
-	const expected = process.env.DEBUG_TOKEN;
-	if (!expected) return send(404, { error: 'Not Found' });
-
-	let token = '';
-	if (typeof req.headers?.get === 'function') {
-		token = req.headers.get('x-debug-token') || '';
-	} else if (req.headers && typeof req.headers === 'object') {
-		const raw = (req.headers as Record<string, string | string[] | undefined>)['x-debug-token'];
-		token = Array.isArray(raw) ? raw[0] || '' : raw || '';
-	}
-	if (token !== expected) return send(404, { error: 'Not Found' });
-
-	const runtimeEnv = getEnv();
-	const provider = await getProvider(runtimeEnv, 'aliyun').catch((e) => {
-		console.error('[debug-ping] getProvider failed:', e);
-		return null;
-	});
-	if (!provider) {
-		return send(404, { error: 'aliyun provider not found in DB' });
-	}
-
-	const apiKey = provider.config.apiKey || '';
-	if (!apiKey) {
-		return send(500, { error: 'aliyun provider has no apiKey in config' });
-	}
-	const rawBaseUrl = (provider.config.baseUrl || '').replace(/\/+$/, '');
-	if (!rawBaseUrl) {
-		return send(500, { error: 'aliyun provider has no baseUrl in config' });
-	}
-
-	// Match the real route logic (src/routes/v1/chat.ts:380-382): ensure baseUrl ends with /v1,
-	// then probe the cheapest authenticated endpoint (/models).
-	const url = rawBaseUrl.endsWith('/v1')
-		? `${rawBaseUrl}/models`
-		: `${rawBaseUrl}/v1/models`;
-	const t0 = Date.now();
-	let httpStatus = 0;
-	let errMsg = '';
-	try {
-		const ctrl = new AbortController();
-		const timer = setTimeout(() => ctrl.abort(), 30_000);
-		try {
-			const r = await fetch(url, {
-				headers: { Authorization: `Bearer ${apiKey}` },
-				signal: ctrl.signal,
-			});
-			httpStatus = r.status;
-		} finally {
-			clearTimeout(timer);
-		}
-	} catch (e) {
-		errMsg = (e as Error)?.message || String(e);
-	}
-
-	return send(200, {
-		provider: 'aliyun',
-		url,
-		region: process.env.VERCEL_REGION || 'unknown',
-		elapsed_ms: Date.now() - t0,
-		http_status: httpStatus,
-		error: errMsg || undefined,
-		ts: new Date().toISOString(),
-	});
-}
-
 /**
  * Vercel Node handler. Vercel may call it with either a web `Request` (return a
  * `Response`) or the classic Node `(req, res)` pair (write to `res`). Both are
  * supported, so the Hono app always receives a standard web `Request`.
  */
 export default async function handler(req: any, res?: any): Promise<Response | void> {
-	// Debug ping endpoint — short-circuits before Hono, only reachable when DEBUG_TOKEN is set.
-	if (isDebugPingUrl(req)) return handleDebugPing(req, res);
-
 	try {
 		const runtimeEnv = getEnv();
 		// One-time per-cold-start init: schema + circuit-breaker config.
