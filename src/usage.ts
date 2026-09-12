@@ -26,6 +26,25 @@ export async function pruneCallLogs(env: Env, maxRows: number): Promise<void> {
 }
 
 /**
+ * How long `usage_hourly` rows are kept: the panel's longest range is 30 days, so
+ * 35 days covers it with a margin. At one row per UTC hour this is ≤ 840 rows —
+ * the table exists only to make the daily report local-day exact, so anything
+ * older is dead weight. Pruning is safe: a missing hour bucket simply makes that
+ * UTC day fall back to its `usage_daily` remainder (see `getUsageReport`).
+ */
+export const USAGE_HOURLY_RETENTION_HOURS = 24 * 35;
+
+/**
+ * Delete `usage_hourly` rows older than `keepHours` (one ranged DELETE on the
+ * `bucket` primary key). Called from recordUsage's probabilistic cleanup.
+ */
+export async function pruneUsageHourly(env: Env, keepHours: number = USAGE_HOURLY_RETENTION_HOURS): Promise<void> {
+  if (!Number.isFinite(keepHours) || keepHours <= 0) return;
+  const cutoff = new Date(Date.now() - keepHours * 3600000).toISOString().slice(0, 13);
+  await env.DB.prepare('DELETE FROM usage_hourly WHERE bucket < ?').bind(cutoff).run();
+}
+
+/**
  * Record usage after each API call. Fire-and-forget.
  * Inserts into usage_daily (aggregated) and call_logs (detail).
  * Probabilistic cleanup (~1% of calls) prunes old log rows beyond the configured retention limit.
@@ -99,10 +118,12 @@ export async function recordUsage(
     }
 
     // Probabilistic cleanup: ~1% of calls. Retention limit is read from D1 config
-    // (configurable in the admin panel), defaulting to 10000 rows.
+    // (configurable in the admin panel), defaulting to 10000 rows. The hourly
+    // aggregate is trimmed in the same pass so it cannot grow without bound.
     if (Math.random() < 0.01) {
       const maxRows = await getLogRetentionLimit(env);
       await pruneCallLogs(env, maxRows);
+      await pruneUsageHourly(env, USAGE_HOURLY_RETENTION_HOURS);
     }
 
     // Hour-granular totals (UTC hour key) — lets the admin report re-bucket by the

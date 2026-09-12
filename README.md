@@ -524,7 +524,7 @@ vega-api-db
 ├── api_keys       — 客户端 API 密钥（名称、SHA-256 哈希、加密存储、使用时间、配额：quota_calls / quota_tokens / quota_period）
 ├── key_usage_daily— 每密钥每日用量（key_name + date 唯一，calls / prompt_tokens / completion_tokens），驱动配额检查与用量报表的按密钥分组
 ├── usage_daily    — 每日聚合用量（date, provider_id, model 三维度；UTC 日期）
-├── usage_hourly   — 每小时聚合总量（bucket = UTC 小时键，calls / prompt_tokens / completion_tokens），供用量报表按查看者本地时区切分日期
+├── usage_hourly   — 每小时聚合总量（bucket = UTC 小时键，calls / prompt_tokens / completion_tokens），供用量报表按查看者本地时区切分日期；仅保留 35 天（≤840 行），随调用自动清理
 ├── call_logs      — 详细调用记录（模型、Token、耗时、缓存命中、密钥追踪，保留上限可在设置页配置，默认 10000 条）
 └── rate_limits    — 登录限流数据
 ```

@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import worker from "../src";
 import { sha256 } from "../src/crypto";
 import { invalidateCaches } from "../src/router";
+import { pruneUsageHourly, USAGE_HOURLY_RETENTION_HOURS } from "../src/usage";
 
 // End-to-end check of GET /admin/usage/report — the overview page charts read
 // from this endpoint (usage_daily series + byModel + key_usage_daily byKey).
@@ -239,5 +240,22 @@ describe("GET /admin/usage/report", () => {
     expect(data.series.length).toBe(8);
     expect(data.series.every((s) => s.date.length === 10)).toBe(true);
     expect(data.series.find((s) => s.date === isoDaysAgo(0)).calls).toBe(3);
+  });
+
+  it("auto-prunes usage_hourly buckets older than the retention window", async () => {
+    const hourKey = (ms) => new Date(ms).toISOString().slice(0, 13);
+    const nowMs = Date.now();
+    const fresh = hourKey(nowMs - 3 * 3600000);
+    const stale = hourKey(nowMs - (USAGE_HOURLY_RETENTION_HOURS + 24) * 3600000);
+    const insert = "INSERT INTO usage_hourly (bucket, calls, prompt_tokens, completion_tokens) VALUES (?, 1, 10, 20)";
+    await env.DB.prepare(insert).bind(fresh).run();
+    await env.DB.prepare(insert).bind(stale).run();
+
+    await pruneUsageHourly(env);
+
+    const rows = await env.DB.prepare("SELECT bucket FROM usage_hourly ORDER BY bucket").all();
+    expect(rows.results.map((r) => r.bucket)).toEqual([fresh]);
+    // the retention window must cover the panel's longest range (30 days)
+    expect(USAGE_HOURLY_RETENTION_HOURS).toBeGreaterThanOrEqual(24 * 30);
   });
 });
