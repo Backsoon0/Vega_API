@@ -341,17 +341,146 @@ export async function getUsageTotals(env: Env): Promise<Record<string, UsageReco
   return result;
 }
 
-/**
- * Report payload for the admin "用量报表": daily series + per-model breakdown
- * (from usage_daily) + per-key breakdown (from key_usage_daily).
- */
-export async function getUsageReport(env: Env, days: number): Promise<{
+/** Ranges up to this many hours render an hourly series; longer ranges stay daily. */
+export const HOURLY_SERIES_MAX_HOURS = 24;
+
+/** Cap for the hourly/day window (365 days). */
+const MAX_REPORT_HOURS = 365 * 24;
+
+export interface UsageReportOptions {
+	/** Rolling window in hours — preferred. `hours <= HOURLY_SERIES_MAX_HOURS` → hourly series. */
+	hours?: number;
+	/** Legacy day-granularity window (`?days=`) — always keeps day granularity. */
+	days?: number;
+}
+
+export type UsageGranularity = 'hour' | 'day';
+
+export interface UsageReport {
+	granularity: UsageGranularity;
+	/** Requested hours (`null` in the legacy `?days=` mode). */
+	hours: number | null;
 	days: number;
+	/** `date` is `YYYY-MM-DDTHH` when granularity is 'hour', `YYYY-MM-DD` when 'day'. */
 	series: Array<{ date: string; calls: number; tokens: number }>;
 	byModel: Array<{ model: string; calls: number; tokens: number }>;
 	byKey: Array<{ keyName: string; calls: number; tokens: number }>;
-}> {
-	const n = Number.isFinite(days) ? Math.min(Math.max(Math.floor(days), 1), 365) : 7;
+}
+
+/**
+ * Report payload for the admin "用量报表".
+ *
+ * Granularity follows the selected range so short windows stay readable:
+ * - `hours <= HOURLY_SERIES_MAX_HOURS` (24) → **hourly** buckets read from
+ *   `call_logs` (which carries the timestamp); "最近 24 小时" renders 24 points
+ *   instead of the 2 daily ones a date-granular table could offer.
+ * - anything longer (or the legacy `days` form) → **daily** buckets from
+ *   `usage_daily` / `key_usage_daily`, unchanged.
+ *
+ * In hourly mode `byModel` / `byKey` are read from the SAME rolling window so the
+ * breakdown bars always add up to the trend chart.
+ */
+export async function getUsageReport(env: Env, options: UsageReportOptions = {}): Promise<UsageReport> {
+	const hoursParam = options.hours;
+	const requestedHours =
+		typeof hoursParam === 'number' && Number.isFinite(hoursParam)
+			? Math.min(Math.max(Math.floor(hoursParam), 1), MAX_REPORT_HOURS)
+			: null;
+	const hourly = requestedHours !== null && requestedHours <= HOURLY_SERIES_MAX_HOURS;
+
+	const daysParam = options.days;
+	const n = hourly
+		? requestedHours!
+		: typeof daysParam === 'number' && Number.isFinite(daysParam)
+			? Math.min(Math.max(Math.floor(daysParam), 1), 365)
+			: 7;
+
+	const series: Array<{ date: string; calls: number; tokens: number }> = [];
+	const byModel: Array<{ model: string; calls: number; tokens: number }> = [];
+	const byKey: Array<{ keyName: string; calls: number; tokens: number }> = [];
+
+	// ---- Hourly mode: rolling window of `n` clock hours (UTC), ending with the
+	// current hour; sourced from call_logs because usage_daily is date-granular.
+	// Buckets line up with `substr(timestamp, 1, 13)` (= 'YYYY-MM-DDTHH'), which is
+	// valid on both SQLite and Postgres, so no per-platform SQL is needed.
+	if (hourly) {
+		const nowMs = Date.now();
+		const currentHourMs = nowMs - (nowMs % 3600000);
+		const startMs = currentHourMs - (n - 1) * 3600000;
+		const from = new Date(startMs).toISOString();
+		const hourKey = (ms: number) => new Date(ms).toISOString().slice(0, 13);
+
+		try {
+			const rows = await env.DB
+				.prepare(
+					'SELECT substr(timestamp, 1, 13) as bucket, COUNT(*) as calls, SUM(prompt_tokens) as pt, SUM(completion_tokens) as ct FROM call_logs WHERE timestamp >= ? GROUP BY substr(timestamp, 1, 13) ORDER BY bucket',
+				)
+				.bind(from)
+				.all<{ bucket: string; calls: number; pt: number; ct: number }>();
+			const byBucket = new Map<string, { calls: number; tokens: number }>();
+			for (const r of rows.results || []) {
+				byBucket.set(String(r.bucket), {
+					calls: Number(r.calls) || 0,
+					tokens: (Number(r.pt) || 0) + (Number(r.ct) || 0),
+				});
+			}
+			// Zero-fill every hour so the trend line is continuous.
+			for (let i = 0; i < n; i++) {
+				const key = hourKey(startMs + i * 3600000);
+				const v = byBucket.get(key);
+				series.push({ date: key, calls: v?.calls ?? 0, tokens: v?.tokens ?? 0 });
+			}
+		} catch (err) {
+			console.error('Usage report hourly series error:', (err as Error).message);
+		}
+
+		try {
+			const modelRows = await env.DB
+				.prepare(
+					'SELECT model, COUNT(*) as calls, SUM(prompt_tokens) as pt, SUM(completion_tokens) as ct FROM call_logs WHERE timestamp >= ? GROUP BY model ORDER BY calls DESC LIMIT 12',
+				)
+				.bind(from)
+				.all<{ model: string; calls: number; pt: number; ct: number }>();
+			for (const r of modelRows.results || []) {
+				byModel.push({
+					model: r.model,
+					calls: Number(r.calls) || 0,
+					tokens: (Number(r.pt) || 0) + (Number(r.ct) || 0),
+				});
+			}
+		} catch (err) {
+			console.error('Usage report hourly byModel error:', (err as Error).message);
+		}
+
+		try {
+			const keyRows = await env.DB
+				.prepare(
+					"SELECT api_key_name, COUNT(*) as calls, SUM(prompt_tokens) as pt, SUM(completion_tokens) as ct FROM call_logs WHERE timestamp >= ? AND api_key_name <> '' GROUP BY api_key_name ORDER BY calls DESC LIMIT 12",
+				)
+				.bind(from)
+				.all<{ api_key_name: string; calls: number; pt: number; ct: number }>();
+			for (const r of keyRows.results || []) {
+				byKey.push({
+					keyName: r.api_key_name,
+					calls: Number(r.calls) || 0,
+					tokens: (Number(r.pt) || 0) + (Number(r.ct) || 0),
+				});
+			}
+		} catch (err) {
+			console.error('Usage report hourly byKey error:', (err as Error).message);
+		}
+
+		return {
+			granularity: 'hour',
+			hours: requestedHours,
+			days: Math.max(1, Math.ceil(n / 24)),
+			series,
+			byModel,
+			byKey,
+		};
+	}
+
+	// ---- Daily mode (unchanged).
 	// usage_daily is date-granular (UTC dates): a call inside a rolling window can
 	// fall on the calendar day BEFORE the window start (e.g. 23:00 yesterday is
 	// within "最近 24 小时"). Start the window n full days back and include that
@@ -359,10 +488,6 @@ export async function getUsageReport(env: Env, days: number): Promise<{
 	// fixes the "24h view empty in the morning" case while keeping the same
 	// daily-granularity semantics for n>1 (e.g. days=7 → now-7d .. today).
 	const from = new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
-
-	const series: Array<{ date: string; calls: number; tokens: number }> = [];
-	const byModel: Array<{ model: string; calls: number; tokens: number }> = [];
-	const byKey: Array<{ keyName: string; calls: number; tokens: number }> = [];
 
 	try {
 		// Daily series — reuse the date-range query shape, then zero-fill every day
@@ -425,7 +550,7 @@ export async function getUsageReport(env: Env, days: number): Promise<{
 		console.error('Usage report byKey error:', (err as Error).message);
 	}
 
-	return { days: n, series, byModel, byKey };
+	return { granularity: 'day', hours: null, days: n, series, byModel, byKey };
 }
 
 /** Coerce a token count from number/string/undefined — returns 0 for invalid values. */

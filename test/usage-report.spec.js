@@ -126,4 +126,67 @@ describe("GET /admin/usage/report", () => {
     expect(data.byKey[0].keyName).toBe("Cherry Studio");
     expect(data.byKey[0].calls).toBe(5);
   });
+
+  it("hours=24 returns an hourly series (24 buckets) sourced from call_logs", async () => {
+    const insert =
+      "INSERT INTO call_logs (timestamp, ip, provider_id, model, prompt_tokens, completion_tokens, duration_ms, success, request_id, is_stream, extra, cache_read_input_tokens, cache_creation_input_tokens, api_key_name) VALUES (?, '1.1.1.1', 'aliyun', ?, ?, ?, 12, 1, 'req', 0, '{}', 0, 0, ?)";
+    const nowMs = Date.now();
+    const currentHourMs = nowMs - (nowMs % 3600000);
+    const at = (offsetHours, minutes = 0) =>
+      new Date(currentHourMs + offsetHours * 3600000 + minutes * 60000).toISOString();
+    const hourKey = (ms) => new Date(ms).toISOString().slice(0, 13);
+
+    // 2 calls in the current hour (named key), 1 four hours ago (anonymous key),
+    // 1 well outside the 24h window (must be ignored)
+    await env.DB.prepare(insert).bind(at(0, 1), "qwen3.8-flash", 10, 20, "Cherry Studio").run();
+    await env.DB.prepare(insert).bind(at(0, 2), "qwen3.8-flash", 30, 40, "Cherry Studio").run();
+    await env.DB.prepare(insert).bind(at(-4), "gemini-3", 5, 5, "").run();
+    await env.DB.prepare(insert).bind(at(-30), "gemini-3", 999, 999, "").run();
+
+    const token = await auth();
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request("http://example.com/admin/usage/report?hours=24", { headers: { Authorization: `Bearer ${token}` } }),
+      env, ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(200);
+    const data = await response.json();
+
+    expect(data.granularity).toBe("hour");
+    expect(data.hours).toBe(24);
+    // 24 hourly buckets, zero-filled, ending with the current hour
+    expect(data.series.length).toBe(24);
+    expect(data.series[23].date).toBe(hourKey(currentHourMs));
+    expect(data.series[23].calls).toBe(2);
+    expect(data.series[23].tokens).toBe(100); // 10+20 and 30+40
+    expect(data.series[19].calls).toBe(1); // now - 4h
+    expect(data.series[10].calls).toBe(0); // empty hour
+
+    // byModel / byKey come from the same window → the 30h-old row is excluded
+    expect(data.byModel.map((m) => m.model).sort()).toEqual(["gemini-3", "qwen3.8-flash"]);
+    expect(data.byModel.find((m) => m.model === "gemini-3").calls).toBe(1);
+    expect(data.byKey).toEqual([{ keyName: "Cherry Studio", calls: 2, tokens: 100 }]);
+  });
+
+  it("hours=168 stays on daily granularity (30d and 7d views unchanged)", async () => {
+    await env.DB.prepare("INSERT INTO usage_daily (date, provider_id, model, calls, prompt_tokens, completion_tokens) VALUES (?, 'aliyun', 'qwen3.8-flash', 3, 88, 404)")
+      .bind(isoDaysAgo(0)).run();
+
+    const token = await auth();
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request("http://example.com/admin/usage/report?hours=168", { headers: { Authorization: `Bearer ${token}` } }),
+      env, ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(200);
+    const data = await response.json();
+
+    expect(data.granularity).toBe("day");
+    expect(data.days).toBe(7);
+    expect(data.series.length).toBe(8);
+    expect(data.series.every((s) => s.date.length === 10)).toBe(true);
+    expect(data.series.find((s) => s.date === isoDaysAgo(0)).calls).toBe(3);
+  });
 });

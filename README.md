@@ -367,7 +367,7 @@ response = client.messages.create(
 | `/admin/settings` | GET/PUT | Bearer | 获取/更新设置 (故障转移、熔断器、调用记录保留上限等) |
 | `/admin/change-password` | POST | Bearer | 修改管理密码 |
 | `/admin/usage` | GET | Bearer | 用量统计 |
-| `/admin/usage/report` | GET | Bearer | 用量报表（`?days=`，返回按日/按模型/按密钥聚合序列，供 ECharts 渲染） |
+| `/admin/usage/report` | GET | Bearer | 用量报表（`?hours=`，≤24 小时返回按小时序列、更长返回按天序列，含按模型/按密钥聚合，供 ECharts 渲染；旧 `?days=` 仍按天） |
 | `/admin/logs` | GET | Bearer | 调用记录 |
 | `/admin/logs` | DELETE | Bearer | 一键清空全部调用记录 |
 

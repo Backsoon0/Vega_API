@@ -122,7 +122,7 @@ config load) then `app.fetch(request, env, ctx)`.
 | [src/routes/admin/auth.ts](src/routes/admin/auth.ts) | Admin auth (setup, login, check, change-password) |
 | [src/routes/admin/providers.ts](src/routes/admin/providers.ts) | Provider CRUD (supports all 4 types) |
 | [src/routes/admin/client-key.ts](src/routes/admin/client-key.ts) | Client API key management (multi-key + legacy migration + per-key quota `calls`/`tokens`/`period`) |
-| [src/routes/admin/usage.ts](src/routes/admin/usage.ts) | Usage stats, call logs, settings (failover/circuit-breaker/retention), `GET /admin/usage/report?days=` usage-report series for ECharts |
+| [src/routes/admin/usage.ts](src/routes/admin/usage.ts) | Usage stats, call logs, settings (failover/circuit-breaker/retention), `GET /admin/usage/report?hours=` usage-report series for ECharts (`hours<=24` → hourly from `call_logs`, longer → daily; legacy `?days=` stays daily) |
 | [src/routes/admin/playground.ts](src/routes/admin/playground.ts) | Model playground (AI SDK streamText/generateText) |
 | [src/routes/admin/routes.ts](src/routes/admin/routes.ts) | Route-topology statistics (per-route usage/errors, chart data) |
 | [test/index.spec.js](test/index.spec.js) | Integration tests (`cloudflare:test` Vitest pool) |

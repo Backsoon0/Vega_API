@@ -21,6 +21,9 @@
   ];
   const rangeLabel = $derived(RANGES.find((r) => r.hours === rangeHours)?.label || "最近 24 小时");
   const rangeDays = $derived(Math.max(1, Math.round(rangeHours / 24)));
+  // 范围 ≤ 24 小时时后端返回按小时序列（24 个点），更长范围仍是按天 —— 图表单位随之切换
+  const granularity = $derived(report?.granularity ?? (rangeHours <= 24 ? "hour" : "day"));
+  const hourly = $derived(granularity === "hour");
   const rangeOptions = RANGES.map((r) => ({ value: r.hours, label: r.label }));
 
   const TYPE_LABEL: Record<string, string> = {
@@ -42,7 +45,7 @@
     try {
       const [p, r, rs, logs] = await Promise.all([
         getProviders().catch(() => [] as Provider[]),
-        getUsageReport(rangeDays).catch(() => null as UsageReport | null),
+        getUsageReport(rangeHours).catch(() => null as UsageReport | null),
         getRouteStats(rangeHours).catch(() => null as RouteStatsResponse | null),
         getCallLogs(new URLSearchParams({ limit: "6" })).catch(() => ({ logs: [] as LogEntry[], total: 0, hasMore: false })),
       ]);
@@ -82,7 +85,8 @@
     xAxis: {
       ...axes.xAxis,
       type: "category",
-      data: series.map((d) => d.date.slice(5)),
+      // 按小时 → "14:00"；按天 → "09-12"
+      data: series.map((d) => (hourly ? `${d.date.slice(11, 13)}:00` : d.date.slice(5))),
     },
     yAxis: [{ ...axes.yAxis, type: "value", minInterval: 1 }, { ...axes.yAxis, type: "value", splitLine: { show: false } }],
     series: [
@@ -152,7 +156,7 @@
   function exportCsv() {
     if (!report) return;
     const lines: string[] = [];
-    lines.push("日期,调用次数,Token");
+    lines.push(`${hourly ? "时间" : "日期"},调用次数,Token`);
     for (const d of report.series) lines.push(`${d.date},${d.calls},${d.tokens}`);
     lines.push("");
     lines.push("模型,调用次数,Token");
@@ -163,7 +167,7 @@
     const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `vega-usage-report-${rangeDays}d.csv`;
+    a.download = `vega-usage-report-${hourly ? `${rangeHours}h` : `${rangeDays}d`}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -272,7 +276,7 @@
           </h2>
           <div class="sub">全部 Provider · {rangeLabel}</div>
         </div>
-        <span class="chip chip-cta">{rangeDays}d</span>
+        <span class="chip chip-cta">{hourly ? "每小时" : "每天"}</span>
       </div>
       <div style="padding:18px 20px 14px">
         {#if !report}
@@ -326,7 +330,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18" /><path d="M7 15l4-5 3 3 5-6" /></svg>
           用量报表
         </h2>
-        <div class="sub">按模型 / 密钥分组 · {rangeLabel}</div>
+        <div class="sub">按模型 / 密钥分组 · {rangeLabel} · 按{hourly ? "小时" : "天"}统计</div>
       </div>
       <button class="btn btn-ghost btn-sm" onclick={exportCsv} disabled={!report || totalCalls === 0}>导出 CSV</button>
     </div>

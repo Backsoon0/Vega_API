@@ -429,16 +429,20 @@ export interface ApiKeyInfo {
 	usageTokens: number;
 }
 
-// 用量报表 — GET /admin/usage/report?days=N
+// 用量报表 — GET /admin/usage/report?hours=N
+// hours <= 24 返回按小时序列（date = 'YYYY-MM-DDTHH'），更长范围返回按天序列（date = 'YYYY-MM-DD'）
 export interface UsageReport {
+	granularity: 'hour' | 'day';
+	hours: number | null;
 	days: number;
 	series: Array<{ date: string; calls: number; tokens: number }>;
 	byModel: Array<{ model: string; calls: number; tokens: number }>;
 	byKey: Array<{ keyName: string; calls: number; tokens: number }>;
 }
 
-export async function getUsageReport(days = 7) {
-	const { ok, data } = await request('GET', `/usage/report?days=${days}`);
+/** Range ≤ 24h → hourly buckets, longer ranges → daily buckets (server decides). */
+export async function getUsageReport(hours = 24) {
+	const { ok, data } = await request('GET', `/usage/report?hours=${hours}`);
 	if (!ok) throw new Error(data.error || '获取用量报表失败');
 	return data as UsageReport;
 }
