@@ -122,7 +122,7 @@ config load) then `app.fetch(request, env, ctx)`.
 | [src/routes/admin/auth.ts](src/routes/admin/auth.ts) | Admin auth (setup, login, check, change-password) |
 | [src/routes/admin/providers.ts](src/routes/admin/providers.ts) | Provider CRUD (supports all 4 types) |
 | [src/routes/admin/client-key.ts](src/routes/admin/client-key.ts) | Client API key management (multi-key + legacy migration + per-key quota `calls`/`tokens`/`period`) |
-| [src/routes/admin/usage.ts](src/routes/admin/usage.ts) | Usage stats, call logs, settings (failover/circuit-breaker/retention), `GET /admin/usage/report?hours=` usage-report series for ECharts (`hours<=24` → hourly from `call_logs`, longer → daily; legacy `?days=` stays daily) |
+| [src/routes/admin/usage.ts](src/routes/admin/usage.ts) | Usage stats, call logs, settings (failover/circuit-breaker/retention), `GET /admin/usage/report?hours=&tz=` usage-report series for ECharts (`hours<=24` → UTC-hourly from `call_logs`; longer → daily split by the viewer's local day via `usage_hourly`; legacy `?days=` stays daily) |
 | [src/routes/admin/playground.ts](src/routes/admin/playground.ts) | Model playground (AI SDK streamText/generateText) |
 | [src/routes/admin/routes.ts](src/routes/admin/routes.ts) | Route-topology statistics (per-route usage/errors, chart data) |
 | [test/index.spec.js](test/index.spec.js) | Integration tests (`cloudflare:test` Vitest pool) |
@@ -193,7 +193,8 @@ table/column layout (Postgres uses `SERIAL` for auto-increment ids).
 |-------|-----------|---------|
 | `config` | `key TEXT PK, value TEXT` | config_version, admin_password hash, client api key (encrypted), failover_enabled, circuit_breaker_threshold/cooldown_seconds, log_retention_limit, rate-limit entries |
 | `providers` | `id TEXT PK, type, name, enabled, config, models, weight` | AI provider configuration (4 types) |
-| `usage_daily` | `date, provider_id, model (unique), calls, prompt_tokens, completion_tokens` | Per-model daily aggregate usage |
+| `usage_daily` | `date, provider_id, model (unique), calls, prompt_tokens, completion_tokens` | Per-model daily aggregate usage (UTC dates) |
+| `usage_hourly` | `bucket TEXT PK` (UTC hour key `YYYY-MM-DDTHH`), `calls, prompt_tokens, completion_tokens` | Hour-granular totals, upserted by every `recordUsage`; lets `/admin/usage/report` bucket the daily series by the **viewer's local day** (with a `usage_daily` top-up for days predating it) |
 | `call_logs` | `id, timestamp, ip, provider_id, model, prompt/completion_tokens, duration_ms, success, request_id, is_stream, extra, cache_read/creation_input_tokens, api_key_name` | Detailed request log (retention configurable, default 10000 rows) |
 | `api_keys` | `id, name, key_hash UNIQUE, encrypted_key, created_at, last_used_at, quota_calls, quota_tokens, quota_period` | Multi-key client API keys (SHA-256 hash for fast match); `quota_calls`/`quota_tokens` `NULL` = unlimited, `quota_period` `'day'` (default) or `'month'` |
 | `key_usage_daily` | `key_name, date (unique), calls, prompt_tokens, completion_tokens` | Per-key daily usage, upserted by `recordUsage`; drives quota checks + `/admin/usage/report` by-key series. **Keyed by key name** (not id): duplicate names share quota; renaming orphans old-name stats |
@@ -238,11 +239,12 @@ Vertex AI auth mode auto-detects: `config.apiKey` → API Key mode;
 
 ## Migrations
 
-D1 migrations in `migrations/` (0001–0009):
+D1 migrations in `migrations/` (0001–0010):
 `0001_init`, `0002_call_logs`, `0003_duration`, `0004_rate_limits_banned_until`,
 `0005_call_logs_enhance`, `0006_provider_types` (adds `'anthropic'` CHECK),
 `0007_api_keys`, `0008_call_logs_enhance` (cache tokens + key name),
-`0009_api_key_quota` (api_keys quota columns + `key_usage_daily`).
+`0009_api_key_quota` (api_keys quota columns + `key_usage_daily`),
+`0010_usage_hourly` (hour-granular totals table).
 
 **Both platforms self-heal at cold start — migrations are optional.** Every
 request path calls `prepareRuntime` → `initSchema` (`src/db.ts`), which creates

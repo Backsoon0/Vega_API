@@ -27,6 +27,41 @@ export function formatTime(ts: string): string {
   return d.toLocaleString('zh-CN', { hour12: false });
 }
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/**
+ * Parse an instant coming from the API. The backend buckets on **UTC**, so an
+ * hourly key (`YYYY-MM-DDTHH`) carries no zone marker and must be read as UTC
+ * (`new Date('2026-09-12T14')` would be treated as LOCAL time by ES2016+).
+ */
+function parseUtcInstant(value: string): Date {
+  const key = /^\d{4}-\d{2}-\d{2}T\d{2}$/.test(value) ? `${value}:00:00Z` : value;
+  return new Date(key);
+}
+
+/** `HH:MM` of a UTC timestamp / hourly bucket key in the *viewer's* timezone. */
+export function formatClockLocal(value: string): string {
+  const d = parseUtcInstant(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** `MM-DD HH:MM` — for buckets that can straddle days (multi-day ranges), viewer-local. */
+export function formatDayClockLocal(value: string): string {
+  const d = parseUtcInstant(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** `YYYY-MM-DD HH:MM` — spreadsheet-friendly, viewer-local (used by CSV export). */
+export function formatDateTimeLocal(value: string): string {
+  const d = parseUtcInstant(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 /** Create an AbortController that auto-cancels after timeout ms */
 export function createTimeoutController(timeoutMs: number): {
   controller: AbortController;

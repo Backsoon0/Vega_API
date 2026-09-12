@@ -17,6 +17,7 @@
 		type TreeState,
 	} from "$lib/route-topology";
 	import { getRouteStats, formatLatency, type RouteStatsResponse } from "$lib/route-stats";
+	import { formatClockLocal, formatDayClockLocal } from "$lib/utils";
 	import Spinner from "$lib/Spinner.svelte";
 	import CustomSelect from "$lib/CustomSelect.svelte";
 	import EChart from "$lib/EChart.svelte";
@@ -108,6 +109,9 @@
 			.slice(0, 6),
 	);
 	const chartPoints = $derived(routeStats?.latency.points || []);
+	// 桶时间戳是 UTC；轴标签按用户本地时区渲染。范围跨天（>24h）时补上日期，
+	// 免得 12 个桶出现重复的 "HH:MM"。
+	const pointLabel = (ts: string) => (periodHours <= 24 ? formatClockLocal(ts) : formatDayClockLocal(ts));
 
 	// ---- ECharts options (Code Dark themed) ----
 	const pal = $derived(chartPalette());
@@ -136,7 +140,7 @@
 		color: SERIES_COLORS,
 		tooltip: { ...axes.tooltip, trigger: "axis" },
 		legend: { ...axes.legend, type: "scroll", data: chartProviders.map((p) => p.name) },
-		xAxis: { ...axes.xAxis, type: "category", boundaryGap: false, data: chartPoints.map((pt) => pt.timestamp.slice(11, 16)) },
+		xAxis: { ...axes.xAxis, type: "category", boundaryGap: false, data: chartPoints.map((pt) => pointLabel(pt.timestamp)) },
 		yAxis: { ...axes.yAxis, type: "value", name: "ms", nameTextStyle: { color: pal.muted, fontSize: 10 } },
 		series: chartProviders.map((provider) => ({
 			name: provider.name,
@@ -281,7 +285,7 @@
 			<div class="card-head">
 				<div>
 					<h2><Activity stroke-width={1.5} />延迟趋势 (ms)</h2>
-					<div class="sub">真实 duration_ms 样本</div>
+					<div class="sub">真实 duration_ms 样本 · 本地时间</div>
 				</div>
 				<span style="font-size:12px;color:var(--muted)">平均 {formatLatency(routeStats?.overview.averageLatencyMs ?? null)}</span>
 			</div>

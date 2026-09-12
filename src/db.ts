@@ -27,6 +27,9 @@ const D1_SCHEMA_STATEMENTS = [
 	'CREATE TABLE IF NOT EXISTS usage_daily (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(date, provider_id, model))',
 	'CREATE INDEX IF NOT EXISTS idx_usage_date ON usage_daily(date)',
 	'CREATE INDEX IF NOT EXISTS idx_usage_provider ON usage_daily(provider_id)',
+	// Hour-granular totals (one row per UTC hour) so the admin report can bucket by the
+	// VIEWER's local day — usage_daily is UTC-date granular and cannot be re-split.
+	'CREATE TABLE IF NOT EXISTS usage_hourly (bucket TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0)',
 	'CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, reset_at INTEGER NOT NULL DEFAULT 0, banned_until INTEGER NOT NULL DEFAULT 0)',
 	'CREATE TABLE IF NOT EXISTS call_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, ip TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 1)',
 	'CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON call_logs(timestamp)',
@@ -72,6 +75,8 @@ const NEON_SCHEMA_STATEMENTS = [
 	`CREATE TABLE IF NOT EXISTS usage_daily (id SERIAL PRIMARY KEY, date TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(date, provider_id, model))`,
 	'CREATE INDEX IF NOT EXISTS idx_usage_date ON usage_daily(date)',
 	'CREATE INDEX IF NOT EXISTS idx_usage_provider ON usage_daily(provider_id)',
+	// Same DDL as D1: a TEXT primary key needs no SERIAL/AUTOINCREMENT divergence.
+	'CREATE TABLE IF NOT EXISTS usage_hourly (bucket TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0)',
 	`CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, reset_at INTEGER NOT NULL DEFAULT 0, banned_until INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS call_logs (id SERIAL PRIMARY KEY, timestamp TEXT NOT NULL, ip TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 1, request_id TEXT NOT NULL DEFAULT '', is_stream INTEGER NOT NULL DEFAULT 0, extra TEXT NOT NULL DEFAULT '{}', cache_read_input_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0, api_key_name TEXT NOT NULL DEFAULT '')`,
 	'CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON call_logs(timestamp)',

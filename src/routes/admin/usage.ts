@@ -20,16 +20,21 @@ adminUsageRoutes.get('/usage', async (c: Context<{ Bindings: Env }>) => {
 	return c.json(data);
 });
 
-// GET /admin/usage/report?hours=24 — 用量报表: series + byModel + byKey.
+// GET /admin/usage/report?hours=24&tz=480 — 用量报表: series + byModel + byKey.
 // Granularity follows the range: hours <= 24 → hourly series (from call_logs),
-// longer → daily series (from usage_daily). The legacy `?days=N` form still works
-// and always returns day granularity.
+// longer → daily series (from usage_hourly, split by the viewer's local day).
+// `tz` is the viewer's UTC offset in minutes east of UTC (default 0 = UTC);
+// the legacy `?days=N` form still works and always returns day granularity.
 adminUsageRoutes.get('/usage/report', async (c: Context<{ Bindings: Env }>) => {
 	const hours = c.req.query('hours');
 	const days = c.req.query('days');
+	const tz = c.req.query('tz');
+	const tzOffsetMinutes = tz != null ? parseInt(tz, 10) : 0;
 	const report = await getUsageReport(
 		c.env,
-		hours != null ? { hours: parseInt(hours, 10) } : { days: parseInt(days || '7', 10) },
+		hours != null
+			? { hours: parseInt(hours, 10), tzOffsetMinutes }
+			: { days: parseInt(days || '7', 10), tzOffsetMinutes },
 	);
 	return c.json(report);
 });

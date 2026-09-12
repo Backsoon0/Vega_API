@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getProviders, getCallLogs, getUsageReport, type Provider, type LogEntry, type UsageReport } from "$lib/api";
   import { getRouteStats, formatLatency, type RouteStatsResponse } from "$lib/route-stats";
-  import { formatNumber, formatDuration, formatTime } from "$lib/utils";
+  import { formatNumber, formatDuration, formatTime, formatClockLocal, formatDateTimeLocal } from "$lib/utils";
   import CustomSelect from "$lib/CustomSelect.svelte";
   import EChart from "$lib/EChart.svelte";
   import { chartPalette, chartAxes, SERIES_COLORS, type ChartPalette } from "$lib/chart-theme";
@@ -85,8 +85,8 @@
     xAxis: {
       ...axes.xAxis,
       type: "category",
-      // 按小时 → "14:00"；按天 → "09-12"
-      data: series.map((d) => (hourly ? `${d.date.slice(11, 13)}:00` : d.date.slice(5))),
+      // 按小时 → "14:00"（用户本地时区）；按天 → "09-12"（UTC 日历日）
+      data: series.map((d) => (hourly ? formatClockLocal(d.date) : d.date.slice(5))),
     },
     yAxis: [{ ...axes.yAxis, type: "value", minInterval: 1 }, { ...axes.yAxis, type: "value", splitLine: { show: false } }],
     series: [
@@ -157,7 +157,8 @@
     if (!report) return;
     const lines: string[] = [];
     lines.push(`${hourly ? "时间" : "日期"},调用次数,Token`);
-    for (const d of report.series) lines.push(`${d.date},${d.calls},${d.tokens}`);
+    // 小时序列按用户本地时区导出（含日期，便于表格排序）
+    for (const d of report.series) lines.push(`${hourly ? formatDateTimeLocal(d.date) : d.date},${d.calls},${d.tokens}`);
     lines.push("");
     lines.push("模型,调用次数,Token");
     for (const m of report.byModel) lines.push(`${m.model},${m.calls},${m.tokens}`);
@@ -274,7 +275,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18" /><path d="M7 15l4-5 3 3 5-6" /></svg>
             请求量趋势
           </h2>
-          <div class="sub">全部 Provider · {rangeLabel}</div>
+          <div class="sub">全部 Provider · {rangeLabel} · 本地时间</div>
         </div>
         <span class="chip chip-cta">{hourly ? "每小时" : "每天"}</span>
       </div>

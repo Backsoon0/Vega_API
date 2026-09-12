@@ -10,6 +10,7 @@ import { invalidateCaches } from "../src/router";
 async function setup() {
   await env.DB.exec("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
   await env.DB.exec("CREATE TABLE IF NOT EXISTS usage_daily (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(date, provider_id, model))");
+  await env.DB.exec("CREATE TABLE IF NOT EXISTS usage_hourly (bucket TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0)");
   await env.DB.exec("CREATE TABLE IF NOT EXISTS call_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, ip TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 1, request_id TEXT NOT NULL DEFAULT '', is_stream INTEGER NOT NULL DEFAULT 0, extra TEXT NOT NULL DEFAULT '{}', cache_read_input_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0, api_key_name TEXT NOT NULL DEFAULT '')");
   await env.DB.exec("CREATE TABLE IF NOT EXISTS key_usage_daily (key_name TEXT NOT NULL, date TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, UNIQUE(key_name, date))");
 }
@@ -27,6 +28,7 @@ async function auth() {
 beforeEach(async () => {
   await setup();
   await env.DB.exec("DELETE FROM usage_daily");
+  await env.DB.exec("DELETE FROM usage_hourly");
   await env.DB.exec("DELETE FROM call_logs");
   await env.DB.exec("DELETE FROM key_usage_daily");
   await env.DB.exec("DELETE FROM config WHERE key = 'admin_password'");
@@ -169,7 +171,56 @@ describe("GET /admin/usage/report", () => {
     expect(data.byKey).toEqual([{ keyName: "Cherry Studio", calls: 2, tokens: 100 }]);
   });
 
-  it("hours=168 stays on daily granularity (30d and 7d views unchanged)", async () => {
+  it("daily series follows the viewer's timezone (tz offset in minutes east of UTC)", async () => {
+    const TZ = 480; // UTC+8 — a UTC 17:00 call belongs to the NEXT local day
+    const nowMs = Date.now();
+    const isoUtcDaysAgo = (d) => new Date(nowMs - d * 86400000).toISOString().slice(0, 10);
+    // Two days ago at 17:00 UTC — far enough in the past to avoid hour-boundary races.
+    const bucket = `${isoUtcDaysAgo(2)}T17`;
+    const localDateOfBucket = new Date(Date.parse(`${bucket}:00:00Z`) + TZ * 60000).toISOString().slice(0, 10);
+    expect(localDateOfBucket).not.toBe(bucket.slice(0, 10)); // the offset must move the day
+
+    await env.DB.prepare("INSERT INTO usage_hourly (bucket, calls, prompt_tokens, completion_tokens) VALUES (?, 2, 30, 70)")
+      .bind(bucket).run();
+    // A day with no hourly rows (history recorded before usage_hourly existed) keeps its
+    // usage_daily total, attributed to its own UTC date.
+    const legacyDay = isoUtcDaysAgo(4);
+    await env.DB.prepare("INSERT INTO usage_daily (date, provider_id, model, calls, prompt_tokens, completion_tokens) VALUES (?, 'aliyun', 'qwen3.8-flash', 5, 100, 200)")
+      .bind(legacyDay).run();
+
+    const token = await auth();
+
+    // tz=480 → the 17:00Z call lands on the next LOCAL day
+    const ctx = createExecutionContext();
+    const shifted = await worker.fetch(
+      new Request(`http://example.com/admin/usage/report?hours=168&tz=${TZ}`, { headers: { Authorization: `Bearer ${token}` } }),
+      env, ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(shifted.status).toBe(200);
+    const shiftedData = await shifted.json();
+    expect(shiftedData.granularity).toBe("day");
+    expect(shiftedData.tzOffsetMinutes).toBe(TZ);
+    expect(shiftedData.series.length).toBe(8);
+    expect(shiftedData.series.find((s) => s.date === localDateOfBucket).calls).toBe(2);
+    expect(shiftedData.series.find((s) => s.date === localDateOfBucket).tokens).toBe(100);
+    expect(shiftedData.series.find((s) => s.date === bucket.slice(0, 10)).calls).toBe(0);
+    // legacy (usage_daily only) day is unaffected by the shift
+    expect(shiftedData.series.find((s) => s.date === legacyDay).calls).toBe(5);
+    expect(shiftedData.series.find((s) => s.date === legacyDay).tokens).toBe(300);
+
+    // tz=0 → the same hour bucket stays on its own UTC date
+    const ctx2 = createExecutionContext();
+    const utcData = await (await worker.fetch(
+      new Request("http://example.com/admin/usage/report?hours=168&tz=0", { headers: { Authorization: `Bearer ${token}` } }),
+      env, ctx2,
+    )).json();
+    await waitOnExecutionContext(ctx2);
+    expect(utcData.tzOffsetMinutes).toBe(0);
+    expect(utcData.series.find((s) => s.date === bucket.slice(0, 10)).calls).toBe(2);
+  });
+
+  it("hours=168 stays on day granularity (legacy ?days= semantics preserved)", async () => {
     await env.DB.prepare("INSERT INTO usage_daily (date, provider_id, model, calls, prompt_tokens, completion_tokens) VALUES (?, 'aliyun', 'qwen3.8-flash', 3, 88, 404)")
       .bind(isoDaysAgo(0)).run();
 

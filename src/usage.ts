@@ -104,6 +104,22 @@ export async function recordUsage(
       const maxRows = await getLogRetentionLimit(env);
       await pruneCallLogs(env, maxRows);
     }
+
+    // Hour-granular totals (UTC hour key) — lets the admin report re-bucket by the
+    // VIEWER's local day, which usage_daily (UTC dates) cannot do on its own.
+    // Written last on purpose: if this table is ever missing, the day/key/log
+    // writes above have already landed.
+    await env.DB
+      .prepare(
+        `INSERT INTO usage_hourly (bucket, calls, prompt_tokens, completion_tokens)
+         VALUES (?, 1, ?, ?)
+         ON CONFLICT(bucket) DO UPDATE SET
+           calls = usage_hourly.calls + 1,
+           prompt_tokens = usage_hourly.prompt_tokens + ?,
+           completion_tokens = usage_hourly.completion_tokens + ?`
+      )
+      .bind(now.slice(0, 13), usage.prompt || 0, usage.completion || 0, usage.prompt || 0, usage.completion || 0)
+      .run();
   } catch (err) {
     console.error('Usage tracking error:', (err as Error).message);
   }
@@ -352,6 +368,12 @@ export interface UsageReportOptions {
 	hours?: number;
 	/** Legacy day-granularity window (`?days=`) — always keeps day granularity. */
 	days?: number;
+	/**
+	 * Viewer's UTC offset in **minutes east of UTC** (`-new Date().getTimezoneOffset()`,
+	 * e.g. `480` for UTC+8). Only the daily buckets use it: hourly buckets stay
+	 * UTC-aligned and the panel renders their labels in the local timezone.
+	 */
+	tzOffsetMinutes?: number;
 }
 
 export type UsageGranularity = 'hour' | 'day';
@@ -361,10 +383,18 @@ export interface UsageReport {
 	/** Requested hours (`null` in the legacy `?days=` mode). */
 	hours: number | null;
 	days: number;
-	/** `date` is `YYYY-MM-DDTHH` when granularity is 'hour', `YYYY-MM-DD` when 'day'. */
+	/** Viewer's UTC offset in minutes east of UTC (clamped to UTC-12:00 … UTC+14:00). */
+	tzOffsetMinutes: number;
+	/** `date` is `YYYY-MM-DDTHH` (UTC) when granularity is 'hour', a **local** `YYYY-MM-DD` when 'day'. */
 	series: Array<{ date: string; calls: number; tokens: number }>;
 	byModel: Array<{ model: string; calls: number; tokens: number }>;
 	byKey: Array<{ keyName: string; calls: number; tokens: number }>;
+}
+
+/** Clamp a client-supplied UTC offset to the real-world range (UTC-12:00 … UTC+14:00). */
+function clampTzOffset(minutes: number | undefined): number {
+	if (typeof minutes !== 'number' || !Number.isFinite(minutes)) return 0;
+	return Math.min(Math.max(Math.round(minutes), -720), 840);
 }
 
 /**
@@ -374,8 +404,8 @@ export interface UsageReport {
  * - `hours <= HOURLY_SERIES_MAX_HOURS` (24) → **hourly** buckets read from
  *   `call_logs` (which carries the timestamp); "最近 24 小时" renders 24 points
  *   instead of the 2 daily ones a date-granular table could offer.
- * - anything longer (or the legacy `days` form) → **daily** buckets from
- *   `usage_daily` / `key_usage_daily`, unchanged.
+ * - anything longer (or the legacy `days` form) → **daily** buckets, split by the
+ *   *viewer's* local day (see `tzOffsetMinutes`).
  *
  * In hourly mode `byModel` / `byKey` are read from the SAME rolling window so the
  * breakdown bars always add up to the trend chart.
@@ -387,6 +417,7 @@ export async function getUsageReport(env: Env, options: UsageReportOptions = {})
 			? Math.min(Math.max(Math.floor(hoursParam), 1), MAX_REPORT_HOURS)
 			: null;
 	const hourly = requestedHours !== null && requestedHours <= HOURLY_SERIES_MAX_HOURS;
+	const tzOffsetMinutes = clampTzOffset(options.tzOffsetMinutes);
 
 	const daysParam = options.days;
 	const n = hourly
@@ -474,45 +505,98 @@ export async function getUsageReport(env: Env, options: UsageReportOptions = {})
 			granularity: 'hour',
 			hours: requestedHours,
 			days: Math.max(1, Math.ceil(n / 24)),
+			tzOffsetMinutes,
 			series,
 			byModel,
 			byKey,
 		};
 	}
 
-	// ---- Daily mode (unchanged).
-	// usage_daily is date-granular (UTC dates): a call inside a rolling window can
-	// fall on the calendar day BEFORE the window start (e.g. 23:00 yesterday is
-	// within "最近 24 小时"). Start the window n full days back and include that
-	// whole first day, so days=1 covers [yesterday, today] instead of only today —
-	// fixes the "24h view empty in the morning" case while keeping the same
-	// daily-granularity semantics for n>1 (e.g. days=7 → now-7d .. today).
-	const from = new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+	// ---- Daily mode — bucketed by the VIEWER's local day.
+	//
+	// A local day cannot be derived from `usage_daily` alone (UTC dates). So the
+	// series is built from `usage_hourly` (one row per UTC hour, written per call):
+	// each hour goes to the local day it falls in. `usage_daily` is then used only
+	// as a *legacy remainder* — a UTC day with no (or partial) hourly coverage,
+	// i.e. every day predating migration 0010, still owes `dailyTotal - hourlySum`,
+	// and that remainder is attributed to the UTC date, exactly as before 0010.
+	// Every UTC day is therefore counted once, and the chart keeps its history
+	// across the upgrade instead of dropping to zero.
+	const offsetMs = tzOffsetMinutes * 60000;
+	const nowMs = Date.now();
+	// Local midnight of "today", in shifted-UTC space (adding the offset to any UTC
+	// instant yields its local wall clock, so ISO date slices read as local dates).
+	const localTodayStartMs = Math.floor((nowMs + offsetMs) / 86400000) * 86400000;
+	const utcStartHour = new Date(localTodayStartMs - n * 86400000 - offsetMs).toISOString().slice(0, 13);
+	const utcEndHour = new Date(nowMs).toISOString().slice(0, 13);
+	const localDateOf = (hourKey: string) =>
+		new Date(Date.parse(`${hourKey}:00:00Z`) + offsetMs).toISOString().slice(0, 10);
+
+	const byLocalDate = new Map<string, { calls: number; tokens: number }>();
+	/** Hourly totals per UTC date — only needed to compute the legacy remainder. */
+	const hourlyByUtcDate = new Map<string, { calls: number; tokens: number }>();
 
 	try {
-		// Daily series — reuse the date-range query shape, then zero-fill every day
-		// in the range so the trend line is continuous (charts need full timeline).
+		const hourRows = await env.DB
+			.prepare(
+				'SELECT bucket, calls, prompt_tokens as pt, completion_tokens as ct FROM usage_hourly WHERE bucket >= ? AND bucket <= ?',
+			)
+			.bind(utcStartHour, utcEndHour)
+			.all<{ bucket: string; calls: number; pt: number; ct: number }>();
+		for (const r of hourRows.results || []) {
+			const bucket = String(r.bucket);
+			const calls = Number(r.calls) || 0;
+			const tokens = (Number(r.pt) || 0) + (Number(r.ct) || 0);
+			if (!calls && !tokens) continue;
+
+			const localKey = localDateOf(bucket);
+			const local = byLocalDate.get(localKey) || { calls: 0, tokens: 0 };
+			byLocalDate.set(localKey, { calls: local.calls + calls, tokens: local.tokens + tokens });
+
+			const utcKey = bucket.slice(0, 10);
+			const utc = hourlyByUtcDate.get(utcKey) || { calls: 0, tokens: 0 };
+			hourlyByUtcDate.set(utcKey, { calls: utc.calls + calls, tokens: utc.tokens + tokens });
+		}
+	} catch (err) {
+		console.error('Usage report hourly series error:', (err as Error).message);
+	}
+
+	try {
+		const fromUtcDate = new Date(localTodayStartMs - n * 86400000 - offsetMs).toISOString().slice(0, 10);
 		const dailyRows = await env.DB
 			.prepare(
 				'SELECT date, SUM(calls) as calls, SUM(prompt_tokens) as pt, SUM(completion_tokens) as ct FROM usage_daily WHERE date >= ? GROUP BY date ORDER BY date',
 			)
-			.bind(from)
+			.bind(fromUtcDate)
 			.all<{ date: string; calls: number; pt: number; ct: number }>();
-		const byDate = new Map<string, { calls: number; tokens: number }>();
 		for (const r of dailyRows.results || []) {
-			byDate.set(r.date, {
-				calls: Number(r.calls) || 0,
-				tokens: (Number(r.pt) || 0) + (Number(r.ct) || 0),
-			});
-		}
-		for (let i = 0; i <= n; i++) {
-			const day = new Date(Date.now() - (n - i) * 86400000).toISOString().slice(0, 10);
-			const v = byDate.get(day);
-			series.push({ date: day, calls: v?.calls ?? 0, tokens: v?.tokens ?? 0 });
+			const date = String(r.date);
+			const covered = hourlyByUtcDate.get(date);
+			// Already-counted hours are subtracted; a negative residue would mean the two
+			// aggregates disagree, so clamp at 0 rather than drawing a negative bar.
+			const calls = Math.max(0, (Number(r.calls) || 0) - (covered?.calls ?? 0));
+			const tokens = Math.max(0, (Number(r.pt) || 0) + (Number(r.ct) || 0) - (covered?.tokens ?? 0));
+			if (!calls && !tokens) continue;
+			const cur = byLocalDate.get(date) || { calls: 0, tokens: 0 };
+			byLocalDate.set(date, { calls: cur.calls + calls, tokens: cur.tokens + tokens });
 		}
 	} catch (err) {
 		console.error('Usage report series error:', (err as Error).message);
 	}
+
+	// Zero-fill the n+1 local days so the trend line is continuous.
+	for (let i = 0; i <= n; i++) {
+		const day = new Date(localTodayStartMs - (n - i) * 86400000).toISOString().slice(0, 10);
+		const v = byLocalDate.get(day);
+		series.push({ date: day, calls: v?.calls ?? 0, tokens: v?.tokens ?? 0 });
+	}
+
+	// byModel / byKey keep the UTC-date window (usage_daily stays date-granular):
+	// a call inside the rolling window can fall on the calendar day BEFORE the window
+	// start (e.g. 23:00 yesterday is within "最近 24 小时"). Start the window n full
+	// days back and include that whole first day, so days=1 covers [yesterday, today]
+	// instead of only today — fixes the "24h view empty in the morning" case.
+	const from = new Date(nowMs - n * 86400000).toISOString().slice(0, 10);
 
 	try {
 		const modelRows = await env.DB
@@ -550,7 +634,7 @@ export async function getUsageReport(env: Env, options: UsageReportOptions = {})
 		console.error('Usage report byKey error:', (err as Error).message);
 	}
 
-	return { granularity: 'day', hours: null, days: n, series, byModel, byKey };
+	return { granularity: 'day', hours: null, days: n, tzOffsetMinutes, series, byModel, byKey };
 }
 
 /** Coerce a token count from number/string/undefined — returns 0 for invalid values. */

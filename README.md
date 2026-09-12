@@ -367,7 +367,7 @@ response = client.messages.create(
 | `/admin/settings` | GET/PUT | Bearer | 获取/更新设置 (故障转移、熔断器、调用记录保留上限等) |
 | `/admin/change-password` | POST | Bearer | 修改管理密码 |
 | `/admin/usage` | GET | Bearer | 用量统计 |
-| `/admin/usage/report` | GET | Bearer | 用量报表（`?hours=`，≤24 小时返回按小时序列、更长返回按天序列，含按模型/按密钥聚合，供 ECharts 渲染；旧 `?days=` 仍按天） |
+| `/admin/usage/report` | GET | Bearer | 用量报表（`?hours=` + `?tz=`，≤24 小时返回按小时序列、更长按**查看者本地时区**的日期切分序列，含按模型/按密钥聚合，供 ECharts 渲染；`tz` 为东偏移分钟数，默认 0=UTC；旧 `?days=` 仍按天） |
 | `/admin/logs` | GET | Bearer | 调用记录 |
 | `/admin/logs` | DELETE | Bearer | 一键清空全部调用记录 |
 
@@ -523,7 +523,8 @@ vega-api-db
 ├── providers      — AI 提供商配置（敏感字段 AES-GCM 加密，支持 4 种类型）
 ├── api_keys       — 客户端 API 密钥（名称、SHA-256 哈希、加密存储、使用时间、配额：quota_calls / quota_tokens / quota_period）
 ├── key_usage_daily— 每密钥每日用量（key_name + date 唯一，calls / prompt_tokens / completion_tokens），驱动配额检查与用量报表的按密钥分组
-├── usage_daily    — 每日聚合用量（date, provider_id, model 三维度）
+├── usage_daily    — 每日聚合用量（date, provider_id, model 三维度；UTC 日期）
+├── usage_hourly   — 每小时聚合总量（bucket = UTC 小时键，calls / prompt_tokens / completion_tokens），供用量报表按查看者本地时区切分日期
 ├── call_logs      — 详细调用记录（模型、Token、耗时、缓存命中、密钥追踪，保留上限可在设置页配置，默认 10000 条）
 └── rate_limits    — 登录限流数据
 ```
@@ -561,7 +562,8 @@ npm run deploy               # 构建 + 部署到 Cloudflare
 │   ├── 0006_provider_types.sql     # providers.type 增加 'anthropic'
 │   ├── 0007_api_keys.sql     # 多密钥表
 │   ├── 0008_call_logs_enhance.sql  # 缓存追踪 + 密钥名
-│   └── 0009_api_key_quota.sql      # api_keys 配额列 + key_usage_daily 表
+│   ├── 0009_api_key_quota.sql      # api_keys 配额列 + key_usage_daily 表
+│   └── 0010_usage_hourly.sql       # usage_hourly 小时聚合表（本地时区日期切分）
 ├── api/                      # Vercel 入口 + Neon 适配器
 │   ├── index.ts              # Vercel 函数 (process.env → env → app.fetch, 双桥接)
 │   └── neon.ts               # D1 兼容客户端 (SQL SQLite→Postgres 翻译)

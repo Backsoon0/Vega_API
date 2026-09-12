@@ -429,20 +429,32 @@ export interface ApiKeyInfo {
 	usageTokens: number;
 }
 
-// 用量报表 — GET /admin/usage/report?hours=N
-// hours <= 24 返回按小时序列（date = 'YYYY-MM-DDTHH'），更长范围返回按天序列（date = 'YYYY-MM-DD'）
+// 用量报表 — GET /admin/usage/report?hours=N&tz=<分钟>
+// hours <= 24 返回按小时序列（date = UTC 小时键 'YYYY-MM-DDTHH'，前端按本地时区渲染标签）；
+// 更长范围返回按天序列（date = 查看者本地日历日 'YYYY-MM-DD'，由后端按 tz 切分）
 export interface UsageReport {
 	granularity: 'hour' | 'day';
 	hours: number | null;
 	days: number;
+	tzOffsetMinutes: number;
 	series: Array<{ date: string; calls: number; tokens: number }>;
 	byModel: Array<{ model: string; calls: number; tokens: number }>;
 	byKey: Array<{ keyName: string; calls: number; tokens: number }>;
 }
 
-/** Range ≤ 24h → hourly buckets, longer ranges → daily buckets (server decides). */
-export async function getUsageReport(hours = 24) {
-	const { ok, data } = await request('GET', `/usage/report?hours=${hours}`);
+/** Viewer's UTC offset in minutes east of UTC (UTC+8 → 480). */
+export function localTzOffsetMinutes(): number {
+	return -new Date().getTimezoneOffset();
+}
+
+/**
+ * Range ≤ 24h → hourly buckets, longer ranges → daily buckets (server decides).
+ * The browser's UTC offset is sent along so the server can split daily buckets by
+ * the VIEWER's local day.
+ */
+export async function getUsageReport(hours = 24, tzOffsetMinutes = localTzOffsetMinutes()) {
+	const tz = Math.round(tzOffsetMinutes) || 0;
+	const { ok, data } = await request('GET', `/usage/report?hours=${hours}&tz=${tz}`);
 	if (!ok) throw new Error(data.error || '获取用量报表失败');
 	return data as UsageReport;
 }
