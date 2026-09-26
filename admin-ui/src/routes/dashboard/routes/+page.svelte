@@ -17,12 +17,13 @@
 		type TreeState,
 	} from "$lib/route-topology";
 	import { getRouteStats, formatLatency, type RouteStatsResponse } from "$lib/route-stats";
-	import { formatClockLocal, formatDayClockLocal } from "$lib/utils";
+	import { copyToClipboard, formatClockLocal, formatDayClockLocal } from "$lib/utils";
+	import { toasts } from "$lib/toast-store";
 	import Spinner from "$lib/Spinner.svelte";
 	import CustomSelect from "$lib/CustomSelect.svelte";
 	import EChart from "$lib/EChart.svelte";
 	import { chartPalette, chartAxes, SERIES_COLORS } from "$lib/chart-theme";
-	import { RefreshCw, Search, ChevronDown, ChevronRight, ListTree, BarChart3, Activity } from "lucide-svelte";
+	import { RefreshCw, Search, ChevronDown, ChevronRight, ListTree, BarChart3, Activity, Copy, Check } from "lucide-svelte";
 
 	let models = $state<RouteTopologyModel[]>([]);
 	let failoverEnabledGlobal = $state(true);
@@ -50,6 +51,31 @@
 	}
 	function handleExpandAll() { expanded = expandAll(filtered); }
 	function handleCollapseAll() { expanded = collapseAll(); }
+
+	// ---- 复制模型名称 ----
+	let copiedId = $state("");
+	let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+	async function copyModelName(modelId: string, event: MouseEvent) {
+		// 行本身是展开/收起开关，别把点击冒泡上去
+		event.stopPropagation();
+		const ok = await copyToClipboard(modelId);
+		if (!ok) {
+			toasts.show("复制失败，请手动选择复制", "error");
+			return;
+		}
+		toasts.show(`已复制：${modelId}`);
+		copiedId = modelId;
+		clearTimeout(copiedTimer);
+		copiedTimer = setTimeout(() => { if (copiedId === modelId) copiedId = ""; }, 1600);
+	}
+
+	function handleRowKeydown(event: KeyboardEvent, modelId: string) {
+		if (event.key === "Enter" || event.key === " ") {
+			event.preventDefault();
+			toggleModel(modelId);
+		}
+	}
 
 	async function loadRoutes() {
 		loading = true;
@@ -335,16 +361,36 @@
 					{@const modelExpanded = expanded.models.has(model.id)}
 					{@const isFailoverChain = model.routingMode === "failover" && model.failoverEnabled}
 					<div class="tree-model {modelExpanded ? 'open' : ''}">
-						<button type="button" class="tree-row" aria-expanded={modelExpanded} onclick={() => toggleModel(model.id)}>
+						<div
+							class="tree-row"
+							role="button"
+							tabindex="0"
+							aria-expanded={modelExpanded}
+							onclick={() => toggleModel(model.id)}
+							onkeydown={(e) => handleRowKeydown(e, model.id)}
+						>
 							{#if modelExpanded}
 								<ChevronDown class="chev" stroke-width={2} />
 							{:else}
 								<ChevronRight class="chev" stroke-width={2} />
 							{/if}
 							<span class="mono" style="font-weight:600;color:var(--fg)">{model.id}</span>
+							<button
+								type="button"
+								class="copy-btn {copiedId === model.id ? 'copied' : ''}"
+								title="复制模型名称"
+								aria-label="复制模型名称：{model.id}"
+								onclick={(e) => copyModelName(model.id, e)}
+							>
+								{#if copiedId === model.id}
+									<Check stroke-width={2.4} />
+								{:else}
+									<Copy stroke-width={1.9} />
+								{/if}
+							</button>
 							<span class="chip {MODE_TAG[model.routingMode]}" style="margin-left:auto">{MODE_LABELS[model.routingMode]}</span>
 							<span class="tag tag-muted">{stats.total} upstream{stats.total === 1 ? "" : "s"}</span>
-						</button>
+						</div>
 						{#if modelExpanded}
 							<div class="tree-depth">
 								{#each model.providers as p, index (p.id)}

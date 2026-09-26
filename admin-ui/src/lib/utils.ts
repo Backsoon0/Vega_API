@@ -62,6 +62,39 @@ export function formatDateTimeLocal(value: string): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
+/**
+ * Copy text to the clipboard, returning whether it succeeded.
+ *
+ * Prefers the async Clipboard API (needs a secure context + user gesture) and
+ * falls back to the legacy hidden-<textarea> + `execCommand('copy')` path so
+ * copying still works when the admin UI is served over plain http (LAN access).
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext !== false) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Create an AbortController that auto-cancels after timeout ms */
 export function createTimeoutController(timeoutMs: number): {
   controller: AbortController;
