@@ -441,11 +441,16 @@ export async function getUsageReport(env: Env, options: UsageReportOptions = {})
 	const tzOffsetMinutes = clampTzOffset(options.tzOffsetMinutes);
 
 	const daysParam = options.days;
+	// Daily mode window: explicit `days` wins; otherwise derive from `hours`
+	// (frontend always sends `hours`, e.g. 720 → 30 days) — without this the
+	// window silently fell back to 7 days for any hours > HOURLY_SERIES_MAX_HOURS.
 	const n = hourly
 		? requestedHours!
 		: typeof daysParam === 'number' && Number.isFinite(daysParam)
 			? Math.min(Math.max(Math.floor(daysParam), 1), 365)
-			: 7;
+			: requestedHours !== null
+				? Math.min(Math.max(Math.ceil(requestedHours / 24), 1), 365)
+				: 7;
 
 	const series: Array<{ date: string; calls: number; tokens: number }> = [];
 	const byModel: Array<{ model: string; calls: number; tokens: number }> = [];

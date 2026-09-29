@@ -242,6 +242,29 @@ describe("GET /admin/usage/report", () => {
     expect(data.series.find((s) => s.date === isoDaysAgo(0)).calls).toBe(3);
   });
 
+  it("hours=720 (最近 30 天) derives a 30-day daily window from hours (regression)", async () => {
+    // The frontend always sends ?hours=; before the fix, any hours > 24 silently
+    // fell back to the default 7-day window because `days` was absent.
+    await env.DB.prepare("INSERT INTO usage_daily (date, provider_id, model, calls, prompt_tokens, completion_tokens) VALUES (?, 'aliyun', 'qwen3.8-flash', 3, 88, 404)")
+      .bind(isoDaysAgo(0)).run();
+
+    const token = await auth();
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request("http://example.com/admin/usage/report?hours=720", { headers: { Authorization: `Bearer ${token}` } }),
+      env, ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(200);
+    const data = await response.json();
+
+    expect(data.granularity).toBe("day");
+    expect(data.days).toBe(30);
+    expect(data.series.length).toBe(31); // now-30d .. today, zero-filled
+    expect(data.series.every((s) => s.date.length === 10)).toBe(true);
+    expect(data.series.find((s) => s.date === isoDaysAgo(0)).calls).toBe(3);
+  });
+
   it("auto-prunes usage_hourly buckets older than the retention window", async () => {
     const hourKey = (ms) => new Date(ms).toISOString().slice(0, 13);
     const nowMs = Date.now();
